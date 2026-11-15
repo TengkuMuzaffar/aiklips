@@ -22,7 +22,9 @@ EFFECT_VERSION = "1"
 MODEL_DIR = Path.home() / ".cache" / "claude-cut" / "models"
 
 # parameters that only change compositing (no recompute needed)
-_COMPOSITE_ONLY = {"bg": {"replace"}, "face_blur": {"style", "strength"}}
+_COMPOSITE_ONLY = {"bg": {"replace"}, "face_blur": {"style", "strength"},
+                   "mask": {"style", "strength", "color", "label", "id"},
+                   "focus": {"blur", "dim", "zoom", "camera_smooth", "mode", "label", "id"}}
 
 
 def model_path(name: str, url: str) -> Path:
@@ -136,6 +138,20 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
                 log(f"Computing face mask for {source_id} (one-time)...")
                 face_ar.render_effect(pdir, path, src, eff, out, log)
         return {"mask": out}
+    if eff.type in ("mask", "focus"):
+        from . import track
+
+        art: dict[str, Path] = {}
+        mode = eff.params.get("mode", "spotlight") if eff.type == "focus" else "mask"
+        if mode in ("mask", "spotlight", "both"):
+            out = cdir / f"{eff.type}-{key}.mp4"
+            if not out.exists():
+                log(f"Computing {eff.type} for {source_id} (one-time)...")
+                track.render_mask(pdir, project, source_id, eff, out, log)
+            art["mask"] = out
+        if mode in ("follow", "both"):
+            art["follow"] = path  # the crop path is built per clip in the render graph
+        return art
     if eff.type in ("face_mesh", "face_sticker", "face_prop"):
         from . import face_ar
 

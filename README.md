@@ -10,6 +10,9 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 - ↩️ **Undo / redo history:** every edit is a snapshot. You can undo, redo, or jump to any step.
 - 🎬 **Custom animation:** text and image layers with stackable presets (pop, slide, typewriter, bounce, shake…) or free-form keyframes with easing
 - 💬 **Captions:** word-by-word highlighted captions from SRT, or offline auto-transcription (faster-whisper)
+- 🎞️ **Transitions:** crossfade, dip to black / white, slide, push, wipe, zoom, whip, circle and more. They're centred on the cut, so timing never shifts.
+- 🫥 **Tracked masks:** hide labels, logos or plates with a feathered blur / pixelate / fill that follows the object as the camera moves. Draw the box on the preview, or let the AI find it.
+- 🎯 **Object focus:** spotlight an object (blur and dim the rest), or let the camera follow it (auto-reframe wide footage to vertical)
 - 🧍 **Background removal:** replace with a colour, blur, image or video (MediaPipe fast mode, or BiRefNet quality mode)
 - 🎭 **Face mesh / AR:** 478-point tracked face mesh, stickers that follow the face, 3D props on the head, and face blur / pixelate
 - 🎵 **Music:** background tracks with automatic ducking under speech

@@ -32,7 +32,7 @@ def split_at(project: Project, t: float) -> int:
         if s < t < e - EPS:
             src_t = round(c.in_ + (t - s) * c.speed, 4)
             left = c.model_copy(update={"out": src_t}, deep=True)
-            right = c.model_copy(update={"in_": src_t, "id": project.new_id("c")}, deep=True)
+            right = c.model_copy(update={"in_": src_t, "id": project.new_id("c"), "transition": None}, deep=True)
             clips[i : i + 1] = [left, right]
             return i + 1
         if abs(t - e) < EPS:
@@ -200,3 +200,50 @@ def jumpcut_zoom(project: Project, zoom: float = 1.12) -> list[str]:
         if i % 2 == 1:
             changed.append(c.id)
     return changed
+
+
+def transition_lengths(project: Project) -> list[float]:
+    """Effective transition length into each clip (0 = hard cut), clamped to fit both neighbours."""
+    out = []
+    for i, c in enumerate(project.clips):
+        if i == 0 or c.transition is None:
+            out.append(0.0)
+            continue
+        prev = project.clips[i - 1]
+        d = min(c.transition.duration, prev.duration, c.duration)
+        out.append(d if d >= 0.04 else 0.0)
+    # a clip can't spend more than its own length blending in and out
+    for i in range(len(out) - 1):
+        c = project.clips[i]
+        if out[i] + out[i + 1] > c.duration * 2 - 1e-6:
+            k = c.duration * 2 / (out[i] + out[i + 1])
+            out[i], out[i + 1] = out[i] * k, out[i + 1] * k
+    return out
+
+
+def set_transition(project: Project, kind: str, duration: float, clip_id: str | None = None) -> list[str]:
+    """Transition into `clip_id` (from the clip before it), or between every pair of clips."""
+    from ..project import Transition, transition_name
+
+    if not 0.05 <= duration <= 3:
+        raise VeditError("Transition duration must be between 0.05 and 3 seconds")
+    t = Transition(type=transition_name(kind), duration=round(duration, 3))
+    if clip_id:
+        c = project.clip(clip_id)
+        if project.clips.index(c) == 0:
+            raise VeditError(f"{c.id} is the first clip; a transition goes on the clip it leads *into* (e.g. the second clip)")
+        targets = [c]
+    else:
+        targets = project.clips[1:]
+    if not targets:
+        raise VeditError("Transitions need at least two clips on the timeline")
+    for c in targets:
+        c.transition = t.model_copy()
+    return [c.id for c in targets]
+
+
+def clear_transition(project: Project, clip_id: str | None = None) -> list[str]:
+    targets = [project.clip(clip_id)] if clip_id else project.clips
+    for c in targets:
+        c.transition = None
+    return [c.id for c in targets]
