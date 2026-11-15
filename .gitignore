@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+projects/*
+!projects/.gitkeep
+.vedit/
+.vedit-active
+*.part.*
+.DS_Store
+examples/media/
