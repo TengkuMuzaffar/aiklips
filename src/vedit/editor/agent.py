@@ -2,7 +2,8 @@
 
 Every message from the user is sent with an <editor_context> block describing what
 is selected in the GUI and where the playhead is, so "make this clip slower" works.
-The agent may only run `vedit` (plus read-only tools); anything else is denied.
+The agent may run `vedit` (plus read-only tools) freely; anything else pauses and asks the
+user to Allow or Deny it in the chat pane.
 """
 
 from __future__ import annotations
@@ -95,6 +96,7 @@ class ChatSession:
         self.log: list[dict] = data.get("log", [])[-300:]
         self.session_id: str | None = data.get("session_id")
         self.model: str = data.get("model") or DEFAULT_MODEL
+        self.pending: dict[str, tuple[asyncio.Future, dict]] = {}  # permission requests awaiting the user
 
     # ---- plumbing --------------------------------------------------------------
     def _save(self) -> None:
@@ -117,6 +119,8 @@ class ChatSession:
     async def attach(self, ws: WebSocket) -> None:
         self.sockets.add(ws)
         await ws.send_json({"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": MODELS})
+        for _, ev in self.pending.values():  # re-show prompts still waiting for an answer
+            await ws.send_json(ev)
 
     async def _permission(self, tool: str, data: dict, ctx: Any):
         from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
@@ -127,9 +131,39 @@ class ChatSession:
             return PermissionResultAllow()
         if tool in ("Edit", "Write") and Path(str(data.get("file_path", ""))).resolve() == (self.pdir / "project.json").resolve():
             return PermissionResultAllow()
-        await self.emit({"type": "notice", "text": f"Blocked {tool}: only vedit commands are allowed in the editor."})
-        return PermissionResultDeny(message="In the claude-cut editor you may only run `uv run vedit ...` commands "
-                                            "(plus Read/Glob/Grep and editing project.json). Use a vedit command instead.")
+        if tool == "Bash":
+            detail = str(data.get("command", ""))
+        elif "file_path" in data:
+            detail = str(data["file_path"])
+        else:
+            detail = json.dumps(data, default=str)
+        rid = f"perm-{time.time_ns()}"
+        ev = {"type": "permission", "id": rid, "tool": tool, "detail": detail[:2000], "time": time.time()}
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.pending[rid] = (fut, ev)
+        await self.emit(ev, persist=False)
+        try:
+            allow = await asyncio.wait_for(fut, timeout=600)
+        except asyncio.TimeoutError:
+            allow = False
+        finally:
+            self.pending.pop(rid, None)
+        await self.emit({"type": "notice", "text": f"{'Allowed' if allow else 'Denied'} {tool}: {detail[:120]}"})
+        await self.emit({"type": "permission_done", "id": rid}, persist=False)
+        if allow:
+            return PermissionResultAllow()
+        return PermissionResultDeny(message="The user denied this. Prefer a `uv run vedit ...` command, "
+                                            "or ask the user how they want to proceed.")
+
+    def answer_permission(self, rid: str, allow: bool) -> None:
+        item = self.pending.get(rid)
+        if item and not item[0].done():
+            item[0].set_result(bool(allow))
+
+    def _deny_pending(self) -> None:
+        for fut, _ in list(self.pending.values()):
+            if not fut.done():
+                fut.set_result(False)
 
     async def _connect(self, resume: bool) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -258,6 +292,7 @@ class ChatSession:
         await self.emit({"type": "notice", "text": f"Model: {MODELS[model]}"})
 
     async def interrupt(self) -> None:
+        self._deny_pending()
         if self.client is not None and self.busy:
             try:
                 await self.client.interrupt()
@@ -273,6 +308,7 @@ class ChatSession:
         await self.emit({"type": "history", "log": [], "busy": False, "model": self.model, "models": MODELS}, persist=False)
 
     async def _reset(self) -> None:
+        self._deny_pending()
         if self.client is not None:
             try:
                 await self.client.disconnect()

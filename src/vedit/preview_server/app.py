@@ -369,6 +369,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
                 kind = msg.get("type")
                 if kind == "ask" and str(msg.get("text", "")).strip():
                     asyncio.create_task(session.ask(str(msg["text"]).strip(), msg.get("context") or {}))
+                elif kind == "permission":
+                    session.answer_permission(str(msg.get("id", "")), bool(msg.get("allow")))
                 elif kind == "interrupt":
                     await session.interrupt()
                 elif kind == "model":

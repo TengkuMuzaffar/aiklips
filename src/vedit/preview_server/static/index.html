@@ -117,6 +117,9 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 .m-meta { font-size: 11px; color: var(--faint); padding-left: 4px; }
 .m-err { color: var(--danger); font-size: 12px; white-space: pre-wrap; }
 .m-note { color: var(--faint); font-size: 12px; font-style: italic; }
+.m-perm { border: 1px solid var(--danger); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: grid; gap: 6px; }
+.m-perm code { white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
+.m-perm .btns { display: flex; gap: 6px; }
 .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
 .suggest button { font-size: 12px; border-radius: 999px; }
 #composer { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--pane2); }
@@ -570,6 +573,15 @@ function addMsg(ev) {
   else if (ev.type === "done") el = h("div", { class: "m-meta" }, ev.ok ? `done · ${ev.seconds}s` + (ev.cost ? ` · $${ev.cost.toFixed(3)}` : "") : `stopped: ${ev.error || ""}`);
   else if (ev.type === "error") el = h("div", { class: "m-err" }, ev.text);
   else if (ev.type === "notice") el = h("div", { class: "m-note" }, ev.text);
+  else if (ev.type === "permission") {
+    if (document.getElementById(ev.id)) return;
+    const answer = (allow) => { ws.send(JSON.stringify({ type: "permission", id: ev.id, allow })); el.remove(); };
+    el = h("div", { class: "m-perm", id: ev.id },
+      h("div", { class: "q" }, `Claude wants to use ${ev.tool}:`),
+      h("code", {}, ev.detail),
+      h("div", { class: "btns" }, h("button", { class: "primary", onclick: () => answer(true) }, "Allow"), h("button", { onclick: () => answer(false) }, "Deny")));
+  }
+  else if (ev.type === "permission_done") { document.getElementById(ev.id)?.remove(); return; }
   if (el) { box.insertBefore(el, typingEl && typingEl.parentNode === box ? typingEl : null); box.scrollTop = box.scrollHeight; }
 }
 function setBusy(b) {
