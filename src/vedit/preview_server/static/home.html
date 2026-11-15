@@ -83,7 +83,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
   <div class="logo">claude<span>-</span>cut</div>
   <div class="spacer"></div>
   <button class="ghost" id="b-add" title="Add an existing project folder to the list">Open folder…</button>
-  <button class="primary" id="b-new">＋ New project</button>
+  <button class="primary" id="b-new" title="Create a new video project">＋ New project</button>
 </header>
 <main>
   <div class="top">
@@ -107,18 +107,18 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
   <div class="formats" id="n-fmt"></div>
   <label for="n-fps">Frame rate</label>
   <select id="n-fps"><option>24</option><option>25</option><option selected>30</option><option>60</option></select>
-  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Create &amp; open</button></div>
+  <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="primary" type="submit" title="Create the project and open it in the editor">Create &amp; open</button></div>
 </form></div>
 
 <div class="veil" id="dlg-input"><form class="dialog" id="f-input">
   <h2 id="i-title"></h2><p id="i-desc"></p>
   <input type="text" id="i-value" required>
-  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit" id="i-ok">OK</button></div>
+  <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="primary" type="submit" id="i-ok" title="Confirm">OK</button></div>
 </form></div>
 
 <div class="veil" id="dlg-confirm"><div class="dialog">
   <h2 id="c-title"></h2><p id="c-desc"></p>
-  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="danger" id="c-ok">Delete</button></div>
+  <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="danger" id="c-ok" title="Delete permanently">Delete</button></div>
 </div></div>
 
 <div id="toast"></div>
@@ -190,7 +190,7 @@ function render() {
     list.append(h("div", { class: "empty" },
       h("h2", {}, "Welcome to claude-cut"),
       h("p", {}, "Create your first project, drop in a raw video, and edit by dragging or by asking the AI."),
-      h("button", { class: "primary", onclick: openNew }, "＋ New project")));
+      h("button", { class: "primary", title: "Create a new video project", onclick: openNew }, "＋ New project")));
     return;
   }
   const grid = h("div", { class: "grid" });
@@ -228,11 +228,12 @@ async function openProject(p) {
 // ---- menu ----
 function showMenu(e, p) {
   const m = $("#menu"); m.innerHTML = "";
-  const item = (label, fn, cls) => h("button", { class: cls || "", onclick: () => { hideMenu(); fn(); } }, label);
-  if (!p.missing) m.append(item("Open", () => openProject(p)), item("Rename…", () => renameProject(p)), item("Duplicate", () => duplicateProject(p)),
-    item("Copy folder path", () => navigator.clipboard?.writeText(p.path).then(() => toast("Path copied"))), h("hr"));
-  m.append(item("Remove from list", () => removeProject(p, false)));
-  if (!p.missing) m.append(item("Delete project…", () => removeProject(p, true), "red"));
+  const item = (label, tip, fn, cls) => h("button", { class: cls || "", title: tip, onclick: () => { hideMenu(); fn(); } }, label);
+  if (!p.missing) m.append(item("Open", "Open in the editor", () => openProject(p)), item("Rename…", "Change the project name", () => renameProject(p)),
+    item("Duplicate", "Make a copy of this project (media is shared)", () => duplicateProject(p)),
+    item("Copy folder path", "Copy the project folder location", () => navigator.clipboard?.writeText(p.path).then(() => toast("Path copied"))), h("hr"));
+  m.append(item("Remove from list", "Hide from this list; files stay on disk", () => removeProject(p, false)));
+  if (!p.missing) m.append(item("Delete project…", "Delete the project folder (asks first)", () => removeProject(p, true), "red"));
   m.style.display = "block";
   const r = e.target.getBoundingClientRect();
   m.style.left = `${Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)}px`;
@@ -249,7 +250,7 @@ document.querySelectorAll(".veil").forEach((v) => v.addEventListener("mousedown"
 
 function openNew() {
   const box = $("#n-fmt"); box.innerHTML = "";
-  for (const f of FORMATS) box.append(h("button", { type: "button", class: "fmtbtn" + (f.id === fmtChoice ? " on" : ""),
+  for (const f of FORMATS) box.append(h("button", { type: "button", class: "fmtbtn" + (f.id === fmtChoice ? " on" : ""), title: `${f.label}: ${f.sub}`,
     onclick: () => { fmtChoice = f.id; openNew(); $("#n-name").focus(); } },
     h("div", { class: "shape", style: { width: f.w + "px", height: f.h + "px" } }), h("b", {}, f.label), h("small", {}, f.sub)));
   if ($("#dlg-new").style.display !== "flex") { $("#n-name").value = ""; show("#dlg-new"); }
