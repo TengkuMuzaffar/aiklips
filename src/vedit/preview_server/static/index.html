@@ -46,7 +46,7 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 #grid { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--col) 5px 1fr; grid-template-rows: var(--row) 5px 1fr; }
 .pane { background: var(--pane); min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pane-h { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--pane2); }
-.pane-h h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.pane-h h2 { white-space: nowrap; margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
 .splitter { background: var(--line); }
 .splitter:hover, .splitter.drag { background: var(--accent); }
 #split-v { grid-column: 2; grid-row: 1 / 4; cursor: col-resize; }
@@ -185,6 +185,108 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 #tl-empty { position: absolute; inset: 5px 8px; border: 1px dashed var(--line2); border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--faint); font-size: 12px; pointer-events: none; }
 #tl-empty button { pointer-events: auto; }
 
+[hidden] { display: none !important; }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--line2); border-top-color: var(--accent); border-radius: 50%; animation: rot .8s linear infinite; flex: none; }
+.spin.big { width: 22px; height: 22px; border-width: 3px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+a.ext { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; }
+a.ext .ic { width: 12px; height: 12px; }
+a.ext:hover { text-decoration: underline; }
+.codeline { display: flex; align-items: center; gap: 4px; background: var(--bg); border: 1px solid var(--line2); border-radius: 7px; padding: 3px 3px 3px 10px; }
+.codeline code { flex: 1; min-width: 0; font: 11px ui-monospace, monospace; color: var(--text); overflow-x: auto; white-space: nowrap; }
+.av { width: 30px; height: 30px; border-radius: 8px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #0b0d10; background: var(--c); }
+.steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.stp { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid var(--line); }
+.stp i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; background: var(--pane3); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.stp i .ic { width: 11px; height: 11px; }
+.stp.on { color: var(--text); border-color: var(--accent); } .stp.on i { background: var(--accent); color: var(--accent-ink); }
+.stp.done { color: var(--muted); } .stp.done i { background: #15322e; color: var(--accent); }
+
+/* ---- models dialog ---- */
+dialog#dlg-models { width: min(680px, 94vw); max-height: 86vh; padding: 0; border: 1px solid var(--line2); border-radius: 14px; background: var(--pane); color: var(--text); box-shadow: 0 24px 70px #000c; }
+dialog#dlg-models[open] { display: flex; flex-direction: column; }
+dialog#dlg-models::backdrop { background: #000b; }
+.dlg-h { display: flex; align-items: center; gap: 8px; padding: 12px 14px 12px 18px; border-bottom: 1px solid var(--line); }
+.dlg-h h3 { margin: 0; font-size: 15px; }
+.dlg-b { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.dlg-b h4 { margin: 2px 0 0; font-size: 14px; }
+.pv { border: 1px solid var(--line); border-radius: 12px; background: var(--pane2); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pv-h { display: flex; align-items: center; gap: 10px; }
+.pv-t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pv-t b { font-size: 13px; }
+.pv-t .url { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-chip { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line2); color: var(--muted); flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.st-chip.ok { color: var(--ok); border-color: #1f5135; } .st-chip.bad { color: #fbbf24; border-color: #5a4512; }
+.mchips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 6px 3px 9px; border-radius: 999px; background: var(--pane3); border: 1px solid var(--line2); cursor: default; }
+.mchip[onclick], .mchip:not(.add) { cursor: pointer; }
+.mchip .ic { width: 12px; height: 12px; color: var(--faint); }
+.mchip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.mchip.ok .dot { background: var(--ok); } .mchip.bad .dot { background: var(--danger); } .mchip.busy .dot { background: var(--sel); animation: blink 1s infinite; }
+.mchip .x { padding: 0; width: 16px; height: 16px; border: none; background: transparent; color: var(--faint); border-radius: 50%; }
+.mchip .x:hover { color: var(--danger); background: #0005; }
+.mchip.add { background: transparent; border-style: dashed; color: var(--muted); padding-right: 9px; }
+.mchip.add:hover { color: var(--text); border-color: var(--accent); }
+.addm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+.addm input[type=text] { flex: 1; min-width: 160px; }
+.addm label { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
+.addm-err { width: 100%; display: flex; gap: 8px; align-items: center; color: var(--danger); font-size: 12px; }
+.addm-err span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addprov { justify-content: flex-start; gap: 12px; padding: 12px; border: 1px dashed var(--line2); border-radius: 12px; background: transparent; text-align: left; }
+.addprov > .ic { width: 30px; height: 30px; padding: 7px; border-radius: 8px; background: var(--pane3); }
+.addprov > span { display: flex; flex-direction: column; white-space: normal; }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.tpl { justify-content: flex-start; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; background: var(--pane2); border: 1px solid var(--line); text-align: left; white-space: normal; }
+.tpl:hover { border-color: var(--accent); background: var(--pane3); }
+.tpl-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tpl-t b { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.tpl-t > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.wiz-head { display: flex; gap: 12px; align-items: center; }
+.wiz-head p { margin: 2px 0 0; }
+.keyrow { display: flex; gap: 10px; align-items: center; }
+.keyrow input { flex: 1; }
+.adv summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.adv textarea { font: 11px ui-monospace, monospace; }
+.btnrow.end { justify-content: flex-end; }
+.wlist { display: flex; flex-direction: column; gap: 6px; }
+.wrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--pane2); cursor: pointer; }
+.wrow.on { border-color: var(--line2); }
+.wrow .wn { display: flex; flex-direction: column; min-width: 0; }
+.wrow .wn code { font: 11px ui-monospace, monospace; color: var(--faint); }
+.wrow .vis { padding: 2px 8px; font-size: 11px; border-radius: 999px; color: var(--faint); background: transparent; }
+.wrow .vis .ic { width: 12px; height: 12px; }
+.wrow .vis.on { color: var(--accent); border-color: #1f4a43; }
+.wrow .res { flex: 1; min-width: 0; text-align: right; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.wrow .res .ic { width: 12px; height: 12px; }
+.wrow .res.ok { color: var(--ok); } .wrow .res.bad { color: var(--danger); }
+.wlist.scroll { max-height: 290px; overflow: auto; padding-right: 2px; }
+.wsearch { width: 100%; }
+.found { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--pane2); }
+.found .ic { width: 14px; height: 14px; }
+.found.ok { color: var(--ok); } .found.ok .hint { color: var(--muted); }
+.found.bad { color: #fbbf24; } .found.bad span { flex: 1; }
+.usenow { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+
+/* ---- AI setup card (chat pane) ---- */
+#ai-setup { flex: 1; overflow: auto; padding: 18px 14px; display: flex; flex-direction: column; justify-content: safe center; }
+.setup-card { margin: 0 auto; width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 12px; }
+.setup-card h3 { margin: 0; font-size: 16px; }
+.setup-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.setup-logo { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #5eead4, #3b82f6); color: #062a25; display: flex; align-items: center; justify-content: center; }
+.setup-logo .ic { width: 20px; height: 20px; }
+.choice { display: flex; flex-direction: column; gap: 8px; }
+.opt { justify-content: flex-start; gap: 12px; padding: 11px 12px; border-radius: 10px; text-align: left; background: var(--pane2); border-color: var(--line2); }
+.opt > .ic { width: 18px; height: 18px; color: var(--muted); }
+.opt > span { display: flex; flex-direction: column; }
+.opt > span > span { color: var(--muted); font-size: 12px; }
+.opt.primary-opt { border-color: var(--accent); background: #10302b; }
+.opt.primary-opt > .ic { color: var(--accent); }
+.or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.linkbtn { background: transparent; border: none; padding: 0; color: var(--accent); justify-content: flex-start; white-space: normal; text-align: left; }
+.linkbtn:hover { text-decoration: underline; }
+.wait { display: flex; gap: 12px; align-items: flex-start; }
+.wait b { display: block; margin-bottom: 4px; }
 #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--pane3); border: 1px solid var(--line2); padding: 8px 14px; border-radius: 9px; display: none; z-index: 50; max-width: 70vw; box-shadow: 0 8px 30px #000a; }
 #toast.err { border-color: var(--danger); color: #fecaca; }
 #dropveil { position: fixed; inset: 0; background: #0b0d10cc; border: 2px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 18px; color: var(--accent); z-index: 40; pointer-events: none; }
@@ -232,7 +334,8 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 
   <!-- 3. AI chat -->
   <section class="pane" id="p-chat">
-    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:150px;font-size:12px"></select><button class="ghost" id="b-newchat" title="Start a new conversation">New chat</button></div>
+    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost" id="b-newchat" title="Start a new conversation">New chat</button></div>
+    <div id="ai-setup" hidden></div>
     <div id="msgs"></div>
     <div id="composer">
       <span id="ctxchip"></span>
@@ -271,6 +374,7 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 <input type="file" id="file" multiple accept="video/*,audio/*,image/*" hidden>
 <input type="file" id="file-music" accept="audio/*" hidden>
 <div id="toast"></div>
+<dialog id="dlg-models"></dialog>
 <div id="dropveil">Drop to import</div>
 
 <script>
@@ -671,7 +775,8 @@ function connectChat() {
   ws = new WebSocket(`ws://${location.host}/ws/chat`);
   ws.onmessage = (m) => {
     const ev = JSON.parse(m.data);
-    if (ev.type === "history" && ev.models) { const sel = $("#model"); sel.innerHTML = ""; for (const [k, v] of Object.entries(ev.models)) sel.append(h("option", { value: k, selected: k === ev.model }, v)); }
+    if ((ev.type === "history" || ev.type === "models") && ev.models) { renderModelPicker(ev.models, ev.model); if (ev.type === "models") { checkAI(); return; } }
+    if (ev.type === "error") checkAI();
     if (ev.type === "history") { $("#msgs").innerHTML = ""; toolEls = {}; typingEl = null; ev.log.forEach(addMsg); setBusy(ev.busy); suggestions(); return; }
     if (ev.type === "status") { setBusy(ev.busy); return; }
     addMsg(ev);
@@ -691,8 +796,332 @@ function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.h
 $("#prompt").addEventListener("input", autosize);
 $("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("#b-send").onclick = send;
-$("#model").onchange = (e) => ws.send(JSON.stringify({ type: "model", model: e.target.value }));
-$("#b-newchat").onclick = () => ws.send(JSON.stringify({ type: "reset" }));
+$("#model").onchange = (e) => {
+  if (e.target.value === "__manage") { e.target.value = CUR_MODEL; openModels(); return; }
+  useModel(e.target.value);
+};
+$("#b-models").onclick = () => openModels();
+
+// ---------- AI models: any model from any Anthropic-compatible provider ----------
+let MODELS_PUB = null, CUR_MODEL = null, AI = null, WIZ = null, ADDM = null, LOGIN_WAIT = null, AI_POLL = null;
+const TESTS = {};
+const PROVIDER_COLORS = { anthropic: "#d97757", deepseek: "#4d6bfe", opencode: "#a3a3a3" };
+function avatar(id, name) {
+  let c = PROVIDER_COLORS[id];
+  if (!c) { let hsh = 0; for (const ch of id) hsh = (hsh * 31 + ch.charCodeAt(0)) % 360; c = `hsl(${hsh} 55% 58%)`; }
+  return h("span", { class: "av", style: { "--c": c } }, (name || id || "?").trim()[0].toUpperCase());
+}
+const ext = (href, text) => h("a", { class: "ext", href, target: "_blank", rel: "noopener" }, text, icon("external"));
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); }
+  catch { const ta = h("textarea", { value: t }); document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+  toast("Copied");
+}
+const codeLine = (cmd) => h("div", { class: "codeline" }, h("code", {}, cmd), h("button", { class: "ghost icon", title: "Copy", onclick: () => copyText(cmd) }, icon("copy")));
+const planLabel = (c) => { const p = c.subscriptionType || ""; return p ? ` · ${p[0].toUpperCase() + p.slice(1)} plan` : c.authMethod && c.authMethod !== "claude.ai" ? ` · ${c.authMethod}` : ""; };
+
+function renderModelPicker(pub, cur) {
+  MODELS_PUB = pub; if (cur) CUR_MODEL = cur;
+  const sel = $("#model"); sel.innerHTML = "";
+  for (const pv of pub.providers) {
+    const ms = pub.models.filter((m) => m.provider === pv.id);
+    if (!ms.length) continue;
+    sel.append(h("optgroup", { label: pv.name + (pv.ready ? "" : " · needs API key") },
+      ms.map((m) => h("option", { value: m.key, selected: m.key === CUR_MODEL, disabled: !pv.ready }, m.label + (m.vision ? "" : " · no vision")))));
+  }
+  sel.append(h("optgroup", { label: "────────" }, h("option", { value: "__manage" }, "Manage models…")));
+  if ($("#dlg-models").open) renderModelsDialog();
+}
+function useModel(key) { CUR_MODEL = key; $("#model").value = key; ws.send(JSON.stringify({ type: "model", model: key })); setTimeout(checkAI, 400); }
+async function openModels(startWizard = false) {
+  MODELS_PUB = await (await fetch("/api/models")).json();
+  WIZ = startWizard ? { step: 1 } : null; ADDM = null;
+  renderModelsDialog();
+  if (!$("#dlg-models").open) $("#dlg-models").showModal();
+  if (!AI) checkAI();
+}
+async function modelsApi(url, body) {
+  const r = await api(url, body);
+  if (r) { MODELS_PUB = r.models; renderModelsDialog(); }
+  return r;
+}
+async function testModel(pid, id) {
+  const r = await api("/api/models/test", { provider: pid, id });
+  return r || { ok: false, text: "Request failed" };
+}
+
+// ---- dialog: overview ----
+function modelChip(m, pv) {
+  const t = TESTS[m.key];
+  const st = t ? (t.busy ? "busy" : t.ok ? "ok" : "bad") : "";
+  return h("span", { class: `mchip ${st}`, title: `${m.id}${m.vision ? " · can see images" : " · no vision"}${t && !t.busy ? "\n" + t.text : pv.builtin ? "" : "\nClick to test"}`,
+    onclick: pv.builtin ? null : async () => { TESTS[m.key] = { busy: true }; renderModelsDialog(); TESTS[m.key] = await testModel(pv.id, m.id); renderModelsDialog(); } },
+    h("i", { class: "dot" }), m.label, m.vision ? icon("eye") : "",
+    m.builtin ? "" : h("button", { class: "x", title: "Remove model", onclick: (e) => { e.stopPropagation(); modelsApi("/api/models/model/remove", { key: m.key }); } }, icon("x")));
+}
+function addModelInline(pv) {
+  if (ADDM?.pid !== pv.id) return h("button", { class: "mchip add", onclick: async () => {
+    ADDM = { pid: pv.id, id: "", vision: false, options: [] }; renderModelsDialog();
+    const r = await api("/api/models/discover", { provider: pv.id });
+    if (ADDM?.pid === pv.id && r?.ok) { const have = new Set(MODELS_PUB.models.map((m) => m.key)); ADDM.options = r.models.filter((m) => !have.has(`${pv.id}/${m.id}`)); renderModelsDialog(); }
+  } }, icon("plus"), "Add model");
+  const tpl = MODELS_PUB.templates.find((t) => t.id === pv.id);
+  const listId = `sugg-${pv.id}`;
+  const go = async (force) => {
+    if (!ADDM.id) return toast("Enter a model id", true);
+    if (!force) { ADDM.test = { busy: true }; renderModelsDialog(); ADDM.test = await testModel(pv.id, ADDM.id); if (!ADDM.test.ok) return renderModelsDialog(); }
+    const r = await modelsApi("/api/models/model", { provider: pv.id, id: ADDM.id, label: ADDM.label || undefined, vision: ADDM.vision });
+    if (r) { TESTS[`${pv.id}/${ADDM.id}`] = ADDM.test; ADDM = null; renderModelsDialog(); }
+  };
+  return h("div", { class: "addm" },
+    h("input", { type: "text", placeholder: ADDM.options.length ? `pick from ${ADDM.options.length} models or type an id` : "model id", value: ADDM.id, list: listId, autofocus: true,
+      oninput: (e) => { ADDM.id = e.target.value.trim(); const o = ADDM.options.find((x) => x.id === ADDM.id); ADDM.label = o?.label; if (o) { ADDM.vision = !!o.vision; const vb = e.target.parentNode.querySelector(".vcb"); if (vb) vb.checked = ADDM.vision; } },
+      onkeydown: (e) => e.key === "Enter" && go(false) }),
+    h("datalist", { id: listId }, (ADDM.options.length ? ADDM.options : tpl?.suggested || []).map((s) => h("option", { value: s.id }, s.label))),
+    h("label", { title: "Tick if the model accepts images, so the AI can check rendered frames" }, h("input", { type: "checkbox", class: "vcb", checked: ADDM.vision, onchange: (e) => (ADDM.vision = e.target.checked) }), "vision"),
+    h("button", { class: "primary", onclick: () => go(false), disabled: ADDM.test?.busy }, ADDM.test?.busy ? h("span", { class: "spin" }) : "", "Test & add"),
+    h("button", { class: "ghost", onclick: () => { ADDM = null; renderModelsDialog(); } }, "Cancel"),
+    ADDM.test && !ADDM.test.busy && !ADDM.test.ok ? h("div", { class: "addm-err" }, h("span", {}, ADDM.test.text), h("button", { class: "ghost", onclick: () => go(true) }, "Add anyway")) : "");
+}
+function providerCard(pv) {
+  const ms = MODELS_PUB.models.filter((m) => m.provider === pv.id);
+  let sub, chip, actions = [];
+  if (pv.builtin) {
+    const c = AI?.claude;
+    sub = !c ? "Checking sign-in…" : !c.installed ? "Claude Code isn't installed" : c.loggedIn ? `Signed in${planLabel(c)}` : "Not signed in";
+    chip = !c ? ["", "…"] : c.installed && c.loggedIn ? ["ok", "Ready"] : ["bad", c.installed ? "Sign in needed" : "Not installed"];
+    if (c && !(c.installed && c.loggedIn)) actions.push(h("button", { class: "primary", onclick: () => { $("#dlg-models").close(); c.installed ? startLogin("claudeai") : startInstall(); } }, icon("login"), c.installed ? "Sign in" : "Install"));
+  } else {
+    sub = pv.base_url;
+    chip = pv.ready ? ["ok", pv.key_stored ? "Key saved" : `Key from $${pv.api_key_env}`] : ["bad", "Needs API key"];
+    actions.push(h("button", { class: "ghost", onclick: () => editProvider(pv) }, pv.ready ? "Edit" : "Add key"),
+      h("button", { class: "ghost danger icon", title: "Remove provider and its models", onclick: () => confirm(`Remove ${pv.name} and its ${ms.length} model(s)?`) && modelsApi(`/api/models/provider/${encodeURIComponent(pv.id)}/remove`) }, icon("trash")));
+  }
+  return h("div", { class: "pv" },
+    h("div", { class: "pv-h" }, avatar(pv.id, pv.name), h("div", { class: "pv-t" }, h("b", {}, pv.name), h("span", { class: "url", title: sub }, sub)),
+      h("span", { class: "st-chip " + chip[0] }, chip[1]), actions),
+    h("div", { class: "mchips" }, ms.map((m) => modelChip(m, pv)), pv.builtin ? "" : addModelInline(pv)));
+}
+
+// ---- dialog: add-provider wizard ----
+function editProvider(pv) {
+  const tpl = MODELS_PUB.templates.find((t) => t.id === pv.id) || MODELS_PUB.templates.find((t) => t.id === "custom");
+  WIZ = { step: 2, edit: pv, tpl, form: { name: pv.name, base_url: pv.base_url, api_key: "", api_key_env: pv.api_key_env, env: JSON.stringify(pv.env || {}) } };
+  renderModelsDialog();
+}
+function pickTemplate(t) {
+  const taken = MODELS_PUB.providers.find((p) => p.id === t.id);
+  if (taken) return editProvider(taken);
+  WIZ = { step: 2, tpl: { ...t, fromWizard: true }, form: { name: t.name, base_url: t.base_url, api_key: "", api_key_env: t.api_key_env, env: "{}" } };
+  renderModelsDialog();
+}
+function wizSteps() {
+  const names = WIZ.edit ? ["Connect"] : ["Choose provider", "Connect", "Add models"];
+  const cur = WIZ.edit ? 1 : WIZ.step;
+  return h("div", { class: "steps" }, names.map((t, i) => h("span", { class: "stp" + (i + 1 === cur ? " on" : i + 1 < cur ? " done" : "") },
+    h("i", {}, i + 1 < cur ? icon("check") : String(i + 1)), t)));
+}
+function wizStep1() {
+  const c = AI?.claude, claudeReady = c?.installed && c?.loggedIn;
+  const card = (id, name, blurb, onclick, badge) => h("button", { class: "tpl", onclick }, avatar(id, name),
+    h("span", { class: "tpl-t" }, h("b", {}, name, badge ? h("span", { class: "st-chip ok" }, badge) : ""), h("span", {}, blurb)));
+  return [h("h4", {}, "Where should the AI editor get its model?"),
+    h("div", { class: "tpl-grid" },
+      card("anthropic", "Claude", claudeReady ? "Signed in — already set up." : "Sign in with your Claude Pro/Max plan or Console account. Recommended.",
+        () => { if (claudeReady) { WIZ = null; renderModelsDialog(); } else { $("#dlg-models").close(); c?.installed === false ? startInstall() : startLogin("claudeai"); } }, claudeReady ? "Ready" : "Recommended"),
+      MODELS_PUB.templates.map((t) => card(t.id === "custom" ? "custom" : t.id, t.name || "Custom provider", t.blurb, () => pickTemplate(t),
+        MODELS_PUB.providers.some((p) => p.id === t.id) ? "Added" : ""))),
+    h("div", { class: "btnrow" }, h("button", { class: "ghost", onclick: () => { WIZ = null; renderModelsDialog(); } }, "Cancel"))];
+}
+function wizStep2() {
+  const f = WIZ.form, t = WIZ.tpl, custom = t.id === "custom", ed = WIZ.edit;
+  const inp = (k, attrs = {}) => h("input", { type: "text", value: f[k], ...attrs, oninput: (e) => (f[k] = e.target.value) });
+  const save = async () => {
+    let env; try { env = JSON.parse(f.env || "{}"); } catch { return toast("Extra environment must be valid JSON", true); }
+    const body = { id: ed?.id, name: f.name, base_url: f.base_url, api_key_env: f.api_key_env, env };
+    if (f.api_key) body.api_key = f.api_key;
+    const r = await modelsApi("/api/models/provider", body);
+    if (!r) return;
+    if (ed && !WIZ.tpl.fromWizard) { WIZ = null; toast(`${f.name} saved`); return renderModelsDialog(); }
+    WIZ.pid = r.result.id;
+    WIZ.use = true; WIZ.step = 3; discoverModels();
+  };
+  return [
+    h("div", { class: "wiz-head" }, avatar(custom && !ed ? "custom" : ed?.id || t.id, f.name || "Custom"), h("div", {},
+      h("h4", {}, ed ? `${ed.name} settings` : custom ? "Connect a custom provider" : `Connect ${t.name}`),
+      h("p", { class: "hint" }, t.blurb))),
+    h("div", { class: "fields" },
+      custom || ed ? [field("Name", inp("name", { placeholder: "e.g. OpenRouter", disabled: !!ed })),
+        field("Base URL", inp("base_url", { placeholder: "https://…  (without /v1)" }))] : [],
+      field("API key", h("div", { class: "keyrow" },
+        h("input", { type: "password", autocomplete: "off", value: f.api_key, oninput: (e) => (f.api_key = e.target.value),
+          placeholder: ed?.key_stored ? "•••••••• saved — leave blank to keep" : "Paste your API key", onkeydown: (e) => e.key === "Enter" && save() }),
+        t.key_url ? ext(t.key_url, "Get a key") : "")),
+      h("p", { class: "full hint", style: { margin: 0 } }, icon("lock"), " Saved only on this computer (~/.claude-cut/models.json, readable by you only)."),
+      h("details", { class: "full adv" }, h("summary", {}, "Advanced"),
+        h("div", { class: "fields", style: { marginTop: "8px" } },
+          custom || ed ? [] : field("Base URL", inp("base_url")),
+          field("Key from env var", inp("api_key_env", { placeholder: "e.g. DEEPSEEK_API_KEY — used when no key is saved" })),
+          field("Extra env", h("textarea", { rows: 2, value: f.env, oninput: (e) => (f.env = e.target.value), placeholder: '{"API_TIMEOUT_MS": "600000"}' })),
+          ed?.key_stored ? field("", h("button", { class: "ghost danger", onclick: () => { f.api_key = ""; modelsApi("/api/models/provider", { id: ed.id, name: ed.name, base_url: f.base_url, api_key_env: f.api_key_env, env: ed.env, api_key: "" }).then((r) => r && editProvider(r.models.providers.find((p) => p.id === ed.id))); } }, "Forget saved key")) : []))),
+    h("div", { class: "btnrow end" },
+      h("button", { class: "ghost", onclick: () => { WIZ = ed ? null : { step: 1 }; renderModelsDialog(); } }, ed ? "Cancel" : "Back"),
+      h("button", { class: "primary", onclick: save }, ed ? "Save" : "Continue"))];
+}
+async function discoverModels() {
+  const t = WIZ.tpl, pid = WIZ.pid;
+  WIZ.found = { busy: true }; WIZ.models = []; renderModelsDialog();
+  const r = await api("/api/models/discover", { provider: pid }) || { ok: false, text: "Request failed", models: [] };
+  if (!WIZ || WIZ.pid !== pid) return;
+  WIZ.found = r;
+  const want = new Set((t.suggested || []).map((m) => m.id));
+  WIZ.models = r.ok ? r.models.map((m) => ({ ...m, sel: want.has(m.id) }))
+                    : (t.suggested || []).map((m) => ({ ...m, sel: false }));
+  if (WIZ.models.length && !WIZ.models.some((m) => m.sel)) WIZ.models[0].sel = true;
+  WIZ.q = "";
+  renderModelsDialog();
+}
+function wizStep3() {
+  const t = WIZ.tpl, f = WIZ.found || {};
+  let custom = "";
+  const addCustom = () => {
+    if (!custom) return;
+    const ex = WIZ.models.find((m) => m.id === custom);
+    if (ex) ex.sel = true; else WIZ.models.unshift({ id: custom, label: custom, vision: null, sel: true });
+    renderModelsDialog();
+  };
+  const finish = async (force) => {
+    const pick = WIZ.models.filter((m) => m.sel);
+    if (!pick.length) return toast("Pick at least one model", true);
+    if (!force) {
+      for (const m of pick) { m.test = { busy: true }; renderModelsDialog(); m.test = await testModel(WIZ.pid, m.id); }
+      renderModelsDialog();
+      if (pick.some((m) => !m.test.ok)) return;
+    }
+    for (const m of pick) { await api("/api/models/model", { provider: WIZ.pid, id: m.id, label: m.label, vision: !!m.vision }); if (m.test) TESTS[`${WIZ.pid}/${m.id}`] = m.test; }
+    MODELS_PUB = await (await fetch("/api/models")).json();
+    if (WIZ.use) useModel(`${WIZ.pid}/${pick[0].id}`);
+    toast(`Added ${pick.length} model${pick.length > 1 ? "s" : ""}${WIZ.use ? ` — now using ${pick[0].label}` : ""}`);
+    WIZ = null; renderModelsDialog();
+  };
+  const sel = WIZ.models.filter((m) => m.sel);
+  const failed = sel.some((m) => m.test && !m.test.busy && !m.test.ok);
+  const testing = WIZ.models.some((m) => m.test?.busy);
+  const count = h("span", { class: "hint" }, `${sel.length} selected`);
+  const visLabel = (v) => (v === true ? "vision" : v === false ? "no vision" : "vision?");
+  const row = (m) => {
+    const cb = h("input", { type: "checkbox", checked: m.sel });
+    const el = h("label", { class: "wrow" + (m.sel ? " on" : ""), "data-q": `${m.id} ${m.label}`.toLowerCase() },
+      cb, h("span", { class: "wn" }, h("b", {}, m.label), h("code", {}, m.id)),
+      h("button", { class: "vis" + (m.vision ? " on" : ""), title: m.vision == null ? "The provider doesn't say whether this model takes images — click to set" : "Click to change",
+        onclick: (e) => { e.preventDefault(); m.vision = !m.vision; e.currentTarget.className = "vis" + (m.vision ? " on" : ""); e.currentTarget.lastChild.textContent = visLabel(m.vision); } },
+        icon("eye"), visLabel(m.vision)),
+      h("span", { class: "res " + (m.test ? (m.test.busy ? "" : m.test.ok ? "ok" : "bad") : ""), title: m.test?.text || "" },
+        m.test?.busy ? h("span", { class: "spin" }) : m.test ? (m.test.ok ? [icon("check"), " works"] : m.test.text) : ""));
+    cb.onchange = () => { m.sel = cb.checked; el.classList.toggle("on", m.sel); count.textContent = `${WIZ.models.filter((x) => x.sel).length} selected`; };
+    return el;
+  };
+  const list = h("div", { class: "wlist" + (WIZ.models.length > 6 ? " scroll" : "") }, WIZ.models.map(row));
+  const filter = (q) => { WIZ.q = q; for (const el of list.children) el.hidden = !!q && !el.dataset.q.includes(q.toLowerCase()); };
+  if (WIZ.q) filter(WIZ.q);
+  let status;
+  if (f.busy) status = h("div", { class: "found" }, h("span", { class: "spin" }), `Asking ${t.name || "the provider"} which models it has…`);
+  else if (f.ok) status = h("div", { class: "found ok" }, icon("check"), `Found ${f.models.length} model${f.models.length === 1 ? "" : "s"}`, h("span", { class: "spacer" }), count);
+  else status = h("div", { class: "found bad" }, h("span", {}, `Couldn't load the model list: ${f.text || "unknown error"}`), t.docs_url ? ext(t.docs_url, "Model docs") : "");
+  return [
+    h("h4", {}, "Which models should appear in the AI editor?"),
+    status,
+    WIZ.models.length > 6 ? h("input", { type: "search", class: "wsearch", placeholder: `Search ${WIZ.models.length} models…`, value: WIZ.q || "", oninput: (e) => filter(e.target.value) }) : "",
+    f.busy ? "" : list,
+    h("div", { class: "addm" },
+      h("input", { type: "text", placeholder: f.ok ? "Not listed? Type a model id…" : "Type a model id…", oninput: (e) => (custom = e.target.value.trim()), onkeydown: (e) => e.key === "Enter" && addCustom() }),
+      h("button", { onclick: addCustom }, icon("plus"), "Add")),
+    h("label", { class: "usenow" }, h("input", { type: "checkbox", checked: WIZ.use, onchange: (e) => (WIZ.use = e.target.checked) }), "Switch the AI editor to the first selected model when done"),
+    h("div", { class: "btnrow end" },
+      h("button", { class: "ghost", onclick: () => { WIZ.step = 2; WIZ.edit = MODELS_PUB.providers.find((p) => p.id === WIZ.pid); renderModelsDialog(); } }, "Back"),
+      failed ? h("button", { class: "ghost", onclick: () => finish(true) }, "Add anyway") : "",
+      h("button", { class: "primary", disabled: testing || f.busy, onclick: () => finish(false) }, testing ? [h("span", { class: "spin" }), "Testing…"] : failed ? "Test again" : "Test & finish"))];
+}
+function renderModelsDialog() {
+  const d = $("#dlg-models"), pub = MODELS_PUB;
+  const close = () => { WIZ = null; ADDM = null; d.close(); };
+  const body = WIZ ? [wizSteps(), WIZ.step === 1 ? wizStep1() : WIZ.step === 2 ? wizStep2() : wizStep3()]
+    : [pub.providers.map(providerCard),
+       h("button", { class: "addprov", onclick: () => { WIZ = { step: 1 }; renderModelsDialog(); } }, icon("plus"), h("span", {}, h("b", {}, "Add provider"), h("span", { class: "hint" }, "DeepSeek, OpenCode, OpenRouter, a local proxy — anything Anthropic-compatible")))];
+  d.replaceChildren(
+    h("div", { class: "dlg-h" }, WIZ && !WIZ.edit && WIZ.step > 1 ? "" : "", h("h3", {}, WIZ ? (WIZ.edit ? "Provider settings" : "Add a provider") : "AI models"), h("div", { class: "spacer" }),
+      h("button", { class: "ghost icon", title: "Close", onclick: close }, icon("x"))),
+    h("div", { class: "dlg-b" }, body));
+}
+$("#dlg-models").addEventListener("close", () => { WIZ = null; ADDM = null; });
+
+// ---------- AI setup: Claude Code installed + signed in (chat pane) ----------
+async function checkAI() {
+  try { AI = await (await fetch("/api/ai/status")).json(); } catch { return null; }
+  renderSetup();
+  if ($("#dlg-models").open && !WIZ) renderModelsDialog();
+  return AI;
+}
+function stopPoll() { clearInterval(AI_POLL); AI_POLL = null; }
+function pollAI() { stopPoll(); const t0 = Date.now(); AI_POLL = setInterval(() => { if (Date.now() - t0 > 10 * 60e3) { stopPoll(); LOGIN_WAIT = null; renderSetup(); } else checkAI(); }, 2500); }
+async function startLogin(method) {
+  const r = await api("/api/ai/login", { method });
+  if (!r) return;
+  LOGIN_WAIT = { kind: "login", ...r }; renderSetup(); pollAI();
+}
+async function startInstall() {
+  const r = await api("/api/ai/install");
+  if (!r) return;
+  LOGIN_WAIT = { kind: "install", ...r }; renderSetup(); pollAI();
+}
+function renderSetup() {
+  const box = $("#ai-setup"), ready = !AI || AI.step === "ready";
+  box.hidden = ready; $("#msgs").hidden = !ready;
+  $("#prompt").disabled = !ready; if (!busy) $("#b-send").disabled = !ready;
+  $("#ctxchip").hidden = !ready; $("#composer").hidden = !ready;
+  if (ready) {
+    if (LOGIN_WAIT) { LOGIN_WAIT = null; stopPoll(); toast("You're all set — the AI editor is ready"); }
+    return;
+  }
+  const c = AI.claude, step = AI.step;
+  if (LOGIN_WAIT && LOGIN_WAIT.kind === "install" && c.installed) { LOGIN_WAIT = null; stopPoll(); }
+  const names = ["Install", "Sign in", "Start editing"];
+  const cur = step === "install" ? 0 : step === "login" ? 1 : 2;
+  const steps = step === "key" ? "" : h("div", { class: "steps" }, names.map((t, i) => h("span", { class: "stp" + (i === cur ? " on" : i < cur ? " done" : "") }, h("i", {}, i < cur ? icon("check") : String(i + 1)), t)));
+  const other = h("button", { class: "linkbtn", onclick: () => openModels(true) }, "Use another AI provider instead (DeepSeek, OpenCode…)");
+  let card;
+  if (LOGIN_WAIT) {
+    card = [h("div", { class: "wait" }, h("span", { class: "spin big" }), h("div", {},
+        h("b", {}, LOGIN_WAIT.kind === "install" ? "Installing Claude Code…" : "Waiting for you to sign in…"),
+        h("p", { class: "hint" }, LOGIN_WAIT.opened
+          ? (LOGIN_WAIT.kind === "install" ? "A Terminal window is running the installer. This page continues on its own when it's done."
+            : "A Terminal window opened. Follow the link it shows to sign in in your browser, then come back — this page updates on its own.")
+          : "Couldn't open a terminal window. Run this in a terminal yourself:"))),
+      LOGIN_WAIT.opened ? h("p", { class: "hint", style: { margin: 0 } }, "Nothing opened? Run it yourself:") : "",
+      codeLine(LOGIN_WAIT.command),
+      h("div", { class: "btnrow" }, h("button", { class: "ghost", onclick: () => { LOGIN_WAIT = null; stopPoll(); renderSetup(); } }, "Cancel"), h("button", { class: "ghost", onclick: checkAI }, "Check again"))];
+  } else if (step === "install") {
+    card = [h("h3", {}, "Install Claude Code"),
+      h("p", {}, "The AI editor runs on Claude Code. Install it once — it takes about a minute — then you'll sign in."),
+      h("div", { class: "btnrow" }, h("button", { class: "primary", onclick: startInstall }, icon("terminal"), "Install in Terminal")),
+      h("p", { class: "hint", style: { margin: 0 } }, "Or run it yourself:"), codeLine(c.install_command), other];
+  } else if (step === "login") {
+    card = [h("h3", {}, "Sign in to Claude"),
+      h("p", {}, "Connect your Claude account so the AI can edit for you. It's the same sign-in as Claude Code in your terminal, so you only do it once."),
+      h("div", { class: "choice" },
+        h("button", { class: "opt primary-opt", onclick: () => startLogin("claudeai") }, icon("login"), h("span", {}, h("b", {}, "Sign in with Claude"), h("span", {}, "Use your Pro or Max plan"))),
+        h("button", { class: "opt", onclick: () => startLogin("console") }, icon("key"), h("span", {}, h("b", {}, "Anthropic Console account"), h("span", {}, "Pay per use with API billing")))),
+      c.error ? h("p", { class: "m-err" }, c.error) : "",
+      h("div", { class: "or" }, h("span", {}, "or")), other];
+  } else {
+    card = [h("h3", {}, "Add an API key"),
+      h("p", {}, `The selected model, ${AI.model_label}, needs an API key before the AI can use it.`),
+      h("div", { class: "btnrow" },
+        h("button", { class: "primary", onclick: () => openModels().then(() => { const pv = MODELS_PUB.providers.find((p) => AI.model.startsWith(p.id + "/")); if (pv) editProvider(pv); }) }, icon("key"), "Add API key"),
+        c.installed && c.loggedIn ? h("button", { class: "ghost", onclick: () => useModel("anthropic/claude-opus-5-5") }, "Switch back to Claude") : "")];
+  }
+  box.replaceChildren(h("div", { class: "setup-card" }, h("div", { class: "setup-logo" }, icon("sparkle")), steps, card));
+}
 
 // ---------- timeline (pane 4) ----------
 const LANES = { ruler: 24, clips: 66, wave: 34, layer: 28 };
@@ -999,6 +1428,7 @@ es.onerror = () => { const s = $("#status"); s.className = "pill error"; s.textC
 
 refresh().then(() => { if (P().clips.length) reloadVideo(); });
 connectChat();
+checkAI();
 </script>
 </body>
 </html>
