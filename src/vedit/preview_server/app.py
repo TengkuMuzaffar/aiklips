@@ -247,6 +247,61 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         await host.close()
         return {"ok": True}
 
+    # ---- AI models: any model from any Anthropic-compatible provider -----------------
+    async def _models(fn, *a) -> dict:
+        from ..editor import models as registry
+
+        try:
+            out = await asyncio.to_thread(fn, *a)
+        except registry.RegistryError as e:
+            raise HTTPException(400, str(e))
+        if host.session is not None:
+            await host.session.models_changed()
+        return {"ok": True, "result": out, "models": registry.public()}
+
+    @app.get("/api/models")
+    def api_models() -> dict:
+        from ..editor import models as registry
+
+        return registry.public()
+
+    @app.post("/api/models/provider")
+    async def api_provider_save(body: dict) -> dict:
+        from ..editor import models as registry
+
+        return await _models(registry.upsert_provider, body)
+
+    @app.post("/api/models/provider/{pid}/remove")
+    async def api_provider_remove(pid: str) -> dict:
+        from ..editor import models as registry
+
+        return await _models(registry.remove_provider, pid)
+
+    @app.post("/api/models/model")
+    async def api_model_add(body: dict) -> dict:
+        from ..editor import models as registry
+
+        return await _models(registry.add_model, body)
+
+    @app.post("/api/models/model/remove")
+    async def api_model_remove(body: dict) -> dict:
+        from ..editor import models as registry
+
+        return await _models(registry.remove_model, str(body.get("key", "")))
+
+    @app.post("/api/models/test")
+    async def api_model_test(body: dict) -> dict:
+        from ..editor import models as registry
+
+        try:
+            if body.get("provider"):
+                text = await asyncio.to_thread(registry.test_model, str(body["provider"]), str(body.get("id", "")).strip())
+            else:
+                text = await asyncio.to_thread(registry.test, str(body.get("key", "")))
+            return {"ok": True, "text": text}
+        except registry.RegistryError as e:
+            return {"ok": False, "text": str(e)}
+
     # ---- editor (open project) ---------------------------------------------------------
     @app.get("/api/state")
     def api_state() -> dict:
