@@ -50,12 +50,19 @@ class Graph:
         self.filters.append(f)
 
 
-def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float, bg: str, dur: float) -> str:
-    """Scale/crop/pad a clip onto the W x H canvas. Returns the output label."""
+def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float, bg: str, dur: float,
+                hold_head: float = 0.0, hold_tail: float = 0.0) -> str:
+    """Scale/crop/pad a clip onto the W x H canvas. Returns the output label.
+
+    hold_head / hold_tail: seconds of frozen first / last frame to add (transition
+    handles when the source has no spare footage before / after the clip).
+    """
     z = max(1.0, clip.zoom)
     fx, fy = min(max(clip.focus_x, 0), 1), min(max(clip.focus_y, 0), 1)
     out = g.label("fit")
-    tail = f"fps={_f(fps)},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=0.2,trim=duration={_f(dur)},setpts=PTS-STARTPTS"
+    head = f"start_mode=clone:start_duration={_f(hold_head)}:" if hold_head > 1e-3 else ""
+    tail = (f"fps={_f(fps)},setsar=1,format=yuv420p,tpad={head}stop_mode=clone:stop_duration={_f(hold_tail + 0.2)},"
+            f"trim=duration={_f(dur)},setpts=PTS-STARTPTS,settb=AVTB")
     if clip.zoom_to:
         z1 = max(1.0, clip.zoom_to)
         frames = max(1, round(dur * fps))
@@ -91,18 +98,20 @@ def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float
     return out
 
 
-def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, fps: float, log) -> str:
+def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, fps: float, log,
+                  src_start: float | None = None, src_len: float | None = None) -> str:
     if not clip.effects:
         return cur
     from ..ops import effects  # optional heavy deps are imported lazily inside
 
     src = project.sources[clip.source]
-    dur_src = clip.out - clip.in_
+    s0 = clip.in_ if src_start is None else src_start
+    dur_src = clip.out - clip.in_ if src_len is None else src_len
     sw, sh = src.width or 1080, src.height or 1920
     for eff in clip.effects:
         art = effects.prepare(eff, project, pdir, clip.source, log)
         if "mask" in art:
-            mi = g.add_input(["-ss", _f(clip.in_), "-t", _f(dur_src), "-i", str(art["mask"])])
+            mi = g.add_input(["-ss", _f(s0), "-t", _f(dur_src), "-i", str(art["mask"])])
             mk = g.label("mask")
             g.add(f"[{mi}:v]setpts=PTS-STARTPTS,scale={sw}:{sh},format=gray[{mk}]")
             out = g.label("fx")
@@ -143,14 +152,45 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
                     g.add(f"[{s1}]gblur=sigma={_f(float(eff.params.get('strength', 30)))}[{bl}]")
                 g.add(f"[{bl}][{mk}]alphamerge[{blm}]")
                 g.add(f"[{s2}][{blm}]overlay=0:0:format=auto[{out}]")
+            elif eff.type in ("mask", "focus"):
+                prm = eff.params
+                s1, s2, fxl, fxm = g.label("s"), g.label("s"), g.label("mf"), g.label("mm")
+                g.add(f"[{cur}]split=2[{s1}][{s2}]")
+                if eff.type == "focus":  # spotlight: soften + darken everything around the object
+                    sigma, dim = float(prm.get("blur", 14)), min(max(float(prm.get("dim", 0.35)), 0.0), 1.0)
+                    k = _f(1 - dim)
+                    chain = (f"gblur=sigma={_f(sigma)}," if sigma > 0 else "") + f"colorchannelmixer=rr={k}:gg={k}:bb={k}"
+                    g.add(f"[{s1}]{chain}[{fxl}]")
+                else:
+                    style = prm.get("style", "blur")
+                    if style == "pixelate":
+                        block = max(2, int(prm.get("strength", 28)))
+                        g.add(f"[{s1}]scale=max(2\\,trunc(iw/{block})):max(2\\,trunc(ih/{block})),scale={sw}:{sh}:flags=neighbor[{fxl}]")
+                    elif style == "fill":
+                        g.add(f"[{s1}]drawbox=c={ffcolor(str(prm.get('color', '#000000')))}:t=fill[{fxl}]")
+                    elif style == "dim":
+                        k = _f(1 - min(max(float(prm.get("strength", 0.6)), 0.0), 1.0))
+                        g.add(f"[{s1}]colorchannelmixer=rr={k}:gg={k}:bb={k}[{fxl}]")
+                    else:  # blur: two passes so even big, high-contrast text is unreadable
+                        sigma = float(prm.get("strength", 40))
+                        g.add(f"[{s1}]gblur=sigma={_f(sigma)}:steps=3,gblur=sigma={_f(sigma / 2)}[{fxl}]")
+                g.add(f"[{fxl}][{mk}]alphamerge[{fxm}]")
+                g.add(f"[{s2}][{fxm}]overlay=0:0:format=auto[{out}]")
             else:
                 raise VeditError(f"Effect {eff.type} produced a mask but has no compositor")
             cur = out
         if "overlay" in art:
-            oi = g.add_input(["-ss", _f(clip.in_), "-t", _f(dur_src), "-i", str(art["overlay"])])
+            oi = g.add_input(["-ss", _f(s0), "-t", _f(dur_src), "-i", str(art["overlay"])])
             ol, out = g.label("ovl"), g.label("fx")
             g.add(f"[{oi}:v]setpts=PTS-STARTPTS,scale={sw}:{sh}[{ol}]")
             g.add(f"[{cur}][{ol}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+            cur = out
+    for eff in clip.effects:  # reframing last: masks above are in full-frame source pixels
+        if eff.type == "focus" and eff.params.get("mode", "spotlight") in ("follow", "both"):
+            from ..ops import track
+
+            out = g.label("fx")
+            g.add(f"[{cur}]{track.follow_crop(project, pdir, clip, eff, s0, dur_src, log)}[{out}]")
             cur = out
     return cur
 
@@ -164,7 +204,12 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     fps = canvas.fps
     total = project.duration
     g = Graph()
-    seg: list[str] = []
+    vsegs: list[str] = []
+    asegs: list[str] = []
+    from ..ops.cut import transition_lengths
+
+    trans = transition_lengths(project) + [0.0]
+    starts = project.clip_starts()
 
     for k, clip in enumerate(project.clips):
         src = project.sources[clip.source]
@@ -173,29 +218,51 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             raise VeditError(f"Source media missing: {path}")
         dur_src = clip.out - clip.in_
         dur = clip.duration
-        idx = g.add_input(["-ss", _f(clip.in_), "-t", _f(dur_src), "-i", str(path)])
+        # transition handles: half of each blend happens on either side of the cut
+        pre, post = trans[k] / 2, trans[k + 1] / 2
+        ext_in = min(pre * clip.speed, clip.in_)
+        ext_out = min(post * clip.speed, max(0.0, src.duration - clip.out))
+        hold_head = max(0.0, pre - ext_in / clip.speed)
+        hold_tail = max(0.0, post - ext_out / clip.speed)
+        s0, slen = clip.in_ - ext_in, dur_src + ext_in + ext_out
+        idx = g.add_input(["-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
         v0 = g.label("v")
         if src.has_video:
             g.add(f"[{idx}:v]setpts=PTS-STARTPTS[{v0}]")
         else:  # audio-only source: show the canvas background
-            g.add(f"color=c={ffcolor(canvas.background)}:s={W}x{H}:r={_f(fps)}:d={_f(dur_src)}[{v0}]")
-        cur = apply_effects(g, project, pdir, clip, v0, fps, log) if src.has_video else v0
+            g.add(f"color=c={ffcolor(canvas.background)}:s={W}x{H}:r={_f(fps)}:d={_f(slen)}[{v0}]")
+        cur = apply_effects(g, project, pdir, clip, v0, fps, log, s0, slen) if src.has_video else v0
         sp = g.label("sp")
         g.add(f"[{cur}]setpts=PTS/{_f(clip.speed)}[{sp}]")
-        vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur)
+        vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur + pre + post, hold_head, hold_tail)
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:
             g.add(
-                f"[{idx}:a]asetpts=PTS-STARTPTS,{atempo_chain(clip.speed)},volume={_f(clip.volume)},{fmt},"
+                f"[{idx}:a]atrim=start={_f(ext_in)},asetpts=PTS-STARTPTS,{atempo_chain(clip.speed)},volume={_f(clip.volume)},{fmt},"
                 f"apad,atrim=duration={_f(dur)},asetpts=PTS-STARTPTS[{alab}]"
             )
         else:
             g.add(f"anullsrc=r=48000:cl=stereo,atrim=duration={_f(dur)},{fmt}[{alab}]")
-        seg.append(f"[{vlab}][{alab}]")
+        vsegs.append(vlab)
+        asegs.append(f"[{alab}]")
 
-    g.add(f"{''.join(seg)}concat=n={len(seg)}:v=1:a=1[vcat][acat]")
-    vcur = "vcat"
+    # video: hard cuts are concatenated, transitions blend across the cut point
+    vcur = vsegs[0]
+    if len(vsegs) > 1 and not any(trans):
+        g.add(f"{''.join(f'[{v}]' for v in vsegs)}concat=n={len(vsegs)}:v=1:a=0[vcat]")
+        vcur = "vcat"
+    else:
+        for k in range(1, len(vsegs)):
+            out = g.label("X")
+            if trans[k] > 0:
+                tt = project.clips[k].transition.type  # type: ignore[union-attr]
+                g.add(f"[{vcur}][{vsegs[k]}]xfade=transition={tt}:duration={_f(trans[k])}:offset={_f(starts[k] - trans[k] / 2)}[{out}]")
+            else:
+                g.add(f"[{vcur}][{vsegs[k]}]concat=n=2:v=1:a=0,settb=AVTB[{out}]")
+            vcur = out
+    g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
+
 
     for layer in project.layers:
         start, ldur = layer_span(layer, total)

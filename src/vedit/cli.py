@@ -33,8 +33,11 @@ cap_app = typer.Typer(help="Captions (SRT import or offline auto-captions)")
 bg_app = typer.Typer(help="Background removal / replacement")
 face_app = typer.Typer(help="Face mesh / AR effects (needs: uv sync --extra ai)")
 music_app = typer.Typer(help="Background music")
+mask_app = typer.Typer(help="Hide a region (text, logo, label, plate) with a feathered, tracked blur / pixelate / fill")
+focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
-                  ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app)]:
+                  ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
+                  ("mask", mask_app), ("focus", focus_app)]:
     app.add_typer(sub, name=name)
 
 STATE: dict[str, Any] = {"json": False, "project": None}
@@ -155,6 +158,7 @@ def info():
             "id": c.id, "source": c.source, "timeline": [round(s, 3), round(s + c.duration, 3)],
             "source_range": [c.in_, c.out], "speed": c.speed, "fit": c.fit, "zoom": c.zoom, "zoom_to": c.zoom_to,
             "effects": [e.type for e in c.effects],
+            **({"transition_in": c.transition.model_dump()} if c.transition else {}),
         })
     layers = [{"id": l.id, "type": l.type, "start": l.start, "end": l.end, "text": l.text or (" ".join(w.text for w in l.words[:8]) if l.words else l.image),
                "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)} for l in p.layers]
@@ -168,7 +172,8 @@ def info():
     out += ["", "Timeline:"]
     out += [f"  {c['id']:>4}  {fmt_t(c['timeline'][0])} - {fmt_t(c['timeline'][1])}   src {c['source']} {c['source_range'][0]:.2f}-{c['source_range'][1]:.2f}s"
             f"{'  x' + str(c['speed']) if c['speed'] != 1 else ''}{'  zoom ' + str(c['zoom']) if c['zoom'] != 1 or c['zoom_to'] else ''}{' -> ' + str(c['zoom_to']) if c['zoom_to'] else ''}"
-            f"{'  fx:' + ','.join(c['effects']) if c['effects'] else ''}" for c in clips] or ["  (empty)"]
+            f"{'  fx:' + ','.join(c['effects']) if c['effects'] else ''}"
+            f"{'  <- ' + c['transition_in']['type'] + ' ' + str(c['transition_in']['duration']) + 's' if c.get('transition_in') else ''}" for c in clips] or ["  (empty)"]
     out += ["", "Layers:"]
     out += [f"  {l['id']:>5}  {l['type']:<8} {l['start']:.2f}-{(l['end'] if l['end'] is not None else p.duration):.2f}s  {str(l['text'])[:40]!r}"
             f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}" for l in layers] or ["  (none)"]
@@ -315,6 +320,27 @@ def jumpcut_zoom(level: float = typer.Option(1.12, "--zoom")):
     with edit(f"jump-cut zoom {level}") as tx:
         changed = cut.jumpcut_zoom(tx.project, level)
     emit({"zoomed": changed}, f"Zoomed {len(changed)} clips to {level}")
+
+
+@app.command()
+def transition(
+    kind: str = typer.Argument(..., help="fade | fadeblack | fadewhite | slideleft | wipeleft | zoomin | hblur (whip) | circleopen | "
+                                         "pixelize | ... or 'none' to remove. `vedit transition list` shows all"),
+    clip: Optional[str] = typer.Option(None, help="Clip the transition leads INTO (default: every cut)"),
+    duration: float = typer.Option(0.5, help="Seconds (blend is centred on the cut)"),
+):
+    """Animated transition between clips. Timeline length and overlay times don't change."""
+    from .project import TRANSITION_ALIASES, TRANSITIONS
+
+    if kind == "list":
+        return emit({"transitions": list(TRANSITIONS), "aliases": TRANSITION_ALIASES},
+                    "Transitions: " + ", ".join(TRANSITIONS) + "\nAliases: " + ", ".join(f"{k}->{v}" for k, v in TRANSITION_ALIASES.items()))
+    with edit(f"transition {kind}" + (f" into {clip}" if clip else " on all cuts")) as tx:
+        if kind in ("none", "cut", "clear", "off"):
+            ids = cut.clear_transition(tx.project, clip)
+        else:
+            ids = cut.set_transition(tx.project, kind, duration, clip)
+    emit({"clips": ids, "transition": kind, "duration": duration}, f"Transition {kind} into {', '.join(ids)}")
 
 
 @app.command("silence-cut")
@@ -644,6 +670,135 @@ def face_clear(clip: Optional[str] = None):
     with edit("clear face effects") as tx:
         ids = _clear_effect(tx.project, clip, ("face_mesh", "face_sticker", "face_prop", "face_blur"))
     emit({"clips": ids}, "Face effects cleared")
+
+
+# ---- masks & object focus ---------------------------------------------------------------
+
+def _region(p: Project, d: Path, clip: str | None, at: float | None, box: str | None, obj: str | None, space: str) -> tuple:
+    from .ops import track
+
+    return track.region(p, d, clip, at, box, obj, space)
+
+
+@mask_app.command("add")
+def mask_add(
+    box: Optional[str] = typer.Option(None, help="x,y,w,h of the region on the canvas (px or %), e.g. 20%,55%,60%,10%"),
+    obj: Optional[str] = typer.Option(None, "--object", help="Detect it instead: person, car, bottle, cell phone, laptop, any..."),
+    clip: Optional[str] = typer.Option(None, help="Clip (default: the clip under --at)"),
+    at: Optional[float] = typer.Option(None, help="Timeline seconds where the box is right (tracking starts here)"),
+    style: str = typer.Option("blur", help="blur | pixelate | fill | dim"),
+    strength: Optional[float] = typer.Option(None, help="blur sigma (40) / pixel block size (28) / dim amount 0-1 (0.6)"),
+    color: str = typer.Option("#000000", help="Fill colour for --style fill"),
+    shape: str = typer.Option("rect", help="rect (rounded) | ellipse"),
+    feather: float = typer.Option(0.04, help="Soft edge, fraction of the frame's short side (0 = hard edge)"),
+    expand: float = typer.Option(1.1, help="Grow the box (1.1 = 10% margin so edges never peek out)"),
+    track_: bool = typer.Option(True, "--track/--no-track", help="Follow the region as the camera / object moves"),
+    smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
+    invert: bool = typer.Option(False, help="Apply to everything EXCEPT the region"),
+    space: str = typer.Option("canvas", help="canvas (what you see in frames) | source (original video pixels)"),
+):
+    """Hide a region (labels, logos, plates, screens) with a soft-edged mask that follows it."""
+    from .ops.track import STYLES
+
+    if style not in STYLES:
+        raise VeditError(f"--style must be one of {', '.join(STYLES)}")
+    if shape not in ("rect", "ellipse"):
+        raise VeditError("--shape must be rect or ellipse")
+    d = pdir()
+    with edit(f"mask ({style})") as tx:
+        p = tx.project
+        c, params, note = _region(p, d, clip, at, box, obj, space)
+        from .ops.track import new_mask_id
+
+        params.update({"id": new_mask_id(p), "style": style, "color": color, "shape": shape, "feather": feather,
+                       "expand": expand, "track": track_, "smooth": smooth, "invert": invert})
+        if strength is not None:
+            params["strength"] = strength
+        c.effects.append(Effect(type="mask", params=params))
+    emit({"mask": params["id"], "clip": c.id, "box_source": params["box"], "note": note},
+         f"Mask {params['id']} on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+
+
+def _masks(p: Project, mask_id: str | None):
+    hits = [(c, e) for c in p.clips for e in c.effects if e.type == "mask" and (mask_id is None or e.params.get("id") == mask_id)]
+    if mask_id and not hits:
+        raise VeditError(f"No mask '{mask_id}'. Masks: {', '.join(sorted({e.params.get('id') for c in p.clips for e in c.effects if e.type == 'mask'})) or 'none'}")
+    return hits
+
+
+@mask_app.command("list")
+def mask_list():
+    """List masks (id, clip, style, box in source fractions)."""
+    p = load(pdir())
+    rows = [{"id": e.params.get("id"), "clip": c.id, "style": e.params.get("style"), "box_source": e.params.get("box"),
+             "track": e.params.get("track", True)} for c, e in _masks(p, None)]
+    emit({"masks": rows}, "\n".join(f"{r['id']}  {r['clip']}  {r['style']}  {r['box_source']}" for r in rows) or "(no masks)")
+
+
+@mask_app.command("set")
+def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float] = None, color: Optional[str] = None,
+             feather: Optional[float] = None, expand: Optional[float] = None, shape: Optional[str] = None,
+             invert: Optional[bool] = typer.Option(None, "--invert/--no-invert")):
+    """Change how a mask looks (style changes don't re-track)."""
+    with edit(f"mask {mask_id}") as tx:
+        for _, e in _masks(tx.project, mask_id):
+            for k, v in (("style", style), ("strength", strength), ("color", color), ("feather", feather),
+                         ("expand", expand), ("shape", shape), ("invert", invert)):
+                if v is not None:
+                    e.params[k] = v
+    emit({"mask": mask_id}, f"Updated {mask_id}")
+
+
+@mask_app.command("remove")
+def mask_remove(mask_id: str = typer.Argument(..., help="Mask id, or 'all'")):
+    """Remove a mask (or all masks)."""
+    with edit(f"remove mask {mask_id}") as tx:
+        hits = _masks(tx.project, None if mask_id == "all" else mask_id)
+        for c, e in hits:
+            c.effects.remove(e)
+    emit({"removed": len(hits)}, f"Removed {len(hits)} mask(s)")
+
+
+@focus_app.command("add")
+def focus_add(
+    box: Optional[str] = typer.Option(None, help="x,y,w,h of the object on the canvas (px or %)"),
+    obj: Optional[str] = typer.Option(None, "--object", help="Detect it: person, car, dog, bottle, cell phone, any..."),
+    clip: Optional[str] = typer.Option(None, help="Clip (default: the clip under --at)"),
+    at: Optional[float] = typer.Option(None, help="Timeline seconds where the box is right"),
+    mode: str = typer.Option("spotlight", help="spotlight (blur + dim around it) | follow (camera pans with it) | both"),
+    zoom: Optional[float] = typer.Option(None, help="follow: how tight the shot is (default: 1.0 when reframing wide video, else 1.4)"),
+    blur: float = typer.Option(14, help="spotlight: background blur sigma (0 = none)"),
+    dim: float = typer.Option(0.35, help="spotlight: background darkening 0-1"),
+    feather: float = typer.Option(0.12, help="spotlight: edge softness"),
+    expand: float = typer.Option(1.35, help="spotlight: room around the object"),
+    smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
+    track_: bool = typer.Option(True, "--track/--no-track"),
+    space: str = typer.Option("canvas", help="canvas | source"),
+):
+    """Put the focus on one object: spotlight it, or reframe the shot to follow it."""
+    if mode not in ("spotlight", "follow", "both"):
+        raise VeditError("--mode must be spotlight, follow or both")
+    d = pdir()
+    with edit(f"focus ({mode})") as tx:
+        p = tx.project
+        if clip is None and at is None and len(p.clips) > 1:
+            raise VeditError("Say which clip with --clip, or give --at <timeline seconds>")
+        c, params, note = _region(p, d, clip, at, box, obj, space)
+        params.update({"mode": mode, "blur": blur, "dim": dim, "feather": feather, "expand": expand,
+                       "smooth": smooth, "track": track_, "shape": "ellipse", "invert": True})
+        if zoom is not None:
+            params["zoom"] = zoom
+        c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
+    emit({"clip": c.id, "mode": mode, "box_source": params["box"], "note": note},
+         f"Focus ({mode}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+
+
+@focus_app.command("clear")
+def focus_clear(clip: Optional[str] = None):
+    """Remove object focus."""
+    with edit("clear focus") as tx:
+        ids = _clear_effect(tx.project, clip, ("focus",))
+    emit({"clips": ids}, "Focus cleared")
 
 
 # ---- music ------------------------------------------------------------------------------

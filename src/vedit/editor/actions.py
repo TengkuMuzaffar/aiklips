@@ -13,9 +13,10 @@ from typing import Any, Callable
 from .. import history, media
 from ..ops import animate as anim
 from ..ops import cut
-from ..project import Layer, Project, Source, TextStyle, VeditError, store_media_path
+from ..project import Effect, Layer, Project, Source, TextStyle, VeditError, store_media_path
 
 Handler = Callable[[Project, dict], str]  # returns the history message
+_PDIR: list[Path] = [Path(".")]  # project folder of the action being applied (for media lookups)
 _OPS: dict[str, Handler] = {}
 
 
@@ -66,6 +67,60 @@ def _clip_set(p: Project, a: dict) -> str:
     return f"{c.id}: " + (", ".join(changed) or "no change")
 
 
+@op("transition_set")
+def _transition_set(p: Project, a: dict) -> str:
+    kind = str(a.get("type") or "none")
+    if kind in ("none", "cut", ""):
+        cut.clear_transition(p, a.get("clip"))
+        return f"{a.get('clip') or 'all cuts'}: hard cut"
+    ids = cut.set_transition(p, kind, float(a.get("duration") or 0.5), a.get("clip"))
+    return f"transition {kind} into {', '.join(ids)}"
+
+
+@op("mask_add")
+def _mask_add(p: Project, a: dict) -> str:
+    from ..ops import track
+
+    style = a.get("style") or "blur"
+    if style not in track.STYLES:
+        raise VeditError(f"style must be one of {', '.join(track.STYLES)}")
+    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"))
+    params.update({"id": track.new_mask_id(p), "style": style, "color": a.get("color") or "#000000",
+                   "shape": a.get("shape") or "rect", "feather": float(a.get("feather") or 0.04),
+                   "expand": float(a.get("expand") or 1.1), "track": bool(a.get("track", True)), "smooth": 0.6,
+                   "invert": bool(a.get("invert", False))})
+    c.effects.append(Effect(type="mask", params=params))
+    return f"{c.id}: mask {params['id']} ({style})"
+
+
+@op("mask_set")
+def _mask_set(p: Project, a: dict) -> str:
+    hits = [e for c in p.clips for e in c.effects if e.type == "mask" and e.params.get("id") == a["id"]]
+    if not hits:
+        raise VeditError(f"No mask {a['id']}")
+    for e in hits:
+        for k in ("style", "strength", "color", "feather", "expand", "shape", "invert"):
+            if k in a and a[k] not in (None, ""):
+                e.params[k] = a[k]
+    return f"mask {a['id']}: update"
+
+
+@op("focus_add")
+def _focus_add(p: Project, a: dict) -> str:
+    from ..ops import track
+
+    mode = a.get("mode") or "spotlight"
+    if mode not in ("spotlight", "follow", "both"):
+        raise VeditError("mode must be spotlight, follow or both")
+    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"))
+    params.update({"mode": mode, "blur": 14.0, "dim": 0.35, "feather": 0.12, "expand": 1.35, "smooth": 0.6,
+                   "track": bool(a.get("track", True)), "shape": "ellipse", "invert": True})
+    if _num(a, "zoom"):
+        params["zoom"] = float(a["zoom"])
+    c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
+    return f"{c.id}: focus ({mode})"
+
+
 @op("remove_clip")
 def _remove_clip(p: Project, a: dict) -> str:
     cut.remove_clip(p, a["clip"])
@@ -75,6 +130,9 @@ def _remove_clip(p: Project, a: dict) -> str:
 @op("remove_effect")
 def _remove_effect(p: Project, a: dict) -> str:
     c = p.clip(a["clip"])
+    if a.get("id"):
+        c.effects = [e for e in c.effects if e.params.get("id") != a["id"]]
+        return f"{c.id}: remove {a['id']}"
     c.effects = [e for e in c.effects if e.type != a["type"]]
     return f"{c.id}: remove {a['type']}"
 
@@ -229,6 +287,7 @@ def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     fn = _OPS.get(name)
     if not fn:
         raise VeditError(f"Unknown action '{name}'")
+    _PDIR[0] = pdir
     with history.transaction(pdir, name) as tx:
         tx.message = fn(tx.project, args)
     return {"ok": True, "message": tx.message}

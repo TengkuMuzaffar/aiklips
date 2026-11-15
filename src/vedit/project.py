@@ -48,8 +48,40 @@ class Source(_Model):
 class Effect(_Model):
     """A per-clip effect computed on the clip's source (cached in .vedit/cache)."""
 
-    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur"]
+    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur", "mask", "focus"]
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+TRANSITIONS = (
+    "fade", "fadeblack", "fadewhite", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown",
+    "slideleft", "slideright", "slideup", "slidedown", "smoothleft", "smoothright", "smoothup", "smoothdown",
+    "circleopen", "circleclose", "circlecrop", "rectcrop", "radial", "zoomin", "pixelize", "hblur", "distance",
+    "squeezeh", "squeezev", "diagtl", "diagbr", "hlslice", "hrslice", "coverleft", "coverright", "revealleft", "revealright",
+)
+TRANSITION_ALIASES = {
+    "crossfade": "fade", "cross": "fade", "mix": "fade", "dip": "fadeblack", "dip-black": "fadeblack", "black": "fadeblack",
+    "dip-white": "fadewhite", "flash": "fadewhite", "white": "fadewhite", "zoom": "zoomin", "push": "slideleft",
+    "slide": "slideleft", "wipe": "wipeleft", "whip": "hblur", "blur": "hblur", "circle": "circleopen", "iris": "circleopen",
+    "pixel": "pixelize", "glitch": "pixelize", "clock": "radial", "squeeze": "squeezeh",
+}
+
+
+def transition_name(name: str) -> str:
+    n = name.strip().lower().replace("_", "-")
+    n = TRANSITION_ALIASES.get(n, n).replace("-", "")
+    if n not in TRANSITIONS:
+        raise VeditError(f"Unknown transition '{name}'. Use one of: {', '.join(TRANSITIONS)} "
+                         f"(aliases: {', '.join(TRANSITION_ALIASES)})")
+    return n
+
+
+class Transition(_Model):
+    """How this clip comes in from the previous one. The cut point stays where it is:
+    the blend is centred on it, using source handles (or held frames) on both sides,
+    so the timeline length and every overlay time are unchanged."""
+
+    type: str = "fade"
+    duration: float = 0.5
 
 
 class Clip(_Model):
@@ -65,6 +97,7 @@ class Clip(_Model):
     zoom: float = 1.0
     zoom_to: float | None = None  # animated zoom (Ken Burns) from `zoom` to `zoom_to`
     effects: list[Effect] = Field(default_factory=list)
+    transition: Transition | None = None  # transition *into* this clip from the previous one
 
     @property
     def duration(self) -> float:

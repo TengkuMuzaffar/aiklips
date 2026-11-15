@@ -63,7 +63,9 @@ def cli(tmp_path, monkeypatch):
         res = runner.invoke(app, ["--json", "-p", str(project), *args])
         if ok:
             assert res.exit_code == 0, f"{args} failed: {res.output}\n{res.exception!r}"
-            return json.loads(res.output.strip().splitlines()[-1])
+            lines = [ln for ln in res.output.strip().splitlines() if ln.startswith("{")]
+            assert lines, f"{args}: no JSON in output: {res.output!r}"
+            return json.loads(lines[-1])
         assert res.exit_code != 0 or res.exception is not None
         return {}
 
