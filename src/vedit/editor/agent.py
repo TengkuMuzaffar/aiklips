@@ -1,0 +1,281 @@
+"""AI chat pane: a Claude Code agent (Claude Agent SDK) that edits the open project.
+
+Every message from the user is sent with an <editor_context> block describing what
+is selected in the GUI and where the playhead is, so "make this clip slower" works.
+The agent may only run `vedit` (plus read-only tools); anything else is denied.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any
+
+from fastapi import WebSocket
+
+from ..project import load, state_dir
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_MODEL = os.environ.get("VEDIT_MODEL", "claude-opus-5-5")
+MODELS = {"claude-opus-5-5": "Opus 5.5 (best)", "claude-sonnet-5-5": "Sonnet 5.5 (faster, cheaper)", "claude-haiku-5-5": "Haiku 5.5 (cheapest)"}
+
+SYSTEM_APPEND = """
+You are running inside the claude-cut desktop editor. The user sees four panes:
+an inspector (top-left), the video preview (top-right), this chat (bottom-left) and a
+drag-and-drop timeline (bottom-right). The preview and timeline refresh automatically
+after every vedit command, so never run `vedit serve`, `vedit app` or `--open`.
+
+The active project is already selected for you (VEDIT_PROJECT), so run plain
+`uv run vedit --json <command>` without --project.
+
+Each user message starts with an <editor_context> block: the playhead time and the
+item the user has selected in the GUI. Words like "this", "here", "this clip" or
+"now" refer to that selection / playhead. The user can also edit by hand in the GUI,
+so always run `uv run vedit --json info` before acting on stale assumptions.
+
+Keep replies short: what you changed, in timeline seconds. To check visual results,
+run `vedit frame --at T` (several at once: `--at 72,75.5,78`) or `vedit sheet` and read
+the JPGs it returns. Don't write shell loops or scripts; one vedit command per step.
+""".strip()
+
+_ALLOWED_TOOLS = {"Read", "Glob", "Grep", "Skill", "TodoWrite", "ToolSearch"}
+_CMD_OK = re.compile(r"^\s*(uv\s+run\s+(-q\s+)?(--project\s+\S+\s+)?vedit\b|vedit\b|ffprobe\b|ls\b|cat\s+\S*project\.json)")
+
+
+_FOR_LOOP = re.compile(r"^\s*for\s+(\w+)\s+in\s+([\w.,:\s-]+?)\s*;\s*do\s+(.+?)\s*;?\s*done\s*$", re.S)
+
+
+def _bash_allowed(cmd: str) -> bool:
+    """Only vedit (and a few read-only helpers), optionally chained or in a simple for-loop."""
+    if "`" in cmd or "$(" in cmd or ">" in cmd or "<" in cmd:
+        return False
+    m = _FOR_LOOP.match(cmd)
+    if m:  # e.g. for t in 72 75 78; do uv run vedit frame --at $t; done
+        var, body = m.group(1), m.group(3)
+        if re.search(r"\$(?!\{?" + var + r"\b)", body):  # only the loop variable may be expanded
+            return False
+        cmd = body
+    elif "$" in cmd:
+        return False
+    parts = [s for s in re.split(r"&&|\|\||;|\n|\|", cmd) if s.strip()]
+    return bool(parts) and all(_CMD_OK.match(s) for s in parts)
+
+
+def _short_cmd(cmd: str) -> str:
+    cmd = re.sub(r"uv\s+run\s+(-q\s+)?(--project\s+\S+\s+)?", "", cmd.strip())
+    return cmd.replace("vedit --json ", "vedit ")
+
+
+def _result_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+    return ""
+
+
+class ChatSession:
+    def __init__(self, pdir: Path):
+        self.pdir = pdir
+        self.sockets: set[WebSocket] = set()
+        self.client = None
+        self.busy = False
+        self.lock = asyncio.Lock()
+        self.store = state_dir(pdir) / "chat.json"
+        data = {}
+        if self.store.exists():
+            try:
+                data = json.loads(self.store.read_text())
+            except json.JSONDecodeError:
+                data = {}
+        self.log: list[dict] = data.get("log", [])[-300:]
+        self.session_id: str | None = data.get("session_id")
+        self.model: str = data.get("model") or DEFAULT_MODEL
+
+    # ---- plumbing --------------------------------------------------------------
+    def _save(self) -> None:
+        self.store.write_text(json.dumps({"session_id": self.session_id, "model": self.model, "log": self.log[-300:]}))
+
+    async def emit(self, ev: dict, persist: bool = True) -> None:
+        ev.setdefault("time", time.time())
+        if persist:
+            self.log.append(ev)
+            self._save()
+        dead = []
+        for ws in list(self.sockets):
+            try:
+                await ws.send_json(ev)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.sockets.discard(ws)
+
+    async def attach(self, ws: WebSocket) -> None:
+        self.sockets.add(ws)
+        await ws.send_json({"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": MODELS})
+
+    async def _permission(self, tool: str, data: dict, ctx: Any):
+        from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+        if tool in _ALLOWED_TOOLS:
+            return PermissionResultAllow()
+        if tool == "Bash" and _bash_allowed(str(data.get("command", ""))):
+            return PermissionResultAllow()
+        if tool in ("Edit", "Write") and Path(str(data.get("file_path", ""))).resolve() == (self.pdir / "project.json").resolve():
+            return PermissionResultAllow()
+        await self.emit({"type": "notice", "text": f"Blocked {tool}: only vedit commands are allowed in the editor."})
+        return PermissionResultDeny(message="In the claude-cut editor you may only run `uv run vedit ...` commands "
+                                            "(plus Read/Glob/Grep and editing project.json). Use a vedit command instead.")
+
+    async def _connect(self, resume: bool) -> None:
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+        root = REPO_ROOT if (REPO_ROOT / "CLAUDE.md").exists() else self.pdir
+        opts = ClaudeAgentOptions(
+            cwd=str(root),
+            model=self.model,
+            system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
+            setting_sources=["project"],
+            can_use_tool=self._permission,
+            env={"VEDIT_PROJECT": str(self.pdir)},
+            resume=self.session_id if resume else None,
+            max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
+        )
+        self.client = ClaudeSDKClient(options=opts)
+        await self.client.connect()
+
+    async def _ensure(self) -> None:
+        if self.client is not None:
+            return
+        if self.session_id:
+            try:
+                await self._connect(resume=True)
+                return
+            except Exception:
+                self.session_id = None
+        await self._connect(resume=False)
+
+    # ---- conversation ------------------------------------------------------------
+    def context_block(self, ctx: dict) -> str:
+        lines = [f"project: {self.pdir}"]
+        try:
+            p = load(self.pdir)
+            lines.append(f"timeline: {p.duration:.2f}s, {len(p.clips)} clips, {len(p.layers)} layers, canvas {p.canvas.width}x{p.canvas.height}")
+            if ctx.get("playhead") is not None:
+                lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
+            sel = ctx.get("selection") or {}
+            kind, sid = sel.get("kind"), sel.get("id")
+            if kind == "clip":
+                starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
+                c = p.clip(sid)
+                lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
+                             f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: {', '.join(e.type for e in c.effects) or 'none'})")
+            elif kind == "layer":
+                l = p.layer(sid)
+                label = l.text or l.image or " ".join(w.text for w in l.words[:8])
+                lines.append(f"selected: {l.type} layer {l.id} {l.start:.2f}-{(l.end if l.end is not None else p.duration):.2f}s \"{label[:60]}\"")
+            elif kind == "music":
+                lines.append(f"selected: music track {sid}")
+            elif kind == "source":
+                s = p.sources[sid]
+                lines.append(f"selected: media source {sid} ({Path(s.path).name}, {s.duration:.2f}s, not necessarily on the timeline)")
+            else:
+                lines.append("selected: nothing")
+        except Exception as e:  # never block a message because context failed
+            lines.append(f"(context unavailable: {e})")
+        return "<editor_context>\n" + "\n".join(lines) + "\n</editor_context>"
+
+    async def ask(self, text: str, ctx: dict) -> None:
+        if self.lock.locked():
+            await self.emit({"type": "notice", "text": "Still working on the previous request. Press Stop to interrupt."}, persist=False)
+            return
+        async with self.lock:
+            self.busy = True
+            await self.emit({"type": "user", "text": text, "context": ctx.get("label")})
+            await self.emit({"type": "status", "busy": True}, persist=False)
+            try:
+                await self._ensure()
+                await self.client.query(self.context_block(ctx) + "\n\n" + text)
+                await self._pump()
+            except Exception as e:
+                msg = str(e) or type(e).__name__
+                if "auth" in msg.lower() or "login" in msg.lower():
+                    msg += "  (Sign in once by running `claude` in a terminal, then try again.)"
+                await self.emit({"type": "error", "text": msg})
+                await self._reset()
+            finally:
+                self.busy = False
+                await self.emit({"type": "status", "busy": False}, persist=False)
+
+    async def _pump(self) -> None:
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import ToolResultBlock, ToolUseBlock, UserMessage
+
+        async for msg in self.client.receive_response():
+            if isinstance(msg, AssistantMessage):
+                if msg.error:
+                    await self.emit({"type": "error", "text": f"Claude error: {msg.error}"})
+                for b in msg.content:
+                    if isinstance(b, TextBlock) and b.text.strip():
+                        await self.emit({"type": "assistant", "text": b.text})
+                    elif isinstance(b, ToolUseBlock):
+                        if b.name == "Bash":
+                            summary = _short_cmd(str(b.input.get("command", "")))
+                        elif b.name == "Read":
+                            fp = str(b.input.get("file_path", ""))
+                            summary = ("look at " if fp.lower().endswith((".png", ".jpg")) else "read ") + Path(fp).name
+                        elif b.name == "Skill":
+                            summary = f"load skill {b.input.get('skill') or b.input.get('name') or ''}"
+                        else:
+                            summary = b.name
+                        await self.emit({"type": "tool", "id": b.id, "name": b.name, "summary": summary})
+            elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+                for b in msg.content:
+                    if isinstance(b, ToolResultBlock):
+                        txt = _result_text(b.content).strip()
+                        ok = not b.is_error and '"ok": false' not in txt
+                        await self.emit({"type": "tool_result", "id": b.tool_use_id, "ok": ok, "text": txt[:300]})
+            elif isinstance(msg, ResultMessage):
+                self.session_id = msg.session_id or self.session_id
+                await self.emit({"type": "done", "ok": not msg.is_error, "cost": msg.total_cost_usd,
+                                 "seconds": round((msg.duration_ms or 0) / 1000, 1),
+                                 "error": None if not msg.is_error else (msg.result or msg.subtype)})
+
+    async def set_model(self, model: str) -> None:
+        if model not in MODELS:
+            return
+        self.model = model
+        self._save()
+        if self.client is not None and not self.busy:
+            try:
+                await self.client.set_model(model)
+            except Exception:
+                await self._reset()
+        await self.emit({"type": "notice", "text": f"Model: {MODELS[model]}"})
+
+    async def interrupt(self) -> None:
+        if self.client is not None and self.busy:
+            try:
+                await self.client.interrupt()
+            except Exception:
+                pass
+            await self.emit({"type": "notice", "text": "Stopped."})
+
+    async def new_conversation(self) -> None:
+        await self._reset()
+        self.session_id = None
+        self.log = []
+        self._save()
+        await self.emit({"type": "history", "log": [], "busy": False, "model": self.model, "models": MODELS}, persist=False)
+
+    async def _reset(self) -> None:
+        if self.client is not None:
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+        self.client = None

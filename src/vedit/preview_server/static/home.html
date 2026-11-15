@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-cut</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
+  --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25; --danger: #f87171;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+button, input, select { font: inherit; color: inherit; }
+button { background: var(--pane3); border: 1px solid var(--line2); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+button.ghost:hover { color: var(--text); border-color: var(--line2); }
+button.danger { background: #3a1717; border-color: #6b2a2a; color: #fecaca; }
+button.danger:hover { border-color: var(--danger); }
+input, select { background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+header { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--pane); position: sticky; top: 0; z-index: 5; }
+.logo { font-weight: 700; font-size: 16px; letter-spacing: .2px; }
+.logo span { color: var(--accent); }
+.spacer { flex: 1; }
+main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
+.top { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.top h1 { font-size: 22px; margin: 0; font-weight: 650; }
+.top .count { color: var(--faint); font-size: 14px; }
+#search { width: 220px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
+.card { background: var(--pane); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; cursor: pointer; position: relative; transition: border-color .12s, transform .12s; }
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.thumb { height: 200px; background: #000; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.thumb .bgblur { position: absolute; inset: -20px; background: center / cover no-repeat; filter: blur(18px) brightness(.45); }
+.thumb img { position: relative; max-height: 100%; max-width: 100%; display: block; }
+.thumb .initials { position: relative; font-size: 34px; font-weight: 700; color: #ffffff22; letter-spacing: 2px; }
+.thumb .fmt { position: absolute; left: 10px; bottom: 10px; font-size: 11px; background: #000a; padding: 2px 7px; border-radius: 6px; color: #ddd; }
+.thumb .badge { position: absolute; left: 10px; top: 10px; font-size: 11px; background: var(--accent); color: var(--accent-ink); padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+.thumb .badge.warn { background: #7f1d1d; color: #fecaca; }
+.info { padding: 11px 14px 13px; }
+.name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 26px; }
+.meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.more { position: absolute; right: 8px; bottom: 14px; padding: 2px 8px; font-size: 16px; line-height: 1; }
+.new { border: 2px dashed var(--line2); background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 262px; color: var(--muted); gap: 6px; }
+.new .plus { font-size: 40px; line-height: 1; color: var(--accent); }
+.new:hover { color: var(--text); }
+
+.menu { position: fixed; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; padding: 5px; min-width: 190px; box-shadow: 0 12px 40px #000c; z-index: 20; display: none; }
+.menu button { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 7px 10px; border-radius: 6px; }
+.menu button:hover { background: var(--pane3); }
+.menu button.red { color: var(--danger); }
+.menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 0; }
+
+.veil { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
+.dialog { background: var(--pane); border: 1px solid var(--line2); border-radius: 16px; width: min(520px, 100%); padding: 22px; box-shadow: 0 20px 60px #000c; }
+.dialog h2 { margin: 0 0 4px; font-size: 18px; }
+.dialog p { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+.dialog label { display: block; color: var(--muted); font-size: 12px; margin: 14px 0 6px; }
+.dialog input[type=text] { width: 100%; }
+.formats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.fmtbtn { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px 10px; border-radius: 10px; background: var(--pane2); }
+.fmtbtn.on { border-color: var(--accent); background: #0f2a26; }
+.fmtbtn .shape { border: 2px solid currentColor; border-radius: 4px; opacity: .8; }
+.fmtbtn small { color: var(--muted); font-size: 11px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.empty { text-align: center; padding: 70px 20px; color: var(--muted); }
+.empty h2 { color: var(--text); font-size: 22px; margin: 0 0 8px; }
+.foot { color: var(--faint); font-size: 12px; margin-top: 28px; }
+#toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--pane3); border: 1px solid var(--line2); padding: 9px 16px; border-radius: 10px; display: none; z-index: 50; }
+#toast.err { border-color: var(--danger); color: #fecaca; }
+@media (max-width: 560px) { #search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">claude<span>-</span>cut</div>
+  <div class="spacer"></div>
+  <button class="ghost" id="b-add" title="Add an existing project folder to the list">Open folder…</button>
+  <button class="primary" id="b-new">＋ New project</button>
+</header>
+<main>
+  <div class="top">
+    <h1>Projects</h1><span class="count" id="count"></span>
+    <div class="spacer"></div>
+    <input id="search" type="search" placeholder="Search projects  ( / )">
+    <select id="sort"><option value="recent">Recently used</option><option value="name">Name</option><option value="created">Newest</option></select>
+  </div>
+  <div id="list"></div>
+  <div class="foot" id="foot"></div>
+</main>
+
+<div class="menu" id="menu"></div>
+
+<div class="veil" id="dlg-new"><form class="dialog" id="f-new">
+  <h2>New project</h2>
+  <p>Pick a name and a format. You can change the format later.</p>
+  <label for="n-name">Name</label>
+  <input type="text" id="n-name" placeholder="e.g. Raya promo reel" maxlength="80" required>
+  <label>Format</label>
+  <div class="formats" id="n-fmt"></div>
+  <label for="n-fps">Frame rate</label>
+  <select id="n-fps"><option>24</option><option>25</option><option selected>30</option><option>60</option></select>
+  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Create &amp; open</button></div>
+</form></div>
+
+<div class="veil" id="dlg-input"><form class="dialog" id="f-input">
+  <h2 id="i-title"></h2><p id="i-desc"></p>
+  <input type="text" id="i-value" required>
+  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit" id="i-ok">OK</button></div>
+</form></div>
+
+<div class="veil" id="dlg-confirm"><div class="dialog">
+  <h2 id="c-title"></h2><p id="c-desc"></p>
+  <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="danger" id="c-ok">Delete</button></div>
+</div></div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const FORMATS = [
+  { id: "reels", label: "9:16", sub: "Reels / TikTok", w: 18, h: 32 },
+  { id: "portrait45", label: "4:5", sub: "Feed post", w: 24, h: 30 },
+  { id: "square", label: "1:1", sub: "Square", w: 28, h: 28 },
+  { id: "landscape", label: "16:9", sub: "YouTube", w: 36, h: 20 },
+];
+let DATA = { projects: [] }, fmtChoice = "reels";
+
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (k === "style") Object.assign(el.style, v);
+    else el.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = err ? "err" : ""; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = "none"), err ? 5000 : 2200);
+}
+async function call(method, url, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) { let d = "Something went wrong"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
+  return r.json();
+}
+const ago = (ts) => {
+  if (!ts) return "never";
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)} d ago`;
+  return new Date(ts * 1000).toLocaleDateString();
+};
+const dur = (t) => { const m = Math.floor(t / 60); return `${m}:${String(Math.round(t % 60)).padStart(2, "0")}`; };
+const ratio = (p) => {
+  const k = `${p.width}x${p.height}`;
+  return { "1080x1920": "9:16", "1080x1350": "4:5", "1080x1080": "1:1", "1920x1080": "16:9" }[k] || k.replace("x", "×");
+};
+
+async function load() {
+  DATA = await (await fetch("/api/projects")).json();
+  render();
+}
+function sorted() {
+  const q = $("#search").value.trim().toLowerCase();
+  let ps = DATA.projects.filter((p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q));
+  const mode = $("#sort").value;
+  if (mode === "name") ps.sort((a, b) => a.name.localeCompare(b.name));
+  if (mode === "created") ps.sort((a, b) => b.created_at - a.created_at);
+  return ps;
+}
+function render() {
+  const list = $("#list"); list.innerHTML = "";
+  $("#count").textContent = DATA.projects.length ? `${DATA.projects.length}` : "";
+  $("#foot").textContent = `New projects are saved in ${DATA.root}`;
+  if (!DATA.projects.length) {
+    list.append(h("div", { class: "empty" },
+      h("h2", {}, "Welcome to claude-cut"),
+      h("p", {}, "Create your first project, drop in a raw video, and edit by dragging or by asking the AI."),
+      h("button", { class: "primary", onclick: openNew }, "＋ New project")));
+    return;
+  }
+  const grid = h("div", { class: "grid" });
+  grid.append(h("div", { class: "card new", tabindex: 0, onclick: openNew, onkeydown: (e) => e.key === "Enter" && openNew() },
+    h("div", { class: "plus" }, "＋"), h("div", {}, "New project")));
+  for (const p of sorted()) grid.append(card(p));
+  list.append(grid);
+}
+function card(p) {
+  const isOpen = DATA.open && DATA.open === p.path;
+  const thumb = h("div", { class: "thumb" });
+  if (p.clips && !p.missing) {
+    const url = `/api/projects/${p.id}/thumb.jpg?v=${Math.round(p.updated_at || 0)}`;
+    thumb.append(h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
+      h("img", { src: url, alt: "", onerror: (e) => e.target.remove() }));
+  } else {
+    thumb.append(h("div", { class: "initials" }, p.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()));
+  }
+  if (p.missing) thumb.append(h("span", { class: "badge warn" }, "Folder missing"));
+  else if (isOpen) thumb.append(h("span", { class: "badge" }, "Open"));
+  if (!p.missing && p.width) thumb.append(h("span", { class: "fmt" }, ratio(p)));
+  const meta = p.missing ? p.path : [p.clips ? `${dur(p.duration)} · ${p.clips} clip${p.clips === 1 ? "" : "s"}` : "Empty", `edited ${ago(Math.max(p.updated_at || 0, p.opened_at || 0))}`].join(" · ");
+  const c = h("div", { class: "card", tabindex: 0, title: p.path,
+    onclick: () => (p.missing ? toast("This project's folder was moved or deleted", true) : openProject(p)),
+    onkeydown: (e) => e.key === "Enter" && openProject(p) },
+    thumb, h("div", { class: "info" }, h("div", { class: "name" }, p.name), h("div", { class: "meta" }, meta)),
+    h("button", { class: "ghost more", title: "More", onclick: (e) => { e.stopPropagation(); showMenu(e, p); } }, "⋯"));
+  return c;
+}
+async function openProject(p) {
+  const r = await call("POST", `/api/projects/${p.id}/open`);
+  if (r) location.href = "/editor";
+}
+
+// ---- menu ----
+function showMenu(e, p) {
+  const m = $("#menu"); m.innerHTML = "";
+  const item = (label, fn, cls) => h("button", { class: cls || "", onclick: () => { hideMenu(); fn(); } }, label);
+  if (!p.missing) m.append(item("Open", () => openProject(p)), item("Rename…", () => renameProject(p)), item("Duplicate", () => duplicateProject(p)),
+    item("Copy folder path", () => navigator.clipboard?.writeText(p.path).then(() => toast("Path copied"))), h("hr"));
+  m.append(item("Remove from list", () => removeProject(p, false)));
+  if (!p.missing) m.append(item("Delete project…", () => removeProject(p, true), "red"));
+  m.style.display = "block";
+  const r = e.target.getBoundingClientRect();
+  m.style.left = `${Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)}px`;
+  m.style.top = `${Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 4)}px`;
+}
+function hideMenu() { $("#menu").style.display = "none"; }
+document.addEventListener("click", (e) => { if (!$("#menu").contains(e.target)) hideMenu(); });
+
+// ---- dialogs ----
+function show(id) { $(id).style.display = "flex"; }
+function hide(id) { $(id).style.display = "none"; }
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => hide("#" + b.closest(".veil").id)));
+document.querySelectorAll(".veil").forEach((v) => v.addEventListener("mousedown", (e) => { if (e.target === v) hide("#" + v.id); }));
+
+function openNew() {
+  const box = $("#n-fmt"); box.innerHTML = "";
+  for (const f of FORMATS) box.append(h("button", { type: "button", class: "fmtbtn" + (f.id === fmtChoice ? " on" : ""),
+    onclick: () => { fmtChoice = f.id; openNew(); $("#n-name").focus(); } },
+    h("div", { class: "shape", style: { width: f.w + "px", height: f.h + "px" } }), h("b", {}, f.label), h("small", {}, f.sub)));
+  if ($("#dlg-new").style.display !== "flex") { $("#n-name").value = ""; show("#dlg-new"); }
+  $("#n-name").focus();
+}
+$("#f-new").onsubmit = async (e) => {
+  e.preventDefault();
+  const r = await call("POST", "/api/projects", { name: $("#n-name").value, format: fmtChoice, fps: $("#n-fps").value });
+  if (r) location.href = "/editor";
+};
+
+let inputCb = null;
+function ask(title, desc, value, okLabel, cb) {
+  $("#i-title").textContent = title; $("#i-desc").textContent = desc; $("#i-value").value = value; $("#i-ok").textContent = okLabel;
+  inputCb = cb; show("#dlg-input"); $("#i-value").focus(); $("#i-value").select();
+}
+$("#f-input").onsubmit = async (e) => { e.preventDefault(); if (inputCb && (await inputCb($("#i-value").value)) !== false) hide("#dlg-input"); };
+
+function renameProject(p) {
+  ask("Rename project", "The folder stays where it is; only the name changes.", p.name, "Rename", async (v) => { const r = await call("POST", `/api/projects/${p.id}/rename`, { name: v }); if (!r) return false; load(); });
+}
+async function duplicateProject(p) {
+  const r = await call("POST", `/api/projects/${p.id}/duplicate`);
+  if (r) { toast(`Created “${r.name}”`); load(); }
+}
+function removeProject(p, files) {
+  $("#c-title").textContent = files ? `Delete “${p.name}”?` : `Remove “${p.name}” from the list?`;
+  $("#c-desc").textContent = files
+    ? `This permanently deletes the project folder and everything in it, including imported media and exports:\n${p.path}`
+    : "The project folder stays on disk. You can add it back later with “Open folder…”.";
+  $("#c-ok").textContent = files ? "Delete forever" : "Remove";
+  $("#c-ok").onclick = async () => {
+    hide("#dlg-confirm");
+    const r = await call("DELETE", `/api/projects/${p.id}?delete_files=${files}`);
+    if (r) { toast(files ? "Project deleted" : "Removed from list"); load(); }
+  };
+  show("#dlg-confirm");
+}
+$("#b-add").onclick = () => ask("Open project folder", "Paste the full path of a folder that contains a project.json.", "", "Add", async (v) => {
+  const r = await call("POST", "/api/projects/register", { path: v.trim() }); if (!r) return false; toast(`Added “${r.name}”`); load();
+});
+$("#b-new").onclick = openNew;
+$("#search").oninput = render;
+$("#sort").onchange = render;
+document.addEventListener("keydown", (e) => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (e.key === "Escape") { document.querySelectorAll(".veil").forEach((v) => (v.style.display = "none")); hideMenu(); }
+  if (typing) return;
+  if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
+  if (e.key.toLowerCase() === "n") { e.preventDefault(); openNew(); }
+});
+load();
+</script>
+</body>
+</html>

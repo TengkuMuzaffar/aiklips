@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-cut</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
+  --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25;
+  --clip: #23344f; --clip-b: #4a6fa8; --text-l: #2f4a2a; --text-b: #6aa860; --img-l: #3a2f4f; --img-b: #9a7fd0;
+  --cap-l: #4a3c18; --cap-b: #d0a640; --mus-l: #173a45; --mus-b: #3fa5c0; --sel: #fbbf24; --danger: #f87171; --ok: #4ade80;
+  --col: 340px; --row: 58%;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; display: flex; flex-direction: column; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--pane3); border: 1px solid var(--line2); border-radius: 7px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+button.ghost:hover { color: var(--text); border-color: var(--line2); }
+button.danger:hover { border-color: var(--danger); color: var(--danger); }
+button:disabled { opacity: .45; cursor: default; }
+input, select, textarea { background: var(--bg); border: 1px solid var(--line2); border-radius: 6px; padding: 4px 7px; min-width: 0; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input[type=color] { padding: 1px; height: 26px; width: 44px; }
+input[type=range] { accent-color: var(--accent); }
+kbd { background: var(--pane3); border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; font-size: 11px; color: var(--muted); }
+
+/* ---- header ---- */
+header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--pane); }
+.logo { font-weight: 700; letter-spacing: .2px; }
+.logo span { color: var(--accent); }
+#proj-name { color: var(--muted); }
+.spacer { flex: 1; }
+.pill { padding: 3px 10px; border-radius: 999px; background: var(--pane3); color: var(--muted); font-size: 12px; }
+.pill.rendering { color: #fde68a; } .pill.error { color: var(--danger); } .pill.ready { color: var(--accent); }
+
+/* ---- 4-pane grid ---- */
+#grid { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--col) 5px 1fr; grid-template-rows: var(--row) 5px 1fr; }
+.pane { background: var(--pane); min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pane-h { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--pane2); }
+.pane-h h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.splitter { background: var(--line); }
+.splitter:hover, .splitter.drag { background: var(--accent); }
+#split-v { grid-column: 2; grid-row: 1 / 4; cursor: col-resize; }
+#split-h { grid-column: 1 / 4; grid-row: 2; cursor: row-resize; z-index: 2; }
+#p-insp { grid-column: 1; grid-row: 1; }
+#p-prev { grid-column: 3; grid-row: 1; }
+#p-chat { grid-column: 1; grid-row: 3; }
+#p-tl { grid-column: 3; grid-row: 3; }
+
+/* ---- inspector ---- */
+.tabs { display: flex; gap: 2px; }
+.tab { background: transparent; border: none; padding: 4px 9px; border-radius: 6px; color: var(--muted); }
+.tab.on { background: var(--pane3); color: var(--text); }
+#insp-body { flex: 1; overflow: auto; padding: 10px 12px 20px; }
+.crumb { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--muted); font-size: 12px; }
+.crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+.sec { margin: 0 0 14px; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.sec-h h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+.row:hover { background: var(--pane2); }
+.row.sel { border-color: var(--sel); background: #2a2413; }
+.row .tag { font: 11px ui-monospace, monospace; color: var(--muted); min-width: 34px; }
+.row .lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.empty { color: var(--faint); font-size: 12px; padding: 4px 8px; }
+.bin { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.src { border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; cursor: grab; background: var(--pane2); }
+.src.sel { border-color: var(--sel); }
+.src .th { height: 54px; background: #000 center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 20px; }
+.src .nm { font-size: 11px; padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.fields { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px 10px; align-items: center; }
+.fields label { color: var(--muted); font-size: 12px; }
+.fields .full { grid-column: 1 / 3; }
+.fields .pair { display: flex; gap: 6px; align-items: center; }
+.fields .pair > * { flex: 1; min-width: 0; }
+.fields .pair > input[type=color], .fields .pair > .hint { flex: none; }
+.fields input:not([type=checkbox]):not([type=color]), .fields select, .fields textarea { width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; gap: 4px; align-items: center; background: var(--pane3); border: 1px solid var(--line2); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 12px; }
+.chip button { padding: 0 5px; border: none; background: transparent; color: var(--muted); }
+.chip button:hover { color: var(--danger); }
+.btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.hint { color: var(--faint); font-size: 12px; }
+#hist { list-style: none; margin: 0; padding: 0; }
+#hist li { padding: 5px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; color: var(--muted); }
+#hist li:hover { background: var(--pane2); }
+#hist li.current { background: #15322e; color: var(--text); }
+#hist li.future { opacity: .45; }
+#hist .n { width: 28px; text-align: right; font-variant-numeric: tabular-nums; color: var(--faint); }
+
+/* ---- preview ---- */
+#stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; background: radial-gradient(circle at 50% 40%, #151a21, var(--bg)); }
+video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px; box-shadow: 0 10px 40px #0009; }
+#badge { position: absolute; top: 14px; right: 16px; }
+#nomedia { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); text-align: center; padding: 20px; }
+.transport { height: 42px; flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; border-top: 1px solid var(--line); background: var(--pane2); }
+#tc { font: 12px ui-monospace, monospace; color: var(--muted); min-width: 150px; text-align: center; }
+
+/* ---- chat ---- */
+#msgs { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.m-user { align-self: flex-end; max-width: 88%; background: #1d3a36; border: 1px solid #275049; padding: 7px 10px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; }
+.m-user .ctx { display: block; font-size: 11px; color: var(--accent); opacity: .8; margin-bottom: 2px; }
+.m-ai { max-width: 94%; line-height: 1.5; }
+.m-ai code { background: var(--pane3); padding: 0 4px; border-radius: 4px; font-size: 12px; }
+.m-tool { font: 12px ui-monospace, monospace; color: var(--muted); display: flex; gap: 6px; align-items: baseline; padding-left: 4px; }
+.m-tool .st { width: 12px; flex: none; }
+.m-tool .st.ok { color: var(--ok); } .m-tool .st.bad { color: var(--danger); }
+.m-tool .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-meta { font-size: 11px; color: var(--faint); padding-left: 4px; }
+.m-err { color: var(--danger); font-size: 12px; white-space: pre-wrap; }
+.m-note { color: var(--faint); font-size: 12px; font-style: italic; }
+.suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.suggest button { font-size: 12px; border-radius: 999px; }
+#composer { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--pane2); }
+#ctxchip { align-self: flex-start; font-size: 11px; color: var(--accent); background: #0f2a26; border: 1px solid #1f4a43; border-radius: 999px; padding: 1px 8px; }
+#composer .in { display: flex; gap: 8px; align-items: flex-end; }
+#prompt { flex: 1; resize: none; min-height: 38px; max-height: 140px; }
+.typing { color: var(--muted); font-size: 12px; padding-left: 4px; }
+.typing i { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-right: 3px; animation: blink 1s infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes blink { 50% { opacity: .2; } }
+
+/* ---- timeline ---- */
+.tl-tools { display: flex; align-items: center; gap: 6px; }
+.tl-tools input[type=range] { width: 110px; }
+#tl-body { flex: 1; min-height: 0; overflow: auto; position: relative; display: grid; grid-template-columns: 74px 1fr; align-content: start; }
+#tl-heads { position: sticky; left: 0; z-index: 4; background: var(--pane); border-right: 1px solid var(--line); }
+#tl-scroll { position: relative; min-width: 0; }
+#tl-inner { position: relative; }
+.head { height: var(--h); display: flex; align-items: center; padding: 0 8px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane { position: relative; height: var(--h); border-bottom: 1px solid var(--line); }
+.lane.ruler { background: var(--pane2); cursor: ew-resize; }
+.lane.drop { background: #13302b; }
+.tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line2); font-size: 10px; color: var(--faint); padding-left: 3px; padding-top: 2px; }
+.tick.minor { border-left-color: var(--line); top: 16px; }
+.blk { position: absolute; top: 3px; bottom: 3px; border-radius: 6px; border: 1px solid; overflow: hidden; cursor: grab; user-select: none; touch-action: none; }
+.blk .bl { position: absolute; left: 10px; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; overflow: hidden; pointer-events: none; text-shadow: 0 1px 2px #000; }
+.blk .badge { font-size: 10px; padding: 0 4px; border-radius: 4px; background: #0008; }
+.blk .hd { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 2; }
+.blk .hd.l { left: 0; } .blk .hd.r { right: 0; }
+.blk .hd:hover { background: #fff3; }
+.blk.sel { border-color: var(--sel) !important; box-shadow: 0 0 0 1px var(--sel); }
+.blk.drag { opacity: .85; z-index: 5; cursor: grabbing; box-shadow: 0 6px 20px #000a; }
+.blk.clip { background: var(--clip) 0 0 / auto 100% repeat-x; border-color: var(--clip-b); }
+.blk.text { background: var(--text-l); border-color: var(--text-b); }
+.blk.image { background: var(--img-l); border-color: var(--img-b); }
+.blk.captions { background: var(--cap-l); border-color: var(--cap-b); }
+.blk.music { background: var(--mus-l); border-color: var(--mus-b); }
+.lane.wave { background: var(--pane2) 0 50% / 100% 100% no-repeat; }
+#playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; z-index: 6; }
+#playhead::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top-color: var(--accent); }
+#insmark { position: absolute; top: 0; width: 3px; margin-left: -1px; background: var(--sel); display: none; z-index: 7; border-radius: 2px; }
+#tl-empty { padding: 18px; color: var(--faint); grid-column: 1 / 3; }
+
+#toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--pane3); border: 1px solid var(--line2); padding: 8px 14px; border-radius: 9px; display: none; z-index: 50; max-width: 70vw; box-shadow: 0 8px 30px #000a; }
+#toast.err { border-color: var(--danger); color: #fecaca; }
+#dropveil { position: fixed; inset: 0; background: #0b0d10cc; border: 2px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 18px; color: var(--accent); z-index: 40; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <button class="ghost" id="b-home" title="Back to all projects">☰ Projects</button>
+  <div class="logo">claude<span>-</span>cut</div>
+  <div id="proj-name"></div>
+  <div class="spacer"></div>
+  <span class="pill" id="status">connecting…</span>
+  <button class="ghost" id="b-undo" title="Undo (⌘Z)">↶ Undo</button>
+  <button class="ghost" id="b-redo" title="Redo (⇧⌘Z)">↷ Redo</button>
+  <button class="primary" id="b-export">Export</button>
+</header>
+
+<div id="grid">
+  <!-- 1. project / inspector -->
+  <section class="pane" id="p-insp">
+    <div class="pane-h">
+      <div class="tabs"><button class="tab on" data-tab="inspector">Project</button><button class="tab" data-tab="history">History</button></div>
+    </div>
+    <div id="insp-body"></div>
+  </section>
+  <div class="splitter" id="split-v"></div>
+
+  <!-- 2. preview -->
+  <section class="pane" id="p-prev">
+    <div class="pane-h"><h2>Preview</h2><div class="spacer"></div><span class="hint" id="canvas-info"></span></div>
+    <div id="stage">
+      <video id="video" playsinline preload="auto"></video>
+      <span class="pill" id="badge" style="display:none">rendering…</span>
+      <div id="nomedia"><div style="font-size:30px">🎬</div><div>Drop a video anywhere to start,<br>or ask the AI in the chat.</div><button id="b-import2">Import media…</button></div>
+    </div>
+    <div class="transport">
+      <button class="ghost" id="t-start" title="Start (Home)">⏮</button>
+      <button class="ghost" id="t-back" title="Previous frame (←)">◀︎</button>
+      <button id="t-play" title="Play / pause (Space)" style="min-width:44px">▶︎</button>
+      <button class="ghost" id="t-fwd" title="Next frame (→)">▶︎|</button>
+      <span id="tc">0:00.00 / 0:00.00</span>
+    </div>
+  </section>
+  <div class="splitter" id="split-h"></div>
+
+  <!-- 3. AI chat -->
+  <section class="pane" id="p-chat">
+    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:150px;font-size:12px"></select><button class="ghost" id="b-newchat" title="Start a new conversation">New chat</button></div>
+    <div id="msgs"></div>
+    <div id="composer">
+      <span id="ctxchip"></span>
+      <div class="in">
+        <textarea id="prompt" rows="1" placeholder="Ask the AI to edit…"></textarea>
+        <button class="primary" id="b-send">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. timeline -->
+  <section class="pane" id="p-tl">
+    <div class="pane-h">
+      <h2>Timeline</h2>
+      <div class="spacer"></div>
+      <div class="tl-tools">
+        <button class="ghost" id="b-split" title="Split at playhead (S)">✂ Split</button>
+        <button class="ghost danger" id="b-del" title="Delete selected (⌫)">🗑 Delete</button>
+        <button class="ghost" id="b-addtext" title="Add text at playhead (T)">＋ Text</button>
+        <button class="ghost" id="b-import" title="Import media">＋ Media</button>
+        <span class="hint">zoom</span><input type="range" id="zoom" min="15" max="400" value="90">
+        <button class="ghost" id="b-fit" title="Fit timeline">Fit</button>
+      </div>
+    </div>
+    <div id="tl-body">
+      <div id="tl-heads"></div>
+      <div id="tl-scroll"><div id="tl-inner"></div></div>
+    </div>
+  </section>
+</div>
+<input type="file" id="file" multiple accept="video/*,audio/*,image/*" hidden>
+<div id="toast"></div>
+<div id="dropveil">Drop to import</div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const video = $("#video");
+let ST = null;               // server state
+let SEL = null;              // {kind: clip|layer|music|source, id}
+let TAB = "inspector";
+let PPS = 90;                // timeline pixels per second
+let lastVideoVersion = -1;
+let fitPending = true;
+
+// ---------- utils ----------
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (k === "style" && typeof v === "object") { for (const [sk, sv] of Object.entries(v)) sk.startsWith("--") ? el.style.setProperty(sk, sv) : (el.style[sk] = sv); }
+    else if (k in el && k !== "list") el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return el;
+}
+const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(2).padStart(5, "0")}`; };
+const P = () => ST.project;
+const fps = () => (ST ? P().canvas.fps : 30);
+const dur = () => (ST ? ST.duration : 0);
+const clipStart = (id) => ST.starts[P().clips.findIndex((c) => c.id === id)];
+const clipDur = (c) => (c.out - c.in) / c.speed;
+const layerEnd = (l) => (l.end == null ? dur() : Math.min(l.end, dur()));
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = err ? "err" : ""; t.style.display = "block";
+  clearTimeout(toast.tm); toast.tm = setTimeout(() => (t.style.display = "none"), err ? 5000 : 2200);
+}
+async function api(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
+  return r.json();
+}
+async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
+function layerLabel(l) {
+  if (l.type === "text") return l.text || "";
+  if (l.type === "image") return (l.image || "").split(/[\\/]/).pop();
+  return l.words.slice(0, 6).map((w) => w.text).join(" ");
+}
+function sourceName(s) { return s.path.split(/[\\/]/).pop(); }
+
+// ---------- state ----------
+async function refresh() {
+  const res = await fetch("/api/state");
+  if (res.status === 409) { location.href = "/"; return; }
+  ST = await res.json();
+  if (SEL && !selExists()) SEL = null;
+  $("#proj-name").textContent = P().name;
+  $("#canvas-info").textContent = `${P().canvas.width}×${P().canvas.height} · ${P().canvas.fps}fps · ${fmt(dur())}`;
+  $("#nomedia").style.display = P().clips.length ? "none" : "flex";
+  video.style.display = P().clips.length ? "" : "none";
+  setStatus(ST.render);
+  const editing = $("#insp-body").contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (!editing) renderInspector();
+  renderTimeline();
+  updateCtx();
+}
+function selExists() {
+  const p = P();
+  if (SEL.kind === "clip") return p.clips.some((c) => c.id === SEL.id);
+  if (SEL.kind === "layer") return p.layers.some((l) => l.id === SEL.id);
+  if (SEL.kind === "music") return p.music.some((m) => m.id === SEL.id);
+  if (SEL.kind === "source") return SEL.id in p.sources;
+  return false;
+}
+function select(sel) { SEL = sel; TAB = "inspector"; setTabs(); renderInspector(); renderTimeline(); updateCtx(); }
+function setStatus(r) {
+  const el = $("#status");
+  el.className = "pill " + (r.error ? "error" : r.status === "rendering" ? "rendering" : "ready");
+  el.textContent = r.error ? "render error" : r.status === "rendering" ? "rendering preview…" : "up to date";
+  el.title = r.error || "";
+  $("#badge").style.display = r.status === "rendering" ? "" : "none";
+}
+function reloadVideo() {
+  const t = video.currentTime, playing = !video.paused, v = Date.now();
+  video.src = `/media/preview.mp4?v=${v}`;
+  video.addEventListener("loadedmetadata", () => { video.currentTime = Math.min(t, video.duration || t); if (playing) video.play(); }, { once: true });
+  const clipsLane = $(".lane.clips");
+  if (clipsLane) renderTimeline();
+}
+
+// ---------- inspector (pane 1) ----------
+function setTabs() { document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === TAB)); }
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { TAB = b.dataset.tab; setTabs(); renderInspector(); }));
+
+function field(label, el) { return [h("label", {}, label), el]; }
+function numIn(value, commit, step = 0.1, attrs = {}) {
+  return h("input", { type: "number", step, value: value ?? "", ...attrs, onchange: (e) => commit(e.target.value) });
+}
+function textIn(value, commit, attrs = {}) { return h("input", { type: "text", value: value ?? "", ...attrs, onchange: (e) => commit(e.target.value) }); }
+function colorIn(value, commit) {
+  const v = (value || "#000000").slice(0, 7);
+  return h("input", { type: "color", value: v, onchange: (e) => commit(e.target.value) });
+}
+function selectIn(value, options, commit) {
+  return h("select", { onchange: (e) => commit(e.target.value) }, options.map(([v, l]) => h("option", { value: v, selected: v === value }, l)));
+}
+function rangeIn(value, min, max, step, commit) {
+  const out = h("span", { class: "hint" }, Number(value).toFixed(2));
+  const r = h("input", { type: "range", min, max, step, value, oninput: (e) => (out.textContent = Number(e.target.value).toFixed(2)), onchange: (e) => commit(e.target.value) });
+  return h("div", { class: "pair" }, r, out);
+}
+function crumb(...parts) {
+  return h("div", { class: "crumb" }, h("a", { onclick: () => select(null) }, P().name), ...parts.map((p) => [h("span", {}, "›"), h("span", {}, p)]).flat());
+}
+
+function renderInspector() {
+  const body = $("#insp-body"); body.innerHTML = "";
+  if (!ST) return;
+  if (TAB === "history") return body.append(renderHistory());
+  if (!SEL) return body.append(...renderRoot());
+  const p = P();
+  if (SEL.kind === "clip") body.append(...renderClip(p.clips.find((c) => c.id === SEL.id)));
+  else if (SEL.kind === "layer") body.append(...renderLayer(p.layers.find((l) => l.id === SEL.id)));
+  else if (SEL.kind === "music") body.append(...renderMusic(p.music.find((m) => m.id === SEL.id)));
+  else if (SEL.kind === "source") body.append(...renderSource(SEL.id, p.sources[SEL.id]));
+}
+
+function renderRoot() {
+  const p = P(), c = p.canvas;
+  const presets = [["reels", "9:16 Reels / TikTok"], ["portrait45", "4:5 Feed"], ["square", "1:1 Square"], ["landscape", "16:9 YouTube"]];
+  const cur = { "1080x1920": "reels", "1080x1350": "portrait45", "1080x1080": "square", "1920x1080": "landscape" }[`${c.width}x${c.height}`] || "";
+  const project = h("div", { class: "sec" },
+    h("div", { class: "sec-h" }, h("h3", {}, "Project")),
+    h("div", { class: "fields" },
+      field("Name", textIn(p.name, (v) => op("rename", { name: v }))),
+      field("Format", selectIn(cur, cur ? presets : [["", `${c.width}×${c.height}`], ...presets], (v) => v && op("canvas_set", { preset: v }))),
+      field("Frame rate", selectIn(String(c.fps), [["24", "24 fps"], ["25", "25 fps"], ["30", "30 fps"], ["60", "60 fps"]], (v) => op("canvas_set", { fps: v }))),
+      field("Background", colorIn(c.background, (v) => op("canvas_set", { background: v }))),
+      h("div", { class: "full hint" }, ST.project_dir)));
+
+  const srcs = Object.entries(p.sources);
+  const bin = h("div", { class: "sec" },
+    h("div", { class: "sec-h" }, h("h3", {}, `Media (${srcs.length})`), h("button", { class: "ghost", onclick: () => $("#file").click() }, "＋ Import")),
+    srcs.length ? h("div", { class: "bin" }, srcs.map(([id, s]) => {
+      const el = h("div", { class: "src" + (SEL?.id === id ? " sel" : ""), draggable: true, title: `${sourceName(s)} · ${fmt(s.duration)} — drag onto the timeline`,
+        onclick: () => select({ kind: "source", id }),
+        ondragstart: (e) => { e.dataTransfer.setData("application/x-vedit-source", id); e.dataTransfer.effectAllowed = "copy"; } },
+        h("div", { class: "th", style: s.has_video ? { backgroundImage: `url(/api/source/${id}/thumb.jpg)` } : {} }, s.has_video ? "" : "♪"),
+        h("div", { class: "nm" }, sourceName(s)));
+      return el;
+    })) : h("div", { class: "empty" }, "Drop video, audio or images here or on the timeline."));
+
+  const list = (title, items, row, extra) => h("div", { class: "sec" },
+    h("div", { class: "sec-h" }, h("h3", {}, `${title} (${items.length})`), extra || ""),
+    items.length ? items.map(row) : h("div", { class: "empty" }, "None yet"));
+
+  const clips = list("Clips", p.clips, (c, i) => h("div", { class: "row" + (SEL?.id === c.id ? " sel" : ""), onclick: () => select({ kind: "clip", id: c.id }) },
+    h("span", { class: "dot", style: { background: "var(--clip-b)" } }), h("span", { class: "tag" }, c.id),
+    h("span", { class: "lbl" }, sourceName(p.sources[c.source]) + (c.speed !== 1 ? ` ×${c.speed}` : "") + (c.effects.length ? " ✦" : "")),
+    h("span", { class: "t" }, `${fmt(ST.starts[i])}`)));
+  const colors = { text: "var(--text-b)", image: "var(--img-b)", captions: "var(--cap-b)" };
+  const layers = list("Layers", p.layers, (l) => h("div", { class: "row" + (SEL?.id === l.id ? " sel" : ""), onclick: () => select({ kind: "layer", id: l.id }) },
+    h("span", { class: "dot", style: { background: colors[l.type] } }), h("span", { class: "tag" }, l.id),
+    h("span", { class: "lbl" }, layerLabel(l)), h("span", { class: "t" }, fmt(l.start))),
+    h("button", { class: "ghost", onclick: addTextAtPlayhead }, "＋ Text"));
+  const music = list("Music", p.music, (m) => h("div", { class: "row" + (SEL?.id === m.id ? " sel" : ""), onclick: () => select({ kind: "music", id: m.id }) },
+    h("span", { class: "dot", style: { background: "var(--mus-b)" } }), h("span", { class: "tag" }, m.id),
+    h("span", { class: "lbl" }, sourceName(p.sources[m.source])), h("span", { class: "t" }, `vol ${m.volume}`)));
+  return [project, bin, clips, layers, music];
+}
+
+function renderClip(c) {
+  const p = P(), s = p.sources[c.source], start = clipStart(c.id);
+  const set = (args) => op("clip_set", { clip: c.id, ...args });
+  return [
+    crumb("Clips", c.id),
+    h("div", { class: "fields" },
+      field("Source", h("span", {}, sourceName(s))),
+      field("On timeline", h("span", { class: "hint" }, `${fmt(start)} → ${fmt(start + clipDur(c))}  (${clipDur(c).toFixed(2)}s)`)),
+      field("Source in/out", h("div", { class: "pair" },
+        numIn(c.in.toFixed(2), (v) => op("retime_clip", { clip: c.id, in: v, out: c.out }), 0.05, { min: 0, max: s.duration }),
+        numIn(c.out.toFixed(2), (v) => op("retime_clip", { clip: c.id, in: c.in, out: v }), 0.05, { min: 0, max: s.duration }))),
+      field("Speed", selectIn(String(c.speed), [["0.25", "0.25× slow-mo"], ["0.5", "0.5×"], ["0.75", "0.75×"], ["1", "1× normal"], ["1.25", "1.25×"], ["1.5", "1.5×"], ["2", "2×"], ["3", "3×"], ["4", "4×"]]
+        .concat([["0.25", "0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"].includes(String(c.speed)) ? [] : [[String(c.speed), `${c.speed}×`]]]), (v) => set({ speed: v }))),
+      field("Volume", rangeIn(c.volume, 0, 2, 0.05, (v) => set({ volume: v }))),
+      field("Fit", selectIn(c.fit, [["cover", "Fill (crop)"], ["contain", "Fit (bars)"], ["blur", "Fit + blurred bg"]], (v) => set({ fit: v }))),
+      field("Zoom", rangeIn(c.zoom, 1, 2, 0.01, (v) => set({ zoom: v }))),
+      field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
+      field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }))),
+      field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }))),
+      field("Effects", c.effects.length ? h("div", { class: "chips" }, c.effects.map((e) =>
+        h("span", { class: "chip", title: JSON.stringify(e.params) }, e.type.replace("_", " "), h("button", { title: "Remove", onclick: () => op("remove_effect", { clip: c.id, type: e.type }) }, "×"))))
+        : h("span", { class: "hint" }, "none — ask the AI, e.g. “remove my background”"))),
+    h("div", { class: "btnrow" },
+      h("button", { onclick: () => { video.currentTime = start; } }, "Go to clip"),
+      h("button", { onclick: () => op("split", { at: video.currentTime }) }, "✂ Split at playhead"),
+      h("button", { class: "danger", onclick: () => op("remove_clip", { clip: c.id }) }, "Delete clip"),
+      h("button", { onclick: () => askAbout(`clip ${c.id}`) }, "Ask AI about this…")),
+  ];
+}
+
+function renderLayer(l) {
+  const set = (args) => op("layer_set", { layer: l.id, ...args });
+  const st = (k) => (v) => set({ style: { [k]: v } });
+  const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "punch", "spin_in", "drop_in", "typewriter", "fade_out", "pop_out", "slide_out", "shake", "bob", "pulse", "wiggle", "spin"];
+  const s = l.style;
+  const styleFields = l.type === "image" ? [
+    field("Width", numIn(l.width ?? "", (v) => set({ width: v }), 10, { placeholder: "original" })),
+  ] : [
+    field("Font size", numIn(s.size, st("size"), 2)),
+    field("Font", textIn(s.font ?? "", st("font"), { placeholder: "default (e.g. Impact)" })),
+    field("Colour", h("div", { class: "pair" }, colorIn(s.color, st("color")), h("span", { class: "hint" }, "highlight"), colorIn(s.highlight_color, st("highlight_color")))),
+    field("Outline", h("div", { class: "pair" }, colorIn(s.stroke_color, st("stroke_color")), numIn(s.stroke_width, st("stroke_width"), 1, { min: 0, max: 30 }))),
+    field("Box", h("div", { class: "pair" }, colorIn(s.bg_color || "#000000", st("bg_color")),
+      h("button", { class: "ghost", onclick: () => st("bg_color")(s.bg_color ? "" : "#000000B0") }, s.bg_color ? "Remove box" : "Add box"))),
+    field("Uppercase", h("input", { type: "checkbox", checked: s.uppercase, onchange: (e) => st("uppercase")(e.target.checked) })),
+    field("Max width", numIn(s.max_width, st("max_width"), 10)),
+  ];
+  return [
+    crumb("Layers", l.id),
+    h("div", { class: "fields" },
+      l.type === "text" ? [h("label", { class: "full" }, "Text"), h("textarea", { class: "full", rows: 3, value: l.text || "", onchange: (e) => set({ text: e.target.value }) })] : [],
+      l.type === "captions" ? [field("Words", h("span", { class: "hint" }, `${l.words.length} words · “${layerLabel(l)}…”`)),
+        field("Words at once", numIn(l.words_per_group, (v) => set({ words_per_group: v }), 1, { min: 1, max: 8 }))] : [],
+      l.type === "image" ? field("Image", h("span", { class: "hint" }, layerLabel(l))) : [],
+      field("Start / end", h("div", { class: "pair" }, numIn(l.start.toFixed(2), (v) => set({ start: v }), 0.05, { min: 0 }),
+        numIn(l.end == null ? "" : l.end.toFixed(2), (v) => set({ end: v }), 0.05, { placeholder: "end" }))),
+      field("Position", h("div", { class: "pair" }, textIn(l.x, (v) => set({ x: v }), { title: "x: px or %" }), textIn(l.y, (v) => set({ y: v }), { title: "y: px or %" }))),
+      field("Scale", rangeIn(l.scale, 0.2, 3, 0.05, (v) => set({ scale: v }))),
+      field("Rotation", rangeIn(l.rotation, -180, 180, 1, (v) => set({ rotation: v }))),
+      field("Opacity", rangeIn(l.opacity, 0, 1, 0.05, (v) => set({ opacity: v }))),
+      ...styleFields,
+      field("Animation", h("div", { class: "chips" },
+        l.presets.map((pr) => h("span", { class: "chip" }, pr.name, h("button", { onclick: () => op("preset_remove", { layer: l.id, name: pr.name }) }, "×"))),
+        l.keyframes.length ? h("span", { class: "chip" }, `${l.keyframes.length} keyframes`, h("button", { onclick: () => op("keyframes_clear", { layer: l.id }) }, "×")) : "",
+        selectIn("", [["", "＋ add…"], ...presets.map((n) => [n, n])], (v) => v && op("preset_add", { layer: l.id, name: v }))))),
+    h("div", { class: "btnrow" },
+      h("button", { onclick: () => { video.currentTime = l.start; } }, "Go to layer"),
+      h("button", { class: "danger", onclick: () => op("layer_remove", { layer: l.id }) }, "Delete layer"),
+      h("button", { onclick: () => askAbout(`layer ${l.id}`) }, "Ask AI to animate…")),
+  ];
+}
+
+function renderMusic(m) {
+  const set = (args) => op("music_set", { music: m.id, ...args });
+  return [
+    crumb("Music", m.id),
+    h("div", { class: "fields" },
+      field("File", h("span", {}, sourceName(P().sources[m.source]))),
+      field("Volume", rangeIn(m.volume, 0, 1, 0.01, (v) => set({ volume: v }))),
+      field("Starts at", numIn(m.start.toFixed(2), (v) => set({ start: v }), 0.1, { min: 0 })),
+      field("Duck voice", h("input", { type: "checkbox", checked: m.duck, onchange: (e) => set({ duck: e.target.checked }) })),
+      field("Loop", h("input", { type: "checkbox", checked: m.loop, onchange: (e) => set({ loop: e.target.checked }) }))),
+    h("div", { class: "btnrow" }, h("button", { class: "danger", onclick: () => op("music_remove", { music: m.id }) }, "Remove music")),
+  ];
+}
+
+function renderSource(id, s) {
+  const used = P().clips.filter((c) => c.source === id).length;
+  return [
+    crumb("Media", id),
+    s.has_video ? h("img", { src: `/api/source/${id}/thumb.jpg`, style: { width: "100%", borderRadius: "8px", marginBottom: "10px" } }) : "",
+    h("div", { class: "fields" },
+      field("File", h("span", { style: { wordBreak: "break-all" } }, s.path)),
+      field("Length", h("span", {}, `${s.duration.toFixed(2)}s`)),
+      s.has_video ? field("Size", h("span", {}, `${s.width}×${s.height} @ ${s.fps}fps`)) : [],
+      field("Audio", h("span", {}, s.has_audio ? "yes" : "no")),
+      field("On timeline", h("span", {}, used ? `${used} clip(s)` : "not used"))),
+    h("div", { class: "btnrow" },
+      s.has_video ? h("button", { onclick: () => op("insert_source", { source: id }) }, "Add to end of timeline") : "",
+      s.has_audio && !s.has_video ? h("button", { onclick: () => op("add_music", { source: id, start: 0 }) }, "Use as music") : ""),
+    h("p", { class: "hint" }, "Tip: drag the thumbnail onto the timeline to insert it at a position."),
+  ];
+}
+
+function renderHistory() {
+  const cur = (ST.history.find((x) => x.current) || {}).step;
+  return h("ul", { id: "hist" }, ST.history.slice().reverse().map((e) =>
+    h("li", { class: e.current ? "current" : e.step > cur ? "future" : "", onclick: () => api(`/api/checkout/${e.step}`).then(refresh), title: "Jump to this version" },
+      h("span", { class: "n" }, e.step), h("span", {}, e.message))));
+}
+
+// ---------- preview (pane 2) ----------
+function updateTC() {
+  $("#tc").textContent = `${fmt(video.currentTime)} / ${fmt(dur())}`;
+  const ph = $("#playhead"); if (ph) ph.style.left = `${video.currentTime * PPS}px`;
+  $("#t-play").textContent = video.paused ? "▶︎" : "⏸";
+}
+video.addEventListener("timeupdate", updateTC);
+video.addEventListener("play", updateTC); video.addEventListener("pause", updateTC);
+function tick() { if (!video.paused) updateTC(); requestAnimationFrame(tick); } tick();
+const step = (n) => { video.pause(); video.currentTime = Math.max(0, Math.min(dur(), video.currentTime + n / fps())); updateTC(); updateCtx(); };
+$("#t-play").onclick = () => (video.paused ? video.play() : video.pause());
+$("#t-start").onclick = () => { video.currentTime = 0; updateTC(); };
+$("#t-back").onclick = () => step(-1);
+$("#t-fwd").onclick = () => step(1);
+video.addEventListener("seeked", updateCtx);
+
+// ---------- AI chat (pane 3) ----------
+let ws, busy = false, toolEls = {}, typingEl = null;
+function selLabel() {
+  if (!SEL || !ST) return null;
+  if (SEL.kind === "clip") return `clip ${SEL.id}`;
+  if (SEL.kind === "layer") { const l = P().layers.find((x) => x.id === SEL.id); return `${l?.type || "layer"} ${SEL.id}`; }
+  if (SEL.kind === "music") return `music ${SEL.id}`;
+  if (SEL.kind === "source") return `media ${SEL.id}`;
+}
+function updateCtx() {
+  const s = selLabel();
+  $("#ctxchip").textContent = `📎 playhead ${fmt(video.currentTime)}${s ? " · " + s : ""}`;
+}
+function md(text) {
+  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+}
+function addMsg(ev) {
+  const box = $("#msgs");
+  $(".suggest", box)?.remove();
+  let el = null;
+  if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ev.text);
+  else if (ev.type === "assistant") { el = h("div", { class: "m-ai" }); el.innerHTML = md(ev.text); }
+  else if (ev.type === "tool") { el = h("div", { class: "m-tool" }, h("span", { class: "st" }, "▸"), h("span", { class: "tx", title: ev.summary }, ev.summary)); toolEls[ev.id] = el; }
+  else if (ev.type === "tool_result") {
+    const t = toolEls[ev.id]; if (t) { const st = $(".st", t); st.textContent = ev.ok ? "✓" : "✗"; st.className = "st " + (ev.ok ? "ok" : "bad"); if (!ev.ok) t.title = ev.text; }
+    return;
+  }
+  else if (ev.type === "done") el = h("div", { class: "m-meta" }, ev.ok ? `done · ${ev.seconds}s` + (ev.cost ? ` · $${ev.cost.toFixed(3)}` : "") : `stopped: ${ev.error || ""}`);
+  else if (ev.type === "error") el = h("div", { class: "m-err" }, ev.text);
+  else if (ev.type === "notice") el = h("div", { class: "m-note" }, ev.text);
+  if (el) { box.insertBefore(el, typingEl && typingEl.parentNode === box ? typingEl : null); box.scrollTop = box.scrollHeight; }
+}
+function setBusy(b) {
+  busy = b;
+  $("#b-send").textContent = b ? "Stop" : "Send";
+  $("#b-send").className = b ? "" : "primary";
+  const box = $("#msgs");
+  if (b && !typingEl) { typingEl = h("div", { class: "typing" }, h("i"), h("i"), h("i"), " working"); box.append(typingEl); box.scrollTop = box.scrollHeight; }
+  if (!b && typingEl) { typingEl.remove(); typingEl = null; }
+}
+function suggestions() {
+  const box = $("#msgs");
+  if (box.children.length) return;
+  box.append(h("div", { class: "m-note" }, "Ask for any edit. Select a clip or layer first and say “this” — the AI sees your selection and playhead."),
+    h("div", { class: "suggest" }, ["Remove the pauses", "Add a bold hook title for the first 3 seconds", "Add TikTok-style captions", "Blur my background", "Make this clip 2x faster"]
+      .map((s) => h("button", { onclick: () => { $("#prompt").value = s; $("#prompt").focus(); } }, s))));
+}
+function connectChat() {
+  ws = new WebSocket(`ws://${location.host}/ws/chat`);
+  ws.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "history" && ev.models) { const sel = $("#model"); sel.innerHTML = ""; for (const [k, v] of Object.entries(ev.models)) sel.append(h("option", { value: k, selected: k === ev.model }, v)); }
+    if (ev.type === "history") { $("#msgs").innerHTML = ""; toolEls = {}; typingEl = null; ev.log.forEach(addMsg); setBusy(ev.busy); suggestions(); return; }
+    if (ev.type === "status") { setBusy(ev.busy); return; }
+    addMsg(ev);
+  };
+  ws.onclose = () => setTimeout(connectChat, 1500);
+}
+function send() {
+  if (busy) { ws.send(JSON.stringify({ type: "interrupt" })); return; }
+  const text = $("#prompt").value.trim();
+  if (!text) return;
+  const label = [selLabel(), `@ ${fmt(video.currentTime)}`].filter(Boolean).join(" ");
+  ws.send(JSON.stringify({ type: "ask", text, context: { playhead: video.currentTime, selection: SEL, label } }));
+  $("#prompt").value = ""; autosize();
+}
+function askAbout(what) { $("#prompt").value = `For ${what}: `; $("#prompt").focus(); }
+function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(140, t.scrollHeight) + "px"; }
+$("#prompt").addEventListener("input", autosize);
+$("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+$("#b-send").onclick = send;
+$("#model").onchange = (e) => ws.send(JSON.stringify({ type: "model", model: e.target.value }));
+$("#b-newchat").onclick = () => ws.send(JSON.stringify({ type: "reset" }));
+
+// ---------- timeline (pane 4) ----------
+const LANES = { ruler: 24, clips: 58, wave: 34, layer: 28 };
+function timeAt(clientX) { const r = $("#tl-inner").getBoundingClientRect(); return Math.max(0, (clientX - r.left) / PPS); }
+function seek(t) { video.currentTime = Math.max(0, Math.min(dur(), t)); updateTC(); updateCtx(); }
+function snapPoints(exclude) {
+  const pts = [0, dur(), video.currentTime, ...ST.starts];
+  for (const l of P().layers) if (l.id !== exclude) pts.push(l.start, layerEnd(l));
+  return pts;
+}
+function snap(t, exclude) {
+  const tol = 8 / PPS; let best = t, bd = tol;
+  for (const p of snapPoints(exclude)) { const d = Math.abs(p - t); if (d < bd) { bd = d; best = p; } }
+  return best;
+}
+
+function renderTimeline() {
+  const heads = $("#tl-heads"), inner = $("#tl-inner");
+  heads.innerHTML = ""; inner.innerHTML = "";
+  if (!ST) return;
+  const p = P(), D = dur();
+  if (fitPending && D > 0) { fitPending = false; fitZoom(false); }
+  const width = Math.max(D * PPS + 160, $("#tl-scroll").clientWidth);
+  inner.style.width = width + "px";
+  const lanes = [];
+  const lane = (key, label, cls, hgt) => {
+    heads.append(h("div", { class: "head", style: { "--h": hgt + "px" }, title: label }, label));
+    const el = h("div", { class: "lane " + cls, style: { "--h": hgt + "px" } }); inner.append(el); lanes.push(el); return el;
+  };
+
+  // ruler
+  const ruler = lane("ruler", "", "ruler", LANES.ruler);
+  const stepS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * PPS >= 70) || 60;
+  for (let t = 0; t <= width / PPS; t += stepS) {
+    const lab = t >= 60 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : `${+t.toFixed(2)}s`;
+    ruler.append(h("div", { class: "tick", style: { left: `${t * PPS}px` } }, lab));
+    if (stepS * PPS > 140) ruler.append(h("div", { class: "tick minor", style: { left: `${(t + stepS / 2) * PPS}px` } }));
+  }
+  ruler.addEventListener("pointerdown", (e) => {
+    seek(timeAt(e.clientX)); ruler.setPointerCapture(e.pointerId);
+    const mv = (ev) => seek(timeAt(ev.clientX));
+    ruler.addEventListener("pointermove", mv);
+    ruler.addEventListener("pointerup", () => ruler.removeEventListener("pointermove", mv), { once: true });
+  });
+
+  // video clips
+  const vl = lane("clips", "Video", "clips", LANES.clips);
+  const thumbs = `url(/media/thumbs.jpg?v=${ST.render.version})`;
+  p.clips.forEach((c, i) => {
+    const s = ST.starts[i], d = clipDur(c);
+    const b = h("div", { class: "blk clip" + (SEL?.id === c.id ? " sel" : ""), title: `${c.id} · ${fmt(s)}–${fmt(s + d)}`,
+      style: { left: `${s * PPS}px`, width: `${Math.max(6, d * PPS - 2)}px`, backgroundImage: D ? thumbs : "", backgroundSize: `${D * PPS}px 100%`, backgroundPosition: `${-s * PPS}px 0` } },
+      h("div", { class: "hd l" }), h("div", { class: "hd r" }),
+      h("div", { class: "bl" }, h("b", {}, c.id), c.speed !== 1 ? h("span", { class: "badge" }, `×${c.speed}`) : "", c.effects.length ? h("span", { class: "badge" }, "✦ " + c.effects.length) : "",
+        c.zoom !== 1 || c.zoom_to ? h("span", { class: "badge" }, "zoom") : ""));
+    b.addEventListener("pointerdown", (e) => clipPointer(e, b, c, i));
+    vl.append(b);
+  });
+  vl.append(h("div", { id: "insmark", style: { height: `${LANES.clips}px` } }));
+  vl.addEventListener("pointerdown", (e) => { if (e.target === vl) { seek(timeAt(e.clientX)); select(null); } });
+  setupDrop(vl);
+
+  // audio waveform
+  const wl = lane("wave", "Audio", "wave", LANES.wave);
+  if (D) wl.style.backgroundImage = `url(/media/wave.png?v=${ST.render.version})`;
+  wl.style.backgroundSize = `${D * PPS}px 100%`;
+  wl.addEventListener("pointerdown", (e) => seek(timeAt(e.clientX)));
+
+  // overlay layers (top layer first, like most editors)
+  [...p.layers].reverse().forEach((l) => {
+    const el = lane("layer", `${{ text: "T", image: "▣", captions: "CC" }[l.type]}  ${l.id}`, "", LANES.layer);
+    const s = l.start, e = layerEnd(l);
+    const b = h("div", { class: `blk ${l.type}` + (SEL?.id === l.id ? " sel" : ""), title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}`,
+      style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px` } },
+      h("div", { class: "hd l" }), h("div", { class: "hd r" }),
+      h("div", { class: "bl" }, layerLabel(l) || l.id, l.presets.length ? h("span", { class: "badge" }, "✧ " + l.presets.length) : ""));
+    b.addEventListener("pointerdown", (ev) => spanPointer(ev, b, s, e, (ns, ne, mode) => {
+      const args = { layer: l.id, start: +ns.toFixed(3) };
+      if (mode !== "l" || l.end != null) args.end = +ne.toFixed(3);
+      return op("layer_set", args);
+    }, () => select({ kind: "layer", id: l.id }), l.id));
+    el.append(b);
+    el.addEventListener("pointerdown", (ev) => { if (ev.target === el) seek(timeAt(ev.clientX)); });
+  });
+
+  // music
+  p.music.forEach((m) => {
+    const el = lane("layer", `♪  ${m.id}`, "", LANES.layer);
+    const s = m.start;
+    const b = h("div", { class: "blk music" + (SEL?.id === m.id ? " sel" : ""), title: `${m.id} · vol ${m.volume}`, style: { left: `${s * PPS}px`, width: `${Math.max(6, (D - s) * PPS - 1)}px` } },
+      h("div", { class: "bl" }, "♪ " + sourceName(p.sources[m.source]), m.duck ? h("span", { class: "badge" }, "duck") : ""));
+    b.addEventListener("pointerdown", (ev) => spanPointer(ev, b, s, D, (ns) => op("music_set", { music: m.id, start: +ns.toFixed(3) }), () => select({ kind: "music", id: m.id }), m.id, true));
+    el.append(b);
+  });
+
+  if (!p.clips.length) inner.append(h("div", { id: "tl-empty" }, "Drop video files here, drag media from the Project pane, or press ＋ Media."));
+  inner.append(h("div", { id: "playhead" }));
+  const ph = $("#playhead"); ph.style.left = `${video.currentTime * PPS}px`;
+}
+
+// drag a clip: body = reorder, edges = trim
+function clipPointer(e, b, c, idx) {
+  e.preventDefault(); e.stopPropagation();
+  const mode = e.target.classList.contains("l") ? "l" : e.target.classList.contains("r") ? "r" : "move";
+  const x0 = e.clientX, s0 = ST.starts[idx], d0 = clipDur(c), src = P().sources[c.source];
+  let moved = false, target = idx, nin = c.in, nout = c.out;
+  const mark = $("#insmark");
+  b.setPointerCapture(e.pointerId);
+  const onMove = (ev) => {
+    const dx = ev.clientX - x0;
+    if (!moved && Math.abs(dx) < 4) return;
+    moved = true; b.classList.add("drag");
+    const dt = dx / PPS;
+    if (mode === "move") {
+      b.style.transform = `translateX(${dx}px)`;
+      const t = timeAt(ev.clientX);
+      const others = P().clips.map((x, i) => ({ x, s: ST.starts[i], d: clipDur(x) })).filter((o) => o.x.id !== c.id);
+      target = others.filter((o) => o.s + o.d / 2 < t).length;
+      const markT = target < others.length ? others[target].s : (others.length ? others[others.length - 1].s + others[others.length - 1].d : 0);
+      mark.style.display = "block"; mark.style.left = `${markT * PPS}px`;
+    } else if (mode === "l") {
+      nin = Math.max(0, Math.min(c.out - 0.05, c.in + dt * c.speed));
+      const nd = (c.out - nin) / c.speed;
+      b.style.left = `${(s0 + d0 - nd) * PPS}px`; b.style.width = `${nd * PPS}px`;
+      b.title = `in ${nin.toFixed(2)}s`;
+    } else {
+      nout = Math.min(src.duration, Math.max(c.in + 0.05, c.out + dt * c.speed));
+      b.style.width = `${((nout - c.in) / c.speed) * PPS}px`;
+      b.title = `out ${nout.toFixed(2)}s`;
+    }
+  };
+  const onUp = async () => {
+    b.removeEventListener("pointermove", onMove);
+    mark.style.display = "none";
+    if (!moved) { select({ kind: "clip", id: c.id }); return; }
+    if (mode === "move") { if (target !== idx) await op("move_clip", { clip: c.id, index: target }); else renderTimeline(); }
+    else await op("retime_clip", { clip: c.id, in: +nin.toFixed(3), out: +nout.toFixed(3) });
+  };
+  b.addEventListener("pointermove", onMove);
+  b.addEventListener("pointerup", onUp, { once: true });
+}
+
+// drag a layer/music block: body = move, edges = change start / end
+function spanPointer(e, b, s0, e0, commit, onClick, id, moveOnly = false) {
+  e.preventDefault(); e.stopPropagation();
+  let mode = e.target.classList.contains("l") ? "l" : e.target.classList.contains("r") ? "r" : "move";
+  if (moveOnly) mode = "move";
+  const x0 = e.clientX; let moved = false, ns = s0, ne = e0;
+  b.setPointerCapture(e.pointerId);
+  const onMove = (ev) => {
+    const dx = ev.clientX - x0;
+    if (!moved && Math.abs(dx) < 4) return;
+    moved = true; b.classList.add("drag");
+    const dt = dx / PPS;
+    if (mode === "move") { ns = Math.max(0, snap(s0 + dt, id)); ne = moveOnly ? e0 : ns + (e0 - s0); }
+    else if (mode === "l") ns = Math.max(0, Math.min(e0 - 0.05, snap(s0 + dt, id)));
+    else ne = Math.max(s0 + 0.05, snap(e0 + dt, id));
+    b.style.left = `${ns * PPS}px`; b.style.width = `${Math.max(6, (ne - ns) * PPS)}px`;
+    b.title = `${fmt(ns)} – ${fmt(ne)}`;
+  };
+  const onUp = async () => {
+    b.removeEventListener("pointermove", onMove);
+    if (!moved) return onClick();
+    await commit(ns, ne, mode);
+  };
+  b.addEventListener("pointermove", onMove);
+  b.addEventListener("pointerup", onUp, { once: true });
+}
+
+// dropping media onto the video lane (from the Project bin or from the OS)
+function dropIndex(clientX) {
+  const t = timeAt(clientX);
+  return P().clips.filter((c, i) => ST.starts[i] + clipDur(c) / 2 < t).length;
+}
+function setupDrop(vl) {
+  vl.addEventListener("dragover", (e) => {
+    e.preventDefault(); e.stopPropagation(); vl.classList.add("drop");
+    const i = dropIndex(e.clientX), mark = $("#insmark");
+    mark.style.display = "block"; mark.style.left = `${(i < P().clips.length ? ST.starts[i] : dur()) * PPS}px`;
+  });
+  vl.addEventListener("dragleave", () => { vl.classList.remove("drop"); $("#insmark").style.display = "none"; });
+  vl.addEventListener("drop", async (e) => {
+    e.preventDefault(); e.stopPropagation(); vl.classList.remove("drop"); $("#insmark").style.display = "none"; $("#dropveil").style.display = "none";
+    const index = dropIndex(e.clientX);
+    const sid = e.dataTransfer.getData("application/x-vedit-source");
+    if (sid) {
+      const s = P().sources[sid];
+      if (s.has_video) await op("insert_source", { source: sid, index });
+      else await op("add_music", { source: sid, start: timeAt(e.clientX) });
+      return;
+    }
+    await uploadFiles([...e.dataTransfer.files], true, index);
+  });
+}
+async function uploadFiles(files, append, index) {
+  let i = index;
+  for (const f of files) {
+    toast(`Importing ${f.name}…`);
+    const fd = new FormData(); fd.append("file", f); fd.append("append", append ? "true" : "false");
+    if (i != null) fd.append("index", String(i));
+    const r = await fetch("/api/import", { method: "POST", body: fd });
+    if (!r.ok) { let d = "Import failed"; try { d = (await r.json()).detail; } catch {} toast(d, true); continue; }
+    const res = await r.json();
+    if (!res.has_video) await api("/api/op", { op: "add_music", args: { source: res.source, start: 0 } });
+    if (res.clip && i != null) i++;
+  }
+  await refresh(); toast("Imported");
+}
+// drop anywhere else in the window → import to the end of the timeline
+window.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); $("#dropveil").style.display = "flex"; } });
+window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) $("#dropveil").style.display = "none"; });
+window.addEventListener("drop", (e) => { e.preventDefault(); $("#dropveil").style.display = "none"; if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files], true, null); });
+$("#file").onchange = (e) => { uploadFiles([...e.target.files], !P().clips.length, null); e.target.value = ""; };
+$("#b-import").onclick = $("#b-import2").onclick = () => $("#file").click();
+
+function fitZoom(render = true) {
+  const w = $("#tl-scroll").clientWidth - 40;
+  if (dur() > 0 && w > 100) PPS = Math.max(15, Math.min(400, w / dur()));
+  $("#zoom").value = PPS;
+  if (render) renderTimeline();
+}
+$("#zoom").oninput = (e) => { PPS = +e.target.value; renderTimeline(); };
+$("#b-fit").onclick = () => fitZoom();
+function deleteSelected() {
+  if (!SEL) return toast("Select a clip, layer or music track first");
+  if (SEL.kind === "clip") op("remove_clip", { clip: SEL.id });
+  else if (SEL.kind === "layer") op("layer_remove", { layer: SEL.id });
+  else if (SEL.kind === "music") op("music_remove", { music: SEL.id });
+}
+async function addTextAtPlayhead() {
+  const r = await op("layer_add_text", { text: "New text", start: +video.currentTime.toFixed(2) });
+  if (r) { const l = P().layers[P().layers.length - 1]; select({ kind: "layer", id: l.id }); }
+}
+$("#b-split").onclick = () => op("split", { at: video.currentTime });
+$("#b-del").onclick = deleteSelected;
+$("#b-addtext").onclick = addTextAtPlayhead;
+
+// ---------- header ----------
+$("#b-home").onclick = () => { location.href = "/"; };
+$("#b-undo").onclick = () => api("/api/undo").then(refresh);
+$("#b-redo").onclick = () => api("/api/redo").then(refresh);
+$("#b-export").onclick = async () => {
+  const b = $("#b-export"); b.disabled = true; b.textContent = "Exporting…";
+  const r = await api("/api/export");
+  b.disabled = false; b.textContent = "Export";
+  if (r) toast(`Exported ${r.width}×${r.height} · ${r.duration}s → ${r.output}`);
+};
+
+// ---------- splitters ----------
+function splitter(el, axis) {
+  el.addEventListener("pointerdown", (e) => {
+    el.setPointerCapture(e.pointerId); el.classList.add("drag");
+    const grid = $("#grid").getBoundingClientRect();
+    const mv = (ev) => {
+      if (axis === "x") document.documentElement.style.setProperty("--col", `${Math.max(240, Math.min(grid.width - 400, ev.clientX - grid.left))}px`);
+      else document.documentElement.style.setProperty("--row", `${Math.max(160, Math.min(grid.height - 160, ev.clientY - grid.top))}px`);
+    };
+    el.addEventListener("pointermove", mv);
+    el.addEventListener("pointerup", () => { el.removeEventListener("pointermove", mv); el.classList.remove("drag"); renderTimeline();
+      try { localStorage.setItem("cc-layout", JSON.stringify({ col: getComputedStyle(document.documentElement).getPropertyValue("--col"), row: getComputedStyle(document.documentElement).getPropertyValue("--row") })); } catch {} }, { once: true });
+  });
+}
+splitter($("#split-v"), "x"); splitter($("#split-h"), "y");
+try { const l = JSON.parse(localStorage.getItem("cc-layout") || "null"); if (l) { document.documentElement.style.setProperty("--col", l.col); document.documentElement.style.setProperty("--row", l.row); } } catch {}
+
+// ---------- keyboard ----------
+document.addEventListener("keydown", (e) => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
+  if (typing) return;
+  if (e.key === " ") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+  else if (e.key === "ArrowLeft") step(e.shiftKey ? -fps() : -1);
+  else if (e.key === "ArrowRight") step(e.shiftKey ? fps() : 1);
+  else if (e.key === "Home") seek(0);
+  else if (e.key.toLowerCase() === "s") op("split", { at: video.currentTime });
+  else if (e.key.toLowerCase() === "t") addTextAtPlayhead();
+  else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+  else if (e.key === "Escape") select(null);
+  else if (e.key === "=" || e.key === "+") { PPS = Math.min(400, PPS * 1.25); $("#zoom").value = PPS; renderTimeline(); }
+  else if (e.key === "-") { PPS = Math.max(15, PPS / 1.25); $("#zoom").value = PPS; renderTimeline(); }
+});
+window.addEventListener("resize", () => renderTimeline());
+
+// ---------- live updates ----------
+const es = new EventSource("/api/events");
+es.onmessage = async (m) => {
+  const d = JSON.parse(m.data);
+  if (d.closed) { es.close(); location.href = "/"; return; }
+  await refresh();
+  if (d.status === "idle" && !d.error && d.version !== lastVideoVersion && P().clips.length) { lastVideoVersion = d.version; reloadVideo(); }
+};
+es.onerror = () => { const s = $("#status"); s.className = "pill error"; s.textContent = "disconnected"; };
+
+refresh().then(() => { if (P().clips.length) reloadVideo(); });
+connectChat();
+</script>
+</body>
+</html>
