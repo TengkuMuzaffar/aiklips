@@ -173,12 +173,33 @@ class ChatSession:
             if not fut.done():
                 fut.set_result(False)
 
+    def _cli_log(self, line: str) -> None:
+        """Claude Code's stderr (warnings like an unrecognized third-party model name) → .vedit/agent.log."""
+        line = line.rstrip()
+        if not line:
+            return
+        try:
+            log = state_dir(self.pdir) / "agent.log"
+            if log.exists() and log.stat().st_size > 2_000_000:
+                log.replace(log.with_suffix(".log.1"))
+            with log.open("a") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+        except OSError:
+            pass
+
     async def _connect(self, resume: bool) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
         root = REPO_ROOT if (REPO_ROOT / "CLAUDE.md").exists() else self.pdir
         provider, model = registry.resolve(self.model)
-        env = {"VEDIT_PROJECT": str(self.pdir), **registry.env_for(self.model)}
+        env = {
+            "VEDIT_PROJECT": str(self.pdir),
+            # The editor agent only needs vedit; don't load the user's claude.ai connectors
+            # (Canva, Drive, ...) into it. Also avoids the "connectors are disabled" notice
+            # when another provider's key is in use.
+            "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+            **registry.env_for(self.model),
+        }
         append = SYSTEM_APPEND + ("" if model.get("vision") else "\n\n" + NO_VISION_NOTE)
         self.provider = provider["id"]
         opts = ClaudeAgentOptions(
@@ -190,6 +211,7 @@ class ChatSession:
             env=env,
             resume=self.session_id if resume else None,
             max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
+            stderr=self._cli_log,  # keep Claude Code's diagnostics out of the user's terminal
         )
         self.client = ClaudeSDKClient(options=opts)
         await self.client.connect()
