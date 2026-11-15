@@ -75,3 +75,42 @@ def test_remove_provider_removes_its_models_and_builtins_are_protected():
     with pytest.raises(reg.RegistryError):
         reg.remove_model("anthropic/claude-opus-5-5")
 
+
+def _http_error(code):
+    import urllib.error
+    return urllib.error.HTTPError("u", code, "x", {}, None)
+
+
+def test_list_models_anthropic_format(monkeypatch):
+    reg.upsert_provider({"name": "p", "base_url": "https://x.example/anthropic", "api_key": "k"})
+    seen = []
+
+    def fake(url, key):
+        seen.append(url)
+        return {"data": [{"id": "m-pro", "display_name": "M Pro"}, {"id": "embed-1", "type": "embedding"},
+                         {"id": "m-v4-flash", "modalities": {"input": ["text", "image"]}}]}
+    monkeypatch.setattr(reg, "_get_json", fake)
+    ms = reg.list_models("p")
+    assert seen == ["https://x.example/anthropic/v1/models"]
+    assert ms == [{"id": "m-pro", "label": "M Pro", "vision": None}, {"id": "m-v4-flash", "label": "M V4 Flash", "vision": True}]
+
+
+def test_list_models_falls_back_to_openai_root(monkeypatch):
+    reg.upsert_provider({"name": "p", "base_url": "https://x.example/anthropic", "api_key": "k"})
+
+    def fake(url, key):
+        if url != "https://x.example/models":
+            raise _http_error(404)
+        return {"object": "list", "data": [{"id": "deepseek-v4-pro", "object": "model"}]}
+    monkeypatch.setattr(reg, "_get_json", fake)
+    assert [m["id"] for m in reg.list_models("p")] == ["deepseek-v4-pro"]
+
+
+def test_list_models_bad_key_and_no_list(monkeypatch):
+    reg.upsert_provider({"name": "p", "base_url": "https://x.example", "api_key": "k"})
+    monkeypatch.setattr(reg, "_get_json", lambda u, k: (_ for _ in ()).throw(_http_error(401)))
+    with pytest.raises(reg.RegistryError, match="Invalid API key"):
+        reg.list_models("p")
+    monkeypatch.setattr(reg, "_get_json", lambda u, k: (_ for _ in ()).throw(_http_error(404)))
+    with pytest.raises(reg.RegistryError, match="Type a model id"):
+        reg.list_models("p")
