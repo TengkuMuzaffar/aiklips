@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -19,10 +18,15 @@ from typing import Any
 from fastapi import WebSocket
 
 from ..project import load, state_dir
+from . import models as registry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MODEL = os.environ.get("VEDIT_MODEL", "claude-opus-5-5")
-MODELS = {"claude-opus-5-5": "Opus 5.5 (best)", "claude-sonnet-5-5": "Sonnet 5.5 (faster, cheaper)", "claude-haiku-5-5": "Haiku 5.5 (cheapest)"}
+
+NO_VISION_NOTE = """
+The current model cannot see images. Do NOT Read .jpg/.png files (frame, sheet) — they
+will fail. Verify edits from `uv run vedit --json info` output instead, and tell the user
+to check the preview pane for anything visual.
+""".strip()
 
 SYSTEM_APPEND = """
 You are running inside the claude-cut desktop editor. The user sees four panes:
@@ -95,7 +99,11 @@ class ChatSession:
                 data = {}
         self.log: list[dict] = data.get("log", [])[-300:]
         self.session_id: str | None = data.get("session_id")
-        self.model: str = data.get("model") or DEFAULT_MODEL
+        self.model: str = registry.normalize_key(data.get("model"))
+        try:
+            registry.resolve(self.model)
+        except registry.RegistryError:
+            self.model = registry.DEFAULT_KEY
         self.pending: dict[str, tuple[asyncio.Future, dict]] = {}  # permission requests awaiting the user
 
     # ---- plumbing --------------------------------------------------------------
@@ -118,7 +126,7 @@ class ChatSession:
 
     async def attach(self, ws: WebSocket) -> None:
         self.sockets.add(ws)
-        await ws.send_json({"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": MODELS})
+        await ws.send_json({"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": registry.public()})
         for _, ev in self.pending.values():  # re-show prompts still waiting for an answer
             await ws.send_json(ev)
 
@@ -169,13 +177,17 @@ class ChatSession:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
         root = REPO_ROOT if (REPO_ROOT / "CLAUDE.md").exists() else self.pdir
+        provider, model = registry.resolve(self.model)
+        env = {"VEDIT_PROJECT": str(self.pdir), **registry.env_for(self.model)}
+        append = SYSTEM_APPEND + ("" if model.get("vision") else "\n\n" + NO_VISION_NOTE)
+        self.provider = provider["id"]
         opts = ClaudeAgentOptions(
             cwd=str(root),
-            model=self.model,
-            system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
+            model=model["id"],
+            system_prompt={"type": "preset", "preset": "claude_code", "append": append},
             setting_sources=["project"],
             can_use_tool=self._permission,
-            env={"VEDIT_PROJECT": str(self.pdir)},
+            env=env,
             resume=self.session_id if resume else None,
             max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
         )
@@ -237,7 +249,10 @@ class ChatSession:
                 await self._pump()
             except Exception as e:
                 msg = str(e) or type(e).__name__
-                if "auth" in msg.lower() or "login" in msg.lower():
+                if getattr(self, "provider", registry.BUILTIN) != registry.BUILTIN or isinstance(e, registry.RegistryError):
+                    if not isinstance(e, registry.RegistryError):
+                        msg += "  (Check this provider's base URL, API key and model id in Manage models → Test.)"
+                elif "auth" in msg.lower() or "login" in msg.lower():
                     msg += "  (Sign in once by running `claude` in a terminal, then try again.)"
                 await self.emit({"type": "error", "text": msg})
                 await self._reset()
@@ -275,21 +290,52 @@ class ChatSession:
                         await self.emit({"type": "tool_result", "id": b.tool_use_id, "ok": ok, "text": txt[:300]})
             elif isinstance(msg, ResultMessage):
                 self.session_id = msg.session_id or self.session_id
-                await self.emit({"type": "done", "ok": not msg.is_error, "cost": msg.total_cost_usd,
+                await self.emit({"type": "done", "ok": not msg.is_error, "cost": msg.total_cost_usd if getattr(self, "provider", registry.BUILTIN) == registry.BUILTIN else None,
                                  "seconds": round((msg.duration_ms or 0) / 1000, 1),
                                  "error": None if not msg.is_error else (msg.result or msg.subtype)})
 
-    async def set_model(self, model: str) -> None:
-        if model not in MODELS:
+    async def set_model(self, key: str) -> None:
+        try:
+            old_p, old_m = registry.resolve(self.model)
+            old_provider, old_vision = old_p["id"], old_m.get("vision")
+        except registry.RegistryError:
+            old_provider = old_vision = None
+        try:
+            provider, model = registry.resolve(key)
+        except registry.RegistryError as e:
+            await self.emit({"type": "error", "text": str(e)}, persist=False)
             return
-        self.model = model
+        self.model = registry.key(model)
         self._save()
-        if self.client is not None and not self.busy:
+        same = provider["id"] == old_provider == registry.BUILTIN and model.get("vision") == old_vision
+        if self.client is not None and same and not self.busy:
             try:
-                await self.client.set_model(model)
+                await self.client.set_model(model["id"])
             except Exception:
                 await self._reset()
-        await self.emit({"type": "notice", "text": f"Model: {MODELS[model]}"})
+        else:
+            # Other providers get their own process env (base URL, key), and a fresh context:
+            # a transcript from one provider isn't guaranteed to replay on another.
+            await self._reset()
+            if provider["id"] != old_provider:
+                self.session_id = None
+        note = f"Model: {model['label']} ({provider['name']})"
+        if provider["id"] != old_provider:
+            note += " · the AI starts a fresh context; the chat above stays for you"
+        await self.emit({"type": "notice", "text": note})
+
+    async def models_changed(self) -> None:
+        """Registry was edited in Manage models: push it to every open chat pane."""
+        try:
+            registry.resolve(self.model)
+        except registry.RegistryError:
+            await self.set_model(registry.DEFAULT_KEY)
+        pub = registry.public()
+        for ws in list(self.sockets):
+            try:
+                await ws.send_json({"type": "models", "models": pub, "model": self.model})
+            except Exception:
+                self.sockets.discard(ws)
 
     async def interrupt(self) -> None:
         self._deny_pending()
@@ -305,7 +351,7 @@ class ChatSession:
         self.session_id = None
         self.log = []
         self._save()
-        await self.emit({"type": "history", "log": [], "busy": False, "model": self.model, "models": MODELS}, persist=False)
+        await self.emit({"type": "history", "log": [], "busy": False, "model": self.model, "models": registry.public()}, persist=False)
 
     async def _reset(self) -> None:
         self._deny_pending()
