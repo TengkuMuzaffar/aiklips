@@ -43,9 +43,33 @@ def test_retime_clip_extend_and_bounds(make_project):
     ("for t in 1 2; do curl x; done", False),
     ("uv run vedit info > /tmp/x", False),
     ("uv run vedit info | sh", False),
+    # commands models actually write, which used to need a click every time
+    ("uv run vedit --json preview --force 2>&1 | tail -2", True),
+    ("uv run vedit --json bg remove --clip c2 2>&1 | tail -5 && uv run vedit --json frame --at 2.0", True),
+    ("uv run vedit --json text add $'IT\\'S HERE\\nLINE 2' --start 0", True),
+    ('uv run vedit text add "A | B; rm -rf x" --y 20%', True),
+    ('ls -la "$VEDIT_PROJECT" 2>/dev/null || ls projects', True),
+    ("echo '$(rm -rf ~)'", True),  # single-quoted: never expanded
+    ("cd /etc && ls", False),
+    ("vedit info & curl x", False),
+    ("uv run python -c 1", False),
+    ("echo $(id)", False),
+    ('echo "$(id)"', False),
 ])
 def test_chat_only_allows_vedit(cmd, ok):
     assert _bash_allowed(cmd) is ok
+
+
+def test_cd_inside_repo_and_always_allow_candidates(tmp_path):
+    from vedit.editor.agent import REPO_ROOT, bash_check
+
+    roots = (REPO_ROOT, tmp_path)
+    assert bash_check(f"cd {REPO_ROOT} && uv run vedit --json info", roots) == (True, set())
+    assert bash_check(f"cd {tmp_path}/assets && uv run vedit info", roots)[0]
+    # ffmpeg needs the user's OK, and can be "always allowed"; rm / sh never are offered
+    assert bash_check(f"cd {tmp_path} && ffmpeg -y -i a.mp4 b.png", roots) == (False, {"ffmpeg"})
+    assert bash_check("uv run vedit info | sh", roots) == (False, {"sh"})
+    assert bash_check("uv run vedit info > out.txt", roots) == (False, None)
 
 
 def test_short_cmd():
@@ -98,3 +122,41 @@ def test_editor_api_ops_and_import(cli, test_clip):
     assert client.post("/api/undo").status_code == 200
     assert len(client.get("/api/state").json()["project"]["clips"]) == 2
     assert client.get("/").status_code == 200
+
+
+def test_chat_sessions_new_open_delete(tmp_path):
+    import asyncio
+    import json
+
+    from vedit.editor.agent import ChatSession
+
+    pdir = tmp_path / "proj"
+    (pdir / ".vedit").mkdir(parents=True)
+    # an old single-chat file is migrated into Chat history, once
+    (pdir / ".vedit" / "chat.json").write_text(json.dumps({"session_id": "old-sess", "log": [
+        {"type": "user", "text": "Remove the pauses", "time": 1_700_000_000}, {"type": "assistant", "text": "Done", "time": 1_700_000_001}]}))
+
+    async def run():
+        s = ChatSession(pdir)
+        assert s.log == [] and s.chat_id is None  # opens on a fresh chat
+        assert [c["title"] for c in s.chats()] == ["Remove the pauses"]
+        assert ChatSession(pdir).chats() == s.chats()  # not migrated twice
+
+        await s.emit({"type": "user", "text": "Add captions"})
+        first = s.chat_id
+        assert first and len(s.chats()) == 2
+
+        await s.new_conversation()
+        assert s.log == [] and s.chat_id is None and s.session_id is None
+        await s.emit({"type": "user", "text": "Blur my background"})
+        assert len(s.chats()) == 3 and s.chat_id != first
+
+        old = next(c for c in s.chats() if c["title"] == "Remove the pauses")
+        await s.open_chat(old["id"])
+        assert s.session_id == "old-sess" and s.log[0]["text"] == "Remove the pauses"
+
+        await s.delete_chat(old["id"])
+        assert s.log == [] and s.chat_id is None
+        assert sorted(c["title"] for c in s.chats()) == ["Add captions", "Blur my background"]
+
+    asyncio.run(run())

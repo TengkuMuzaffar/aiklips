@@ -463,13 +463,18 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
                 if kind == "ask" and str(msg.get("text", "")).strip():
                     asyncio.create_task(session.ask(str(msg["text"]).strip(), msg.get("context") or {}))
                 elif kind == "permission":
-                    session.answer_permission(str(msg.get("id", "")), bool(msg.get("allow")))
+                    allow = msg.get("allow")
+                    session.answer_permission(str(msg.get("id", "")), "always" if allow == "always" else bool(allow))
                 elif kind == "interrupt":
                     await session.interrupt()
                 elif kind == "model":
                     await session.set_model(str(msg.get("model", "")))
                 elif kind == "reset":
-                    await session.new_conversation()
+                    asyncio.create_task(session.new_conversation())
+                elif kind == "open_chat":
+                    asyncio.create_task(session.open_chat(str(msg.get("id", ""))))
+                elif kind == "delete_chat":
+                    asyncio.create_task(session.delete_chat(str(msg.get("id", ""))))
         except WebSocketDisconnect:
             session.sockets.discard(ws)
 

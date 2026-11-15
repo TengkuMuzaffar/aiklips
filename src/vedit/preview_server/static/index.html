@@ -111,6 +111,28 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; background: radial-gradient(circle at 50% 40%, #151a21, var(--bg)); }
 video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px; box-shadow: 0 10px 40px #0009; }
 #badge { position: absolute; top: 14px; right: 16px; }
+#drawlayer { position: absolute; cursor: crosshair; z-index: 5; border-radius: 10px; outline: 2px solid var(--accent); outline-offset: -2px; touch-action: none; }
+#drawlayer .dhint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: #000c; color: var(--text); font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
+.drawbox { position: absolute; border: 2px solid var(--accent); background: #5eead41f; box-shadow: 0 0 0 9999px #0007; pointer-events: none; }
+.drawbox.ellipse { border-radius: 50%; }
+.drawpop { position: absolute; z-index: 7; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; min-width: 210px; box-shadow: 0 10px 30px #000a; font-size: 12px; }
+.drawpop .row { display: flex; gap: 6px; align-items: center; }
+.drawpop .row > label { width: 54px; color: var(--muted); }
+.drawpop select { flex: 1; }
+.transport button.on { border-color: var(--accent); color: var(--accent); }
+#p-chat { position: relative; }
+#chatlist { position: absolute; top: 40px; right: 8px; left: 8px; max-height: 60%; overflow: auto; z-index: 20; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 30px #000b; padding: 6px; }
+#chatlist .ch-h { display: flex; align-items: center; gap: 6px; padding: 4px 6px 8px; color: var(--muted); font-size: 12px; }
+#chatlist .ch { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+#chatlist .ch:hover { background: var(--pane3); }
+#chatlist .ch.on { background: #0f2a26; outline: 1px solid #1f4a43; }
+#chatlist .ch .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+#chatlist .ch .m { color: var(--faint); font-size: 11px; white-space: nowrap; }
+#chatlist .ch button { padding: 2px 6px; border: none; background: transparent; color: var(--muted); }
+#chatlist .ch button:hover { color: var(--danger); }
+#chatlist .empty { padding: 10px; color: var(--muted); font-size: 12px; }
+.tmark { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -8px; transform: rotate(45deg); background: var(--accent); border: 2px solid var(--bg); border-radius: 3px; z-index: 4; cursor: pointer; }
+.tmark:hover { transform: rotate(45deg) scale(1.2); }
 #nomedia > .ic { width: 34px; height: 34px; }
 #nomedia { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); text-align: center; padding: 20px; }
 .transport { height: 42px; flex: none; display: flex; align-items: center; justify-content: center; gap: 4px; border-top: 1px solid var(--line); background: var(--pane2); }
@@ -301,14 +323,14 @@ dialog#dlg-models::backdrop { background: #000b; }
   <span class="pill" id="status">connecting…</span>
   <button class="ghost icon" id="b-undo" data-icon="undo" title="Undo (⌘Z)"></button>
   <button class="ghost icon" id="b-redo" data-icon="redo" title="Redo (⇧⌘Z)"></button>
-  <button class="primary" id="b-export" data-icon="download"><span class="lb">Export</span></button>
+  <button class="primary" id="b-export" data-icon="download" title="Export the final video (MP4) to the project's exports folder"><span class="lb">Export</span></button>
 </header>
 
 <div id="grid">
   <!-- 1. project / inspector -->
   <section class="pane" id="p-insp">
     <div class="pane-h">
-      <div class="tabs"><button class="tab on" data-tab="inspector">Properties</button><button class="tab" data-tab="media">Media</button><button class="tab" data-tab="history">History</button></div>
+      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
   </section>
@@ -320,7 +342,7 @@ dialog#dlg-models::backdrop { background: #000b; }
     <div id="stage">
       <video id="video" playsinline preload="auto"></video>
       <span class="pill" id="badge" style="display:none">rendering…</span>
-      <div id="nomedia"><span data-icon="film"></span><div>Drop a video anywhere to start,<br>or ask the AI in the chat.</div><button id="b-import2" data-icon="upload">Import media</button></div>
+      <div id="nomedia"><span data-icon="film"></span><div>Drop a video anywhere to start,<br>or ask the AI in the chat.</div><button id="b-import2" data-icon="upload" title="Pick video, audio or image files to add">Import media</button></div>
     </div>
     <div class="transport">
       <button class="ghost icon" id="t-start" data-icon="skip-back" title="Go to start (Home)"></button>
@@ -328,20 +350,24 @@ dialog#dlg-models::backdrop { background: #000b; }
       <button class="icon" id="t-play" data-icon="play" title="Play / pause (Space)" style="width:36px;height:32px"></button>
       <button class="ghost icon" id="t-fwd" data-icon="chevron-right" title="Next frame (→)"></button>
       <span id="tc">0:00.00 / 0:00.00</span>
+      <span style="width:14px"></span>
+      <button class="ghost" id="t-mask" data-icon="mask" title="Draw a box over something to hide it (blur / pixelate). It follows the object.">Mask</button>
+      <button class="ghost" id="t-focus" data-icon="target" title="Draw a box around an object to spotlight it or make the camera follow it">Focus</button>
     </div>
   </section>
   <div class="splitter" id="split-h"></div>
 
   <!-- 3. AI chat -->
   <section class="pane" id="p-chat">
-    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost" id="b-newchat" title="Start a new conversation">New chat</button></div>
+    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost icon" id="b-chats" data-icon="history" title="Chat history: reopen or delete earlier chats"></button><button class="ghost icon" id="b-newchat" data-icon="message-plus" title="New chat: start fresh (this chat stays in Chat history)"></button></div>
+    <div id="chatlist" hidden></div>
     <div id="ai-setup" hidden></div>
     <div id="msgs"></div>
     <div id="composer">
       <span id="ctxchip"></span>
       <div class="in">
         <textarea id="prompt" rows="1" placeholder="Ask the AI to edit…"></textarea>
-        <button class="primary" id="b-send">Send</button>
+        <button class="primary" id="b-send" title="Send (Enter) · Shift+Enter for a new line">Send</button>
       </div>
     </div>
   </section>
@@ -439,6 +465,11 @@ const ICONS = {
   terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
+  "message-plus": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6"/><path d="M9 10h6"/>',
+  mask: '<rect width="18" height="14" x="3" y="5" rx="2"/><path d="m3 15 6-6"/><path d="m3 10 4-4"/><path d="m8 19 13-13"/><path d="m14 19 7-7"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/>',
+  transition: '<rect width="9" height="14" x="2" y="5" rx="1.5"/><rect width="9" height="14" x="13" y="5" rx="1.5"/><path d="m9 12 6 0"/><path d="m13 10 2 2-2 2"/>',
   volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
 };
 function icon(name) {
@@ -447,6 +478,32 @@ function icon(name) {
   return el;
 }
 document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
+// every button gets a tooltip: a description for common actions, else its own label
+const TIPS = {
+  "Allow": "Let the AI run this once", "Deny": "Block this; the AI will try another way", "×": "Remove",
+  "Go to clip": "Move the playhead to the start of this clip", "Split at playhead": "Cut this clip in two at the playhead",
+  "Delete clip": "Remove this clip from the timeline (undoable)", "Go to layer": "Move the playhead to where this layer starts",
+  "Delete layer": "Remove this layer (undoable)", "Remove music": "Remove this music track (undoable)",
+  "Import": "Add video, audio or image files", "Import media": "Add video, audio or image files",
+  "Add to end of timeline": "Append this file as a new clip at the end", "Use as music": "Add this audio as background music",
+  "Add box": "Put a coloured box behind the text", "Remove box": "Remove the box behind the text",
+  "Apply": "Apply and start tracking", "Cancel": "Close without changes", "Back": "Previous step", "Save": "Save changes",
+  "Edit": "Edit this provider", "Add key": "Add an API key for this provider", "Stop": "Stop the AI",
+};
+function tipFor(b) {
+  if (b.title || b.dataset.tipDone) return;
+  b.dataset.tipDone = "1";
+  const label = (b.getAttribute("aria-label") || b.textContent || "").replace(/\s+/g, " ").trim();
+  if (label) b.title = TIPS[label] || (label.startsWith("Ask AI") ? "Write a question about this in the AI chat" : label);
+}
+document.querySelectorAll("button").forEach(tipFor);
+new MutationObserver((muts) => {
+  for (const m of muts) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1) continue;
+    if (n.tagName === "BUTTON") tipFor(n);
+    n.querySelectorAll?.("button").forEach(tipFor);
+  }
+}).observe(document.body, { childList: true, subtree: true });
 const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(2).padStart(5, "0")}`; };
 const P = () => ST.project;
 const fps = () => (ST ? P().canvas.fps : 30);
@@ -589,6 +646,8 @@ function renderMedia() {
 function renderClip(c) {
   const p = P(), s = p.sources[c.source], start = clipStart(c.id);
   const set = (args) => op("clip_set", { clip: c.id, ...args });
+  const idx = p.clips.findIndex((x) => x.id === c.id);
+  const masks = c.effects.filter((e) => e.type === "mask"), effs = c.effects.filter((e) => e.type !== "mask");
   return [
     crumb("Clips", c.id),
     h("div", { class: "fields" },
@@ -605,15 +664,33 @@ function renderClip(c) {
       field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
       field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }))),
       field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }))),
-      field("Effects", c.effects.length ? h("div", { class: "chips" }, c.effects.map((e) =>
-        h("span", { class: "chip", title: JSON.stringify(e.params) }, e.type.replace("_", " "), h("button", { title: "Remove", onclick: () => op("remove_effect", { clip: c.id, type: e.type }) }, "×"))))
-        : h("span", { class: "hint" }, "none — ask the AI, e.g. “remove my background”"))),
+      idx > 0 ? field("Transition in", h("div", { class: "pair" },
+        selectIn(c.transition?.type || "none", TRANSITION_OPTS, (v) => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 })),
+        numIn(c.transition?.duration ?? 0.5, (v) => c.transition && op("transition_set", { clip: c.id, type: c.transition.type, duration: v }), 0.05, { min: 0.05, max: 3, title: "Seconds", disabled: !c.transition }))) : null,
+      field("Effects", effs.length ? h("div", { class: "chips" }, effs.map((e) =>
+        h("span", { class: "chip", title: JSON.stringify(e.params) }, effectLabel(e), h("button", { title: "Remove", onclick: () => op("remove_effect", { clip: c.id, type: e.type, id: e.params.id }) }, "×"))))
+        : h("span", { class: "hint" }, "none — ask the AI, e.g. “remove my background”")),
+      ...masks.map((e) => field(`Mask ${e.params.id}`, h("div", { class: "pair" },
+        selectIn(e.params.style || "blur", MASK_STYLES, (v) => op("mask_set", { id: e.params.id, style: v })),
+        h("button", { class: "ghost", title: "Remove mask", onclick: () => op("remove_effect", { clip: c.id, id: e.params.id }) }, "×"))))),
     h("div", { class: "btnrow" },
       h("button", { onclick: () => { video.currentTime = start; } }, "Go to clip"),
       h("button", { onclick: () => op("split", { at: video.currentTime }) }, icon("scissors"), "Split at playhead"),
       h("button", { class: "danger", onclick: () => op("remove_clip", { clip: c.id }) }, "Delete clip"),
+      idx > 0 && c.transition ? h("button", { onclick: () => op("transition_set", { type: c.transition.type, duration: c.transition.duration }) }, icon("transition"), "Use this transition on all cuts") : null,
       h("button", { onclick: () => askAbout(`clip ${c.id}`) }, "Ask AI about this…")),
   ];
+}
+const TRANSITION_OPTS = [["none", "None (cut)"], ["fade", "Crossfade"], ["fadeblack", "Dip to black"], ["fadewhite", "Flash (white)"],
+  ["slideleft", "Slide left"], ["slideright", "Slide right"], ["slideup", "Slide up"], ["slidedown", "Slide down"],
+  ["smoothleft", "Smooth push left"], ["smoothup", "Smooth push up"], ["wipeleft", "Wipe left"], ["wiperight", "Wipe right"],
+  ["zoomin", "Zoom in"], ["hblur", "Whip (blur)"], ["circleopen", "Circle open"], ["circleclose", "Circle close"],
+  ["radial", "Clock wipe"], ["pixelize", "Pixelize"], ["dissolve", "Dissolve"], ["squeezeh", "Squeeze"], ["coverleft", "Cover left"], ["revealleft", "Reveal left"]];
+const MASK_STYLES = [["blur", "Blur"], ["pixelate", "Pixelate"], ["fill", "Solid fill"], ["dim", "Darken"]];
+function effectLabel(e) {
+  if (e.type === "focus") return `focus · ${e.params.mode || "spotlight"}`;
+  if (e.type === "mask") return `mask ${e.params.id} · ${e.params.style}`;
+  return e.type.replace("_", " ");
 }
 
 function renderLayer(l) {
@@ -751,7 +828,9 @@ function addMsg(ev) {
     el = h("div", { class: "m-perm", id: ev.id },
       h("div", { class: "q" }, `Claude wants to use ${ev.tool}:`),
       h("code", {}, ev.detail),
-      h("div", { class: "btns" }, h("button", { class: "primary", onclick: () => answer(true) }, "Allow"), h("button", { onclick: () => answer(false) }, "Deny")));
+      h("div", { class: "btns" }, h("button", { class: "primary", onclick: () => answer(true) }, "Allow"),
+        ev.always ? h("button", { onclick: () => answer("always"), title: "Don't ask again for this project" }, `Always allow ${ev.always.replaceAll(",", ", ")}`) : null,
+        h("button", { onclick: () => answer(false) }, "Deny")));
   }
   else if (ev.type === "permission_done") { document.getElementById(ev.id)?.remove(); return; }
   if (el) { box.insertBefore(el, typingEl && typingEl.parentNode === box ? typingEl : null); box.scrollTop = box.scrollHeight; }
@@ -759,6 +838,7 @@ function addMsg(ev) {
 function setBusy(b) {
   busy = b;
   $("#b-send").textContent = b ? "Stop" : "Send";
+  $("#b-send").title = b ? "Stop the AI" : "Send (Enter) · Shift+Enter for a new line";
   $("#b-send").className = b ? "" : "primary";
   const box = $("#msgs");
   if (b && !typingEl) { typingEl = h("div", { class: "typing" }, h("i"), h("i"), h("i"), " working"); box.append(typingEl); box.scrollTop = box.scrollHeight; }
@@ -777,12 +857,52 @@ function connectChat() {
     const ev = JSON.parse(m.data);
     if ((ev.type === "history" || ev.type === "models") && ev.models) { renderModelPicker(ev.models, ev.model); if (ev.type === "models") { checkAI(); return; } }
     if (ev.type === "error") checkAI();
-    if (ev.type === "history") { $("#msgs").innerHTML = ""; toolEls = {}; typingEl = null; ev.log.forEach(addMsg); setBusy(ev.busy); suggestions(); return; }
+    if (ev.type === "history") {
+      CHATS = ev.chats || []; CHAT_ID = ev.chat_id || null;
+      $("#msgs").innerHTML = ""; toolEls = {}; typingEl = null; ev.log.forEach(addMsg); setBusy(ev.busy); suggestions();
+      if (!$("#chatlist").hidden) renderChatList();
+      return;
+    }
     if (ev.type === "status") { setBusy(ev.busy); return; }
     addMsg(ev);
   };
   ws.onclose = () => setTimeout(connectChat, 1500);
 }
+// ---- chat management: new chat, history ------------------------------------------
+let CHATS = [], CHAT_ID = null;
+function ago(t) {
+  const s = Date.now() / 1000 - t;
+  if (s < 60) return "just now"; if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+function newChat() {
+  if (!ws || ws.readyState !== 1) return toast("AI chat is not connected yet", true);
+  $("#chatlist").hidden = true;
+  ws.send(JSON.stringify({ type: "reset" }));
+  $("#prompt").value = ""; $("#prompt").focus();
+}
+function renderChatList() {
+  const box = $("#chatlist"); box.innerHTML = "";
+  box.append(h("div", { class: "ch-h" }, icon("history"), h("span", { style: { flex: 1 } }, "Chat history"),
+    h("button", { class: "ghost", title: "New chat: start fresh", onclick: newChat }, icon("message-plus"), "New chat"),
+    h("button", { class: "ghost icon", title: "Close", onclick: () => { box.hidden = true; } }, icon("x"))));
+  if (!CHATS.length) return box.append(h("div", { class: "empty" }, "No saved chats yet. Chats are saved automatically once you send a message."));
+  for (const c of CHATS) {
+    box.append(h("div", { class: "ch" + (c.id === CHAT_ID ? " on" : ""), title: c.id === CHAT_ID ? "Current chat" : `Open “${c.title}”`,
+      onclick: () => { if (c.id !== CHAT_ID) ws.send(JSON.stringify({ type: "open_chat", id: c.id })); box.hidden = true; } },
+      h("span", { class: "t" }, c.title),
+      h("span", { class: "m" }, `${c.messages} msg · ${ago(c.updated)}`),
+      h("button", { title: "Delete this chat", onclick: (e) => { e.stopPropagation(); if (confirm(`Delete the chat “${c.title}”?`)) ws.send(JSON.stringify({ type: "delete_chat", id: c.id })); } }, icon("trash"))));
+  }
+}
+$("#b-newchat").onclick = newChat;
+$("#b-chats").onclick = () => { const b = $("#chatlist"); b.hidden = !b.hidden; if (!b.hidden) renderChatList(); };
+document.addEventListener("pointerdown", (e) => {
+  const b = $("#chatlist");
+  if (!b.hidden && !b.contains(e.target) && !e.target.closest("#b-chats")) b.hidden = true;
+});
+
 function send() {
   if (busy) { ws.send(JSON.stringify({ type: "interrupt" })); return; }
   const text = $("#prompt").value.trim();
@@ -1182,6 +1302,12 @@ function renderTimeline() {
     b.addEventListener("pointerdown", (e) => clipPointer(e, b, c, i));
     vl.append(b);
   });
+  p.clips.forEach((c, i) => {
+    if (!i || !c.transition) return;
+    const m = h("div", { class: "tmark", title: `${c.transition.type} · ${c.transition.duration}s (click to edit)`, style: { left: `${ST.starts[i] * PPS}px` } });
+    m.addEventListener("pointerdown", (e) => { e.stopPropagation(); select({ kind: "clip", id: c.id }); });
+    vl.append(m);
+  });
   vl.append(h("div", { id: "insmark", style: { height: `${LANES.clips}px` } }));
   vl.addEventListener("pointerdown", (e) => { if (e.target === vl) { seek(timeAt(e.clientX)); select(null); } });
   setupDrop(vl);
@@ -1399,7 +1525,84 @@ splitter($("#split-v"), "x"); splitter($("#split-h"), "y");
 try { const l = JSON.parse(localStorage.getItem("cc-layout") || "null"); if (l) { document.documentElement.style.setProperty("--col", l.col); document.documentElement.style.setProperty("--row", l.row); } } catch {}
 
 // ---------- keyboard ----------
+// ---- draw a box on the preview: tracked mask / object focus ------------------------
+let DRAW = null;
+function videoBox() {
+  const r = video.getBoundingClientRect(), st = $("#stage").getBoundingClientRect(), cv = P().canvas;
+  const sc = Math.min(r.width / cv.width, r.height / cv.height), w = cv.width * sc, hh = cv.height * sc;
+  return { left: r.left - st.left + (r.width - w) / 2, top: r.top - st.top + (r.height - hh) / 2, width: w, height: hh, sc };
+}
+function endDraw() {
+  DRAW = null; $("#drawlayer")?.remove();
+  $("#t-mask").classList.remove("on"); $("#t-focus").classList.remove("on");
+}
+function startDraw(kind) {
+  if (DRAW === kind) return endDraw();
+  endDraw();
+  if (!ST || !P().clips.length) return toast("Import a video first", true);
+  DRAW = kind; video.pause();
+  $(kind === "mask" ? "#t-mask" : "#t-focus").classList.add("on");
+  const vb = videoBox();
+  const layer = h("div", { id: "drawlayer", style: { left: `${vb.left}px`, top: `${vb.top}px`, width: `${vb.width}px`, height: `${vb.height}px` } },
+    h("div", { class: "dhint" }, kind === "mask" ? "Drag a box over what to hide · Esc to cancel" : "Drag a box around the object · Esc to cancel"));
+  let box = null, x0 = 0, y0 = 0;
+  layer.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".drawpop")) return;
+    layer.querySelector(".drawpop")?.remove(); box?.remove();
+    const r = layer.getBoundingClientRect(); x0 = e.clientX - r.left; y0 = e.clientY - r.top;
+    box = h("div", { class: "drawbox" + (kind === "focus" ? " ellipse" : "") }); layer.append(box);
+    layer.setPointerCapture(e.pointerId);
+    const mv = (ev) => {
+      const x1 = Math.max(0, Math.min(r.width, ev.clientX - r.left)), y1 = Math.max(0, Math.min(r.height, ev.clientY - r.top));
+      Object.assign(box.style, { left: `${Math.min(x0, x1)}px`, top: `${Math.min(y0, y1)}px`, width: `${Math.abs(x1 - x0)}px`, height: `${Math.abs(y1 - y0)}px` });
+    };
+    mv(e);
+    layer.addEventListener("pointermove", mv);
+    layer.addEventListener("pointerup", () => {
+      layer.removeEventListener("pointermove", mv);
+      const bx = { x: box.offsetLeft, y: box.offsetTop, w: box.offsetWidth, h: box.offsetHeight };
+      if (bx.w < 6 || bx.h < 6) { box.remove(); box = null; return; }
+      drawPopup(layer, kind, bx, vb.sc);
+    }, { once: true });
+  });
+  $("#stage").append(layer);
+}
+function drawPopup(layer, kind, bx, sc) {
+  const at = video.currentTime;
+  const cbox = [bx.x, bx.y, bx.w, bx.h].map((v) => Math.round(v / sc)).join(",");
+  let opts;
+  const track = h("input", { type: "checkbox", checked: true });
+  if (kind === "mask") {
+    const style = h("select", {}, MASK_STYLES.map(([v, l]) => h("option", { value: v }, l)));
+    const shape = h("select", {}, h("option", { value: "rect" }, "Rounded box"), h("option", { value: "ellipse" }, "Ellipse"));
+    opts = { style, shape };
+  } else {
+    const mode = h("select", {}, h("option", { value: "spotlight" }, "Spotlight (blur + dim around it)"), h("option", { value: "follow" }, "Follow (camera pans with it)"), h("option", { value: "both" }, "Follow + spotlight"));
+    opts = { mode };
+  }
+  const apply = async () => {
+    const args = { box: cbox, at, track: track.checked };
+    for (const [k, el] of Object.entries(opts)) args[k] = el.value;
+    endDraw();
+    const r = await op(kind === "mask" ? "mask_add" : "focus_add", args);
+    if (r) toast(`${kind === "mask" ? "Mask" : "Focus"} added — tracking the object, the preview updates when it's done`);
+  };
+  const pop = h("div", { class: "drawpop" },
+    h("b", {}, kind === "mask" ? "Hide this region" : "Focus on this object"),
+    ...Object.entries(opts).map(([k, el]) => h("div", { class: "row" }, h("label", {}, k[0].toUpperCase() + k.slice(1)), el)),
+    h("label", { class: "row", style: { cursor: "pointer" } }, track, h("span", {}, "Follow it as it moves (tracking)")),
+    h("div", { class: "row" }, h("button", { class: "primary", onclick: apply }, "Apply"), h("button", { onclick: endDraw }, "Cancel")));
+  const lw = layer.clientWidth, lh = layer.clientHeight;
+  pop.style.left = `${Math.max(4, Math.min(lw - 220, bx.x))}px`;
+  pop.style.top = `${bx.y + bx.h + 8 + 170 < lh ? bx.y + bx.h + 8 : Math.max(4, bx.y - 178)}px`;
+  layer.append(pop);
+}
+$("#t-mask").onclick = () => startDraw("mask");
+$("#t-focus").onclick = () => startDraw("focus");
+window.addEventListener("resize", () => { if (DRAW) { const k = DRAW; endDraw(); startDraw(k); } });
+
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && DRAW) { e.preventDefault(); endDraw(); return; }
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
   if (typing) return;
