@@ -311,6 +311,35 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         except registry.RegistryError as e:
             return {"ok": False, "text": str(e), "models": []}
 
+    # ---- AI setup: Claude Code installed + signed in? ---------------------------------
+    @app.get("/api/ai/status")
+    async def api_ai_status() -> dict:
+        from ..editor import claude_setup
+        from ..editor import models as registry
+
+        claude = await asyncio.to_thread(claude_setup.status)
+        key = host.session.model if host.session else registry.DEFAULT_KEY
+        try:
+            prov, model = registry.resolve(key)
+            pub = next(p for p in registry.public()["providers"] if p["id"] == prov["id"])
+            label, builtin, prov_ready = f"{model['label']} ({prov['name']})", prov["id"] == registry.BUILTIN, pub["ready"]
+        except (registry.RegistryError, StopIteration):
+            label, builtin, prov_ready = key, True, True
+        step = "install" if not claude["installed"] else "login" if builtin and not claude["loggedIn"] else "key" if not prov_ready else "ready"
+        return {"claude": claude, "model": key, "model_label": label, "step": step}
+
+    @app.post("/api/ai/login")
+    async def api_ai_login(body: dict) -> dict:
+        from ..editor import claude_setup
+
+        return await asyncio.to_thread(claude_setup.login, str(body.get("method", "claudeai")))
+
+    @app.post("/api/ai/install")
+    async def api_ai_install() -> dict:
+        from ..editor import claude_setup
+
+        return await asyncio.to_thread(claude_setup.install)
+
     # ---- editor (open project) ---------------------------------------------------------
     @app.get("/api/state")
     def api_state() -> dict:
