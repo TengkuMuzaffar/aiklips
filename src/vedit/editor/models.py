@@ -237,6 +237,78 @@ def remove_model(k: str) -> None:
     save(reg)
 
 
+def _get_json(url: str, secret: str) -> Any:
+    req = urllib.request.Request(url, headers={"anthropic-version": "2023-06-01", "x-api-key": secret,
+                                               "authorization": f"Bearer {secret}", "accept": "application/json", "user-agent": UA})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def _vision(x: dict) -> bool | None:
+    """Does the provider say this model takes images? None when it doesn't say."""
+    for mods in ((x.get("modalities") or {}).get("input"), (x.get("architecture") or {}).get("input_modalities"),
+                 x.get("input_modalities")):
+        if isinstance(mods, list):
+            return "image" in mods
+    caps = x.get("capabilities")
+    if isinstance(caps, dict):
+        for k in ("vision", "image_input", "images"):
+            if k in caps:
+                v = caps[k]
+                return bool(v.get("supported", True) if isinstance(v, dict) else v)
+    if str(x.get("id", "")).startswith("claude-"):
+        return True
+    return None
+
+
+def _pretty(mid: str) -> str:
+    words = re.split(r"[-_/]", mid.split("/")[-1])
+    return " ".join(w.upper() if re.fullmatch(r"v\d[\d.]*|[a-z]\d+", w) else w.capitalize() for w in words if w)
+
+
+def list_models(pid: str) -> list[dict]:
+    """Ask the provider which models it serves (Anthropic- or OpenAI-style /models endpoints)."""
+    p = provider(load(), pid)
+    if p is None:
+        raise RegistryError(f"Unknown provider {pid}")
+    if p["id"] == BUILTIN:
+        return [dict(m) for m in BUILTIN_MODELS]
+    secret = api_key(p)
+    if not secret:
+        raise RegistryError("No API key set.")
+    base = p["base_url"].rstrip("/")
+    urls = [base + "/v1/models", base + "/models"]
+    if base.endswith("/anthropic"):  # e.g. DeepSeek serves the list on its OpenAI-style root
+        root = base[: -len("/anthropic")]
+        urls += [root + "/v1/models", root + "/models"]
+    errors = []
+    for url in dict.fromkeys(urls):
+        try:
+            data = _get_json(url, secret)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise RegistryError(f"Invalid API key (HTTP {e.code})") from None
+            errors.append(f"{e.code}")
+            continue
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            errors.append(type(e).__name__)
+            continue
+        items = data.get("data") or data.get("models") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            continue
+        out = []
+        for x in items:
+            x = x if isinstance(x, dict) else {"id": str(x)}
+            mid = str(x.get("id") or x.get("name") or "").strip()
+            if not mid or str(x.get("type", "chat")).lower() in ("embedding", "embeddings", "image", "audio", "tts", "moderation"):
+                continue
+            name = x.get("display_name") or (x.get("name") if x.get("name") and x.get("name") != mid else None)
+            out.append({"id": mid, "label": str(name or _pretty(mid)), "vision": _vision(x)})
+        if out:
+            return out
+    raise RegistryError("This provider doesn't publish a model list" + (f" ({', '.join(errors)})" if errors else "") + ". Type a model id instead.")
+
+
 def test(k: str) -> str:
     """Send a tiny request to a saved model's provider. Returns a short status or raises."""
     p, m = resolve(k)

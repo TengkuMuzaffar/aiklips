@@ -302,6 +302,15 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         except registry.RegistryError as e:
             return {"ok": False, "text": str(e)}
 
+    @app.post("/api/models/discover")
+    async def api_model_discover(body: dict) -> dict:
+        from ..editor import models as registry
+
+        try:
+            return {"ok": True, "models": await asyncio.to_thread(registry.list_models, str(body.get("provider", "")))}
+        except registry.RegistryError as e:
+            return {"ok": False, "text": str(e), "models": []}
+
     # ---- editor (open project) ---------------------------------------------------------
     @app.get("/api/state")
     def api_state() -> dict:
