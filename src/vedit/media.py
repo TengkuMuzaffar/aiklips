@@ -48,12 +48,21 @@ def run(cmd: list[str], what: str = "ffmpeg") -> subprocess.CompletedProcess:
     return proc
 
 
-def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float], None] | None) -> None:
-    """Run ffmpeg with -progress pipe:1 and report 0..1 progress."""
+class Cancelled(VeditError):
+    """The user stopped a render."""
+
+
+def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float], None] | None,
+                      should_stop: Callable[[], bool] | None = None) -> None:
+    """Run ffmpeg with -progress pipe:1 and report 0..1 progress. `should_stop` returning True kills it (Cancelled)."""
     cmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     assert proc.stdout is not None
     for line in proc.stdout:
+        if should_stop is not None and should_stop():
+            proc.kill()
+            proc.wait()
+            raise Cancelled("Export cancelled")
         if line.startswith("out_time_us=") and on_progress and total > 0:
             try:
                 us = int(line.split("=", 1)[1])

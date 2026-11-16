@@ -78,16 +78,17 @@ def _log(msg: str) -> None:
     sys.stderr.write(msg + "\n")
 
 
-def render(project: Project, pdir: Path, out: Path, scale: float, quality: str, progress: bool = True) -> dict:
+def render(project: Project, pdir: Path, out: Path, scale: float, quality: str, progress: bool = True,
+           on_progress=None, encode: list[str] | None = None, audio: bool = True, should_stop=None) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     # unique temp name: two renders must never write into the same file
     tmp = out.with_name(f"{out.stem}.part-{os.getpid()}-{uuid.uuid4().hex[:8]}{out.suffix}")
     try:
-        cmd, total = build(project, pdir, tmp, scale, quality, log=_log)
-        cb = _stderr_progress("rendering") if progress else None
-        media.run_with_progress(cmd, total, cb)
-        if cb:
+        cmd, total = build(project, pdir, tmp, scale, quality, log=_log, encode=encode, audio=audio)
+        cb = on_progress or (_stderr_progress("rendering") if progress else None)
+        media.run_with_progress(cmd, total, cb, should_stop)
+        if cb and on_progress is None:
             sys.stderr.write("\n")
         tmp.replace(out)
     finally:
