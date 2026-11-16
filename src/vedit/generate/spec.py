@@ -41,7 +41,9 @@ class Brief(_M):
 class BatchSpec(_M):
     refs: list[int] = Field(min_length=1)
     lead: int | None = None
-    footage: list[str] = Field(min_length=1, description="Upload ids")
+    footage: list[str] = Field(min_length=1, description="Upload ids used for their pictures")
+    sound: list[str] = Field(default_factory=list, max_length=10,
+                             description="Upload ids used for their audio only (audio or video); the videos take turns using them")
     brief: Brief = Field(default_factory=Brief)
     count: int = Field(3, ge=1, le=10)
     axes: list[str] = Field(default_factory=lambda: list(AXES))
@@ -125,3 +127,13 @@ class SegmentNote(_M):
 
 class FootageNotes(_M):
     segments: list[SegmentNote]
+
+
+class MediaRole(_M):
+    id: str
+    role: Literal["footage", "sound"]
+    reason: str = ""
+
+
+class MediaRoles(_M):
+    files: list[MediaRole]
