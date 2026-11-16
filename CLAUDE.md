@@ -67,7 +67,14 @@ focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --z
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | music remove <id>
 undo [--steps N] | redo | history | checkout <step>
 preview [--open] | frame --at T[,T2,...] | sheet | export [out.mp4] [--scale 1] | serve
+ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
+gen run --ref ID [--ref ID2] -f <footage/music/image>... [--count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
+
+**References / Generate:**
+- `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota (about 2 calls per video).
+- Give the estimate and ask before running it with `--count` above 3.
+- To change one generated video, open its project folder with `vedit use` and edit it like any other project.
 
 ## Skills
 
@@ -90,5 +97,7 @@ Load the relevant one before doing that kind of edit.
   - Overlay rendering: `render/layers.py`
   - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
-- **Tests:** `uv run pytest`. They use FFmpeg-generated clips.
+  - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+  - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
+- **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
 - **Before committing:** keep the tests green. Add a test for each new op.

@@ -1024,6 +1024,117 @@ def serve(port: int = 5173, host: str = "127.0.0.1", browser: bool = True):
     run(d, host, port, browser)
 
 
+# ---- references + generation ------------------------------------------------------------
+
+ref_app = typer.Typer(help="Reference library: videos the AI studies for style (pacing, text, animation, sound)")
+gen_app = typer.Typer(help="Generate N different edits of your footage in the style of references")
+app.add_typer(ref_app, name="ref")
+app.add_typer(gen_app, name="gen")
+
+
+@ref_app.command("add")
+def ref_add(files: list[str], wait: bool = typer.Option(True, help="Study now and wait (otherwise the app studies them)")):
+    """Add reference videos and study them (measure + AI)."""
+    from . import jobs
+    from .references import store
+
+    jobs.AUTOSTART = False
+    rows = [store.add(Path(f)) for f in files]
+    if wait:
+        jobs.drain(timeout=3600, wait=True)
+        rows = [store.get(r["id"]) for r in rows]
+    emit({"references": [{k: r.get(k) for k in ("id", "name", "status", "summary", "error")} for r in rows]},
+         "\n".join(f"#{r['id']} {r['name']}: {r['status']}  {r.get('summary') or r.get('error') or ''}" for r in rows))
+
+
+@ref_app.command("list")
+def ref_list():
+    """List references."""
+    from .references import store
+
+    rows = store.list_refs()
+    emit({"references": [{k: r.get(k) for k in ("id", "name", "status", "summary", "auto_tags", "duration")} for r in rows]},
+         "\n".join(f"#{r['id']:<3} {r['name']:<30} {r['status']:<9} {r.get('summary') or ''}" for r in rows) or "No references yet: vedit ref add <video>")
+
+
+@ref_app.command("show")
+def ref_show(ref_id: int):
+    """Show a reference's Style DNA."""
+    from .references import store
+
+    r = store.get(ref_id, full=True)
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error")}},
+         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", [])))
+
+
+@ref_app.command("set")
+def ref_set(ref_id: int, trait: str = typer.Argument(..., help="Dotted path, e.g. text.color"),
+            value: str = typer.Argument(..., help="JSON value, e.g. '\"#FFE600\"', true, 1.2, '[\"pop_in\"]'")):
+    """Correct one Style DNA trait (kept on top of the AI result)."""
+    from .references import store
+
+    try:
+        v = json.loads(value)
+    except json.JSONDecodeError:
+        v = value
+    r = store.get(ref_id)
+    r = store.update(ref_id, overrides={**r["overrides"], trait: v})
+    emit({"overrides": r["overrides"]}, f"#{ref_id} {trait} = {v!r}")
+
+
+@ref_app.command("remove")
+def ref_remove(ref_id: int):
+    """Delete a reference."""
+    from .references import store
+
+    store.delete(ref_id)
+    emit({"removed": ref_id}, f"Removed reference #{ref_id}")
+
+
+@gen_app.command("run")
+def gen_run(
+    ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
+    footage: list[str] = typer.Option(..., "--footage", "-f", help="Your video / music / image file (repeatable)"),
+    count: int = typer.Option(3, help="How many different videos (1-10)"),
+    about: str = typer.Option("", help="What the video is about"),
+    hook: str = typer.Option("", help="Hook line (empty: AI writes one per video)"),
+    cta: str = typer.Option(""),
+    length: float = typer.Option(20, help="Target length in seconds"),
+    fmt: str = typer.Option("reels", "--format", help="reels | portrait45 | square | landscape"),
+    language: str = typer.Option("en"),
+    quality: str = typer.Option("balanced", help="best | balanced | economy"),
+    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section"),
+    review: bool = typer.Option(True, help="AI reviews each result once"),
+    lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
+):
+    """Generate COUNT videos from your footage in the style of the references (waits until done)."""
+    from . import jobs
+    from .generate import batch, footage as foot
+    from .generate.spec import AXES, BatchSpec
+
+    jobs.AUTOSTART = False
+    ups = [foot.add(Path(f))["id"] for f in footage]
+    spec = BatchSpec(refs=ref, lead=lead, footage=ups, count=count, axes=vary or list(AXES), quality=quality, review=review,
+                     brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
+    est = batch.estimate(spec)
+    if not STATE["json"]:
+        print(f"About {est['calls']} AI calls, ~{est['minutes']} min…", file=sys.stderr)
+    b = batch.create(spec)
+    jobs.drain(timeout=3600 * 3, wait=True)
+    b = batch.get(b["id"])
+    emit({"batch": b}, f"Batch {b['id']}: {b['status']}" + (f" ({b['error']})" if b["error"] else "") + "\n" + "\n".join(
+        f"  v{v['idx']} {v['status']:<7} “{v['hook_text']}”  {v['output'] or v['error'] or ''}" for v in b["variations"]))
+
+
+@gen_app.command("list")
+def gen_list():
+    """List generation batches."""
+    from .generate import batch
+
+    rows = batch.list_batches()
+    emit({"batches": rows}, "\n".join(f"{b['id']}  {b['status']:<9} {b['done']}/{b['count']}  {b['name']}" for b in rows) or "No batches yet")
+
+
 def main() -> None:
     try:
         app()

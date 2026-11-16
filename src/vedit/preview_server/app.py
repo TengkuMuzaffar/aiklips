@@ -247,6 +247,11 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         await host.close()
         return {"ok": True}
 
+    # ---- references + generation (home tabs) ---------------------------------------------
+    from . import gen_routes
+
+    gen_routes.mount(app, host, bad)
+
     # ---- AI models: any model from any Anthropic-compatible provider -----------------
     async def _models(fn, *a) -> dict:
         from ..editor import models as registry

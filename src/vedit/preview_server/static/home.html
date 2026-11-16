@@ -75,17 +75,134 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .foot { color: var(--faint); font-size: 12px; margin-top: 28px; }
 #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--pane3); border: 1px solid var(--line2); padding: 9px 16px; border-radius: 10px; display: none; z-index: 50; }
 #toast.err { border-color: var(--danger); color: #fecaca; }
+
+/* ---- tabs ---- */
+.tabs { display: flex; gap: 2px; margin-left: 18px; height: 100%; }
+.tab { background: transparent; border: none; border-radius: 0; color: var(--muted); padding: 0 14px; height: 100%; border-bottom: 2px solid transparent; font-weight: 550; }
+.tab:hover { color: var(--text); border-color: transparent; border-bottom-color: var(--line2); }
+.tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+.tab .n { color: var(--faint); font-weight: 500; margin-left: 4px; font-size: 12px; }
+[hidden] { display: none !important; }
+.lede { color: var(--muted); margin: -12px 0 22px; max-width: 760px; }
+
+/* ---- references ---- */
+.thumb.tall { height: 260px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--pane3); color: var(--muted); border: 1px solid var(--line2); }
+.chip.on { background: #0f2a26; color: var(--accent); border-color: #1d5a50; }
+.badge.busy { background: #1e293b; color: #cbd5e1; }
+.badge.warn2 { background: #3b2f12; color: #fde68a; }
+.spin { display: inline-block; width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -1px; margin-right: 5px; }
+@keyframes sp { to { transform: rotate(360deg); } }
+.drop { border: 2px dashed var(--line2); border-radius: 14px; padding: 34px 20px; text-align: center; color: var(--muted); }
+.drop.over, .dropzone.over { border-color: var(--accent); background: #0f2a2622; }
+.summary { color: var(--muted); font-size: 12px; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.dialog.wide { width: min(1040px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.refgrid { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
+.refgrid video { width: 100%; max-height: 520px; background: #000; border-radius: 10px; }
+.traits { width: 100%; border-collapse: collapse; font-size: 13px; }
+.traits td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+.traits td:first-child { color: var(--muted); width: 120px; white-space: nowrap; }
+.conf { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; vertical-align: 1px; }
+.sheets img { width: 100%; border-radius: 8px; margin-top: 10px; display: block; }
+.timeline { width: 100%; height: 74px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; display: block; }
+.legend { color: var(--faint); font-size: 11px; margin-top: 4px; }
+.note { background: #3b2f12; color: #fde68a; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin: 10px 0; }
+.note.err { background: #3a1717; color: #fecaca; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
+.form-grid label { margin: 10px 0 4px !important; }
+.form-grid input, .form-grid select { width: 100%; }
+.sect { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--faint); margin: 18px 0 6px; }
+
+/* ---- generate ---- */
+.batch { background: var(--pane); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 18px; }
+.batch-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.batch-head h3 { margin: 0; font-size: 16px; }
+.batch-head .meta { margin-top: 2px; }
+.status { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: var(--pane3); color: var(--muted); white-space: nowrap; }
+.status.done { background: #0f2a26; color: var(--accent); }
+.status.failed { background: #3a1717; color: #fecaca; }
+.status.active { background: #1e293b; color: #cbd5e1; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 14px; }
+.vcard { background: var(--pane2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+.vcard.keep { border-color: var(--accent); }
+.vcard.discard { opacity: .45; }
+.vthumb { aspect-ratio: 9 / 14; background: #000; position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; }
+.vthumb img { width: 100%; height: 100%; object-fit: cover; }
+.vthumb .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 34px; color: #fff; opacity: 0; background: #0006; transition: opacity .12s; }
+.vthumb:hover .play { opacity: 1; }
+.vthumb .wait { color: var(--muted); font-size: 12px; padding: 14px; text-align: center; }
+.vthumb .num { position: absolute; left: 8px; top: 8px; font-size: 11px; background: #000a; padding: 1px 7px; border-radius: 6px; color: #ddd; }
+.vbody { padding: 9px 10px 10px; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.vbody .hook { font-weight: 600; font-size: 13px; line-height: 1.3; }
+.vbody .angle { color: var(--muted); font-size: 12px; }
+.vbody .err { color: #fca5a5; font-size: 12px; }
+.vacts { display: flex; gap: 4px; margin-top: auto; padding-top: 8px; }
+.vacts button { padding: 4px 8px; font-size: 12px; }
+.vacts .grow { flex: 1; }
+button.on-keep { border-color: var(--accent); color: var(--accent); }
+.mini { padding: 5px 10px; font-size: 12px; }
+
+/* ---- wizard ---- */
+.steps { display: flex; gap: 6px; margin: 4px 0 18px; }
+.stp { flex: 1; font-size: 12px; color: var(--faint); border-top: 3px solid var(--line2); padding-top: 6px; }
+.stp.on { color: var(--text); border-color: var(--accent); }
+.stp.done { color: var(--muted); border-color: #1d5a50; }
+.pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pickcard { border: 2px solid var(--line); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--pane2); position: relative; }
+.pickcard.on { border-color: var(--accent); }
+.pickcard.off { opacity: .5; cursor: not-allowed; }
+.pickcard img { width: 100%; height: 150px; object-fit: cover; display: block; background: #000; }
+.pickcard .pn { padding: 6px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pickcard .box { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 6px; background: #000a; border: 2px solid #fff8; display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--accent-ink); }
+.pickcard.on .box { background: var(--accent); border-color: var(--accent); }
+.pickcard .lead { position: absolute; left: 8px; top: 8px; font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #000a; color: #ddd; border: 1px solid #fff4; }
+.pickcard .lead.on { background: var(--accent); color: var(--accent-ink); }
+.merged { margin-top: 16px; background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 4px 6px; }
+.files { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.file { display: flex; align-items: center; gap: 10px; background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.file img, .file .ic { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: #000; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+.file .fn { flex: 1; min-width: 0; }
+.file .fn b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
+.file .fn small { color: var(--muted); }
+.dropzone { border: 2px dashed var(--line2); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); }
+.count { display: flex; align-items: center; gap: 16px; }
+.count input[type=range] { flex: 1; accent-color: var(--accent); }
+.count b { font-size: 34px; min-width: 52px; text-align: center; color: var(--accent); }
+.checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; }
+.checks label, .radios label { display: flex !important; align-items: center; gap: 8px; color: var(--text) !important; font-size: 13px !important; margin: 4px 0 !important; cursor: pointer; }
+.radios { display: flex; gap: 18px; flex-wrap: wrap; }
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; }
+.estimate { background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 16px; font-size: 13px; }
+.estimate b { color: var(--accent); }
+textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; width: 100%; resize: vertical; min-height: 58px; }
+.review-list { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; font-size: 13px; }
+.review-list dt { color: var(--muted); }
+.review-list dd { margin: 0; }
+.vplayer { width: 100%; max-height: 72vh; background: #000; border-radius: 10px; display: block; }
+@media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } .form-grid, .checks { grid-template-columns: 1fr; } .tabs { margin-left: 4px; } .tab { padding: 0 8px; } .hide-sm { display: none; } header { padding: 0 12px; gap: 6px; } .logo { white-space: nowrap; } main { padding: 20px 16px 48px; } }
+@media (max-width: 560px) { .logo { display: none; } .tabs { margin-left: 0; } header button.primary { font-size: 0; padding: 6px 12px; } header button.primary::first-letter { font-size: 18px; } .vgrid { grid-template-columns: repeat(2, 1fr); } .steps .stp { font-size: 0; } .steps .stp.on { font-size: 12px; white-space: nowrap; } }
 @media (max-width: 560px) { #search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
 <header>
   <div class="logo">claude<span>-</span>cut</div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="projects" title="Your editing projects">Projects</button>
+    <button class="tab" role="tab" data-tab="references" title="Videos the AI studies for style">References<span class="n" id="n-refs"></span></button>
+    <button class="tab" role="tab" data-tab="generate" title="Generate videos in a reference style">Generate<span class="n" id="n-gen"></span></button>
+  </nav>
   <div class="spacer"></div>
-  <button class="ghost" id="b-add" title="Add an existing project folder to the list">Open folder…</button>
-  <button class="primary" id="b-new" title="Create a new video project">＋ New project</button>
+  <button class="ghost hide-sm" id="b-add" data-for="projects" title="Add an existing project folder to the list">Open folder…</button>
+  <button class="primary" id="b-new" data-for="projects" title="Create a new video project">＋ New project</button>
+  <button class="primary" id="b-ref-add" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
+  <button class="primary" id="b-gen-new" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <input type="file" id="ref-file" accept="video/*" multiple hidden>
+  <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
 </header>
-<main>
+<main id="view-projects">
   <div class="top">
     <h1>Projects</h1><span class="count" id="count"></span>
     <div class="spacer"></div>
@@ -94,6 +211,16 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
   </div>
   <div id="list"></div>
   <div class="foot" id="foot"></div>
+</main>
+<main id="view-references" hidden>
+  <div class="top"><h1>References</h1><span class="count" id="ref-count"></span></div>
+  <p class="lede">Videos whose style you like. The AI studies each one: pacing and cuts, the hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat). It learns the pattern and never copies their footage or music.</p>
+  <div id="ref-list"></div>
+</main>
+<main id="view-generate" hidden>
+  <div class="top"><h1>Generate</h1></div>
+  <p class="lede">Make several different videos from your own footage, in the style of your references. Each result is a normal project you can open and keep editing.</p>
+  <div id="gen-list"></div>
 </main>
 
 <div class="menu" id="menu"></div>
@@ -120,6 +247,10 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
   <h2 id="c-title"></h2><p id="c-desc"></p>
   <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="danger" id="c-ok" title="Delete permanently">Delete</button></div>
 </div></div>
+
+<div class="veil" id="dlg-ref"><div class="dialog wide" id="ref-body"></div></div>
+<div class="veil" id="dlg-wiz"><div class="dialog wide" id="wiz-body"></div></div>
+<div class="veil" id="dlg-play"><div class="dialog wide" id="play-body"></div></div>
 
 <div id="toast"></div>
 
@@ -295,14 +426,469 @@ $("#b-add").onclick = () => ask("Open project folder", "Paste the full path of a
 $("#b-new").onclick = openNew;
 $("#search").oninput = render;
 $("#sort").onchange = render;
+
+function confirmDanger(title, desc, okLabel, fn) {
+  $("#c-title").textContent = title; $("#c-desc").textContent = desc; $("#c-ok").textContent = okLabel;
+  $("#c-ok").onclick = async () => { hide("#dlg-confirm"); await fn(); };
+  show("#dlg-confirm");
+}
+const debounce = (fn, ms = 300) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+const spinner = () => h("span", { class: "spin" });
+
+// ============================================================ tabs
+const TABS = ["projects", "references", "generate"];
+let TAB = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "projects";
+function setTab(t) {
+  TAB = t;
+  history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
+  for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
+  document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  document.querySelectorAll("header [data-for]").forEach((b) => (b.hidden = b.dataset.for !== t));
+  if (t === "projects") load();
+  if (t === "references") loadRefs();
+  if (t === "generate") loadBatches();
+}
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
+
+// ============================================================ references
+let REFS = [], OPTS = null, refTimer = null;
+const refBusy = (r) => !["ready", "failed"].includes(r.status);
+async function options() { if (!OPTS) OPTS = await (await fetch("/api/generate/options")).json(); return OPTS; }
+async function loadRefs() {
+  REFS = (await (await fetch("/api/references")).json()).references;
+  $("#n-refs").textContent = REFS.length ? String(REFS.length) : "";
+  if (TAB === "references") renderRefs();
+  clearTimeout(refTimer);
+  if (REFS.some(refBusy)) refTimer = setTimeout(loadRefs, 2000);
+  return REFS;
+}
+function refBadge(r) {
+  if (r.status === "ready") return r.ai ? (r.stale ? h("span", { class: "badge warn2" }, "Re-study available") : null) : h("span", { class: "badge warn2", title: r.error || "" }, "Measured only");
+  if (r.status === "failed") return h("span", { class: "badge warn", title: r.error || "" }, "Failed");
+  const txt = r.progress || (r.job && r.job.note) || (r.status === "queued" ? "Queued" : "Studying…");
+  return h("span", { class: "badge busy" }, spinner(), txt);
+}
+function renderRefs() {
+  const list = $("#ref-list"); list.innerHTML = "";
+  $("#ref-count").textContent = REFS.length ? String(REFS.length) : "";
+  if (!REFS.length) {
+    list.append(h("div", { class: "drop", id: "ref-drop" },
+      h("h2", { style: { color: "var(--text)", margin: "0 0 6px" } }, "Add videos you want to learn from"),
+      h("p", {}, "Drop TikToks, Reels or ads here (as video files). The AI studies each one in about a minute."),
+      h("button", { class: "primary", onclick: () => $("#ref-file").click(), title: "Choose video files" }, "＋ Add videos")));
+    return;
+  }
+  const grid = h("div", { class: "grid" });
+  grid.append(h("div", { class: "card new", tabindex: 0, onclick: () => $("#ref-file").click(), onkeydown: (e) => e.key === "Enter" && $("#ref-file").click() },
+    h("div", { class: "plus" }, "＋"), h("div", {}, "Add videos"), h("small", { style: { color: "var(--faint)" } }, "or drop them here")));
+  for (const r of REFS) grid.append(refCard(r));
+  list.append(grid);
+}
+function refCard(r) {
+  const url = `/api/references/${r.id}/thumb.jpg?v=${Math.round(r.updated_at)}`;
+  const thumb = h("div", { class: "thumb tall" }, h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
+    h("img", { src: url, alt: "", onerror: (e) => e.target.remove() }));
+  const b = refBadge(r); if (b) thumb.append(b);
+  if (r.duration) thumb.append(h("span", { class: "fmt" }, dur(r.duration)));
+  const tags = [...(r.auto_tags || []), ...(r.tags || [])].slice(0, 5);
+  return h("div", { class: "card", tabindex: 0, title: r.summary || r.name, onclick: () => openRef(r.id), onkeydown: (e) => e.key === "Enter" && openRef(r.id) },
+    thumb, h("div", { class: "info" }, h("div", { class: "name" }, r.name),
+      h("div", { class: "summary" }, r.status === "failed" ? (r.error || "Could not be studied") : (r.summary || (refBusy(r) ? "Being studied…" : ""))),
+      tags.length ? h("div", { class: "chips" }, tags.map((t) => h("span", { class: "chip" }, t))) : null));
+}
+async function uploadRefs(files) {
+  files = [...files].filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(f.name));
+  if (!files.length) return toast("Drop video files", true);
+  const fd = new FormData(); files.forEach((f) => fd.append("files", f));
+  toast(`Uploading ${files.length} video${files.length > 1 ? "s" : ""}…`);
+  const r = await fetch("/api/references", { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return toast(d.detail || "Upload failed", true);
+  toast(`Added ${d.added.length}. The AI is studying ${d.added.length > 1 ? "them" : "it"}…` + (d.errors.length ? ` (${d.errors.length} skipped)` : ""));
+  loadRefs();
+}
+$("#b-ref-add").onclick = () => $("#ref-file").click();
+$("#ref-file").onchange = (e) => { uploadRefs(e.target.files); e.target.value = ""; };
+function dropTarget(el, onFiles) {
+  el.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); el.classList.add("over"); } });
+  el.addEventListener("dragleave", (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove("over"); });
+  el.addEventListener("drop", (e) => { e.preventDefault(); el.classList.remove("over"); if (e.dataTransfer.files.length) onFiles(e.dataTransfer.files); });
+}
+dropTarget($("#view-references"), uploadRefs);
+
+// ---- style card
+function timelineSvg(m) {
+  const W = 600, H = 74, d = m.duration || 1, x = (t) => ((t / d) * W).toFixed(1);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "timeline");
+  const add = (tag, attrs) => { const el = document.createElementNS(svg.namespaceURI, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.append(el); };
+  const a = m.audio;
+  if (a && a.rms && a.rms.length) {
+    const pts = a.rms.map((v, i) => `${x(i * a.rms_step)},${(H - 12 - v * (H - 22)).toFixed(1)}`);
+    add("polyline", { points: `0,${H - 12} ${pts.join(" ")} ${W},${H - 12}`, fill: "#5eead422", stroke: "#5eead466", "stroke-width": 1 });
+    for (const b of a.beats || []) add("circle", { cx: x(b), cy: H - 5, r: 1.6, fill: "#8a93a3" });
+  }
+  for (const c of m.cuts || []) add("line", { x1: x(c), x2: x(c), y1: 2, y2: H - 12, stroke: "#fbbf24", "stroke-width": 1.5 });
+  return svg;
+}
+const confColor = (c) => (c == null ? "transparent" : c >= 0.7 ? "#5eead4" : c >= 0.4 ? "#fbbf24" : "#f87171");
+async function openRef(id, editing = false) {
+  const r = await (await fetch(`/api/references/${id}`)).json();
+  const body = $("#ref-body"); body.innerHTML = "";
+  const m = r.metrics;
+  const nameIn = h("input", { type: "text", value: r.name, maxlength: 120, style: { fontSize: "18px", fontWeight: 600, width: "100%" }, title: "Rename" });
+  nameIn.onchange = async () => { await call("PATCH", `/api/references/${id}`, { name: nameIn.value }); loadRefs(); };
+  const left = h("div", {}, h("video", { src: `/api/references/${id}/video`, controls: true, playsinline: true, muted: true, loop: true }));
+  if (m) {
+    const a = m.audio || {};
+    left.append(h("div", { class: "sect" }, "Measured"),
+      h("table", { class: "traits" }, [
+        ["Length", `${dur(m.duration)} · ${m.width}×${m.height}`],
+        ["Shots", `${m.pacing.shot_count} · avg ${m.pacing.avg_shot_s}s · ${m.pacing.cuts_per_10s} cuts/10s`],
+        ["Tempo", a.bpm ? `${a.bpm} BPM (${pct(a.tempo_confidence)} sure)` : "no steady beat"],
+        ["Cuts on beat", m.cuts_on_beat == null ? "—" : `${pct(m.cuts_on_beat)} (random would be ~${pct(m.cuts_on_beat_chance)})`],
+        ["First cut", m.first_cut_s != null ? `${m.first_cut_s}s` : "no cuts"],
+      ].map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", {}, v)))));
+  }
+  const right = h("div", {}, nameIn);
+  if (r.summary) right.append(h("p", { style: { color: "var(--muted)", margin: "8px 0 0" } }, r.summary));
+  if (r.status !== "ready") right.append(h("div", { class: r.status === "failed" ? "note err" : "note" }, r.status === "failed" ? (r.error || "Failed") : [spinner(), r.progress || "Waiting to be studied"]));
+  else if (r.error) right.append(h("div", { class: "note" }, r.error));
+  if (r.stale) right.append(h("div", { class: "note" }, "The study prompt has improved since this was studied. Re-study for better results."));
+  if (m) right.append(h("div", { class: "sect" }, "Cuts, beats and loudness"), timelineSvg(m),
+    h("div", { class: "legend" }, "Yellow lines = cuts · dots = beats · shaded = loudness"));
+  if (r.card && !editing) {
+    right.append(h("div", { class: "sect" }, "Style DNA", Object.keys(r.overrides || {}).length ? h("span", { class: "chip on", style: { marginLeft: "8px" } }, `${Object.keys(r.overrides).length} edited by you`) : null),
+      h("table", { class: "traits" }, r.card.map((t) => h("tr", {}, h("td", {}, t.label, t.confidence != null ? h("span", { class: "conf", title: `AI confidence ${pct(t.confidence)}`, style: { background: confColor(t.confidence) } }) : null), h("td", {}, t.value)))));
+    if (r.dna && r.dna.notes) right.append(h("p", { style: { color: "var(--faint)", fontSize: "12px" } }, r.dna.notes));
+  }
+  if (editing && r.dna) right.append(await traitForm(r));
+  if (m && m.sheets && m.sheets.length && !editing)
+    right.append(h("div", { class: "sect" }, "What the AI looked at"), h("div", { class: "sheets" }, m.sheets.map((_, i) => h("img", { src: `/api/references/${id}/sheet/${i + 1}.jpg`, alt: "" }))));
+  const acts = h("div", { class: "actions" },
+    h("button", { class: "danger", title: "Delete this reference", onclick: () => confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => { await call("DELETE", `/api/references/${id}`); hide("#dlg-ref"); loadRefs(); }) }, "Delete"),
+    h("div", { class: "spacer" }),
+    r.status === "ready" || r.status === "failed" ? h("button", { title: "Measure and study again", onclick: async () => { await call("POST", `/api/references/${id}/restudy`); toast("Studying again…"); loadRefs(); openRef(id); } }, "Re-study") : null,
+    r.dna && !editing ? h("button", { title: "Correct what the AI got wrong", onclick: () => openRef(id, true) }, "Edit traits") : null,
+    h("button", { class: "primary", "data-close": "", onclick: () => hide("#dlg-ref"), title: "Close" }, "Done"));
+  body.append(h("div", { class: "refgrid" }, left, right), acts);
+  show("#dlg-ref");
+  clearTimeout(openRef.t);
+  if (refBusy(r)) openRef.t = setTimeout(() => $("#dlg-ref").style.display === "flex" && openRef(id), 2500);
+}
+function getPath(o, p) { return p.split(".").reduce((a, k) => (a == null ? a : a[k]), o); }
+async function traitForm(r) {
+  const o = await options();
+  const ctrls = {};
+  const grid = h("div", { class: "form-grid" });
+  for (const t of o.traits) {
+    let v = getPath(r.dna, t.path), el;
+    if (t.type === "enum" || t.type === "list") {
+      if (t.type === "list") v = (v || [])[0] || "";
+      el = h("select", {}, (t.type === "list" ? [""] : []).concat(t.options).map((x) => h("option", { value: x, selected: x === v ? "" : null }, x ? x.replace(/_/g, " ") : "(none)")));
+    } else if (t.type === "bool") {
+      el = h("select", {}, h("option", { value: "true", selected: v ? "" : null }, "yes"), h("option", { value: "false", selected: !v ? "" : null }, "no"));
+    } else if (t.type === "color") {
+      el = h("input", { type: "color", value: /^#[0-9a-f]{6}/i.test(v || "") ? v.slice(0, 7) : "#ffffff" });
+    } else {
+      el = h("input", { type: t.type === "str" ? "text" : "number", step: t.type === "int" ? 1 : 0.05, value: v == null ? "" : v });
+    }
+    ctrls[t.path] = [t, el];
+    grid.append(h("div", {}, h("label", {}, t.label), el));
+  }
+  const save = async () => {
+    const ov = { ...(r.overrides || {}) };
+    for (const [path, [t, el]] of Object.entries(ctrls)) {
+      let v = el.value;
+      if (t.type === "bool") v = v === "true";
+      else if (t.type === "int") v = v === "" ? null : parseInt(v, 10);
+      else if (t.type === "float") v = v === "" ? null : parseFloat(v);
+      else if (t.type === "list") v = v ? [v] : [];
+      const base = getPath(r.base_dna, path);
+      if (JSON.stringify(v) === JSON.stringify(base) || (v === null && t.path !== "motion.jumpcut_zoom")) delete ov[path];
+      else ov[path] = v;
+    }
+    const res = await call("PATCH", `/api/references/${r.id}`, { overrides: ov });
+    if (res) { toast("Saved. Generation will use your corrections."); openRef(r.id); loadRefs(); }
+  };
+  return h("div", {}, h("div", { class: "sect" }, "Edit traits"),
+    h("p", { style: { color: "var(--muted)", fontSize: "12px", margin: 0 } }, "Your corrections are kept on top of what the AI found, also after a re-study."), grid,
+    h("div", { class: "actions", style: { marginTop: "14px" } },
+      h("button", { class: "ghost", onclick: async () => { await call("PATCH", `/api/references/${r.id}`, { overrides: {} }); openRef(r.id); }, title: "Back to what the AI found" }, "Reset all"),
+      h("button", { onclick: () => openRef(r.id), title: "Discard changes" }, "Cancel"),
+      h("button", { class: "primary", onclick: save, title: "Save trait corrections" }, "Save traits")));
+}
+
+// ============================================================ generate: batches
+let BATCHES = [], genTimer = null;
+const ACTIVE = ["queued", "preparing", "running"];
+const VACTIVE = ["queued", "planning", "building", "rendering", "reviewing", "exporting"];
+async function loadBatches() {
+  BATCHES = (await (await fetch("/api/batches")).json()).batches;
+  const running = BATCHES.filter((b) => ACTIVE.includes(b.status)).length;
+  $("#n-gen").textContent = running ? `● ${running}` : "";
+  if (TAB === "generate") renderBatches();
+  clearTimeout(genTimer);
+  if (running) genTimer = setTimeout(loadBatches, 2500);
+}
+function renderBatches() {
+  const list = $("#gen-list"); list.innerHTML = "";
+  if (!BATCHES.length) {
+    list.append(h("div", { class: "empty" }, h("h2", {}, "Generate your first batch"),
+      h("p", {}, "1. Pick reference videos  ·  2. Add your footage  ·  3. Choose how many different videos you want"),
+      h("button", { class: "primary", onclick: openWizard, title: "Start the wizard" }, "＋ New generation")));
+    return;
+  }
+  for (const b of BATCHES) list.append(batchPanel(b));
+}
+function statusChip(s, label) {
+  const cls = s === "done" ? "done" : s === "failed" ? "failed" : ACTIVE.includes(s) || VACTIVE.includes(s) ? "active" : "";
+  return h("span", { class: `status ${cls}` }, ACTIVE.includes(s) || VACTIVE.includes(s) ? spinner() : null, label || s);
+}
+function batchPanel(b) {
+  const active = ACTIVE.includes(b.status);
+  const head = h("div", { class: "batch-head" },
+    h("div", { style: { flex: 1, minWidth: "220px" } }, h("h3", {}, b.name),
+      h("div", { class: "meta" }, `${b.count} video${b.count > 1 ? "s" : ""} · ${b.brief.length_s}s · style of ${b.refs.join(", ")} · ${ago(b.created_at)}`
+        + (b.usage && b.usage.calls ? ` · ${b.usage.calls} AI calls` : ""))),
+    statusChip(b.status, b.status === "running" ? `${b.done}/${b.count} done` : b.status === "preparing" ? "preparing" : null),
+    active ? h("button", { class: "mini", title: "Stop this batch", onclick: async () => { await call("POST", `/api/batches/${b.id}/cancel`); loadBatches(); } }, "Cancel") : null,
+    ["failed", "cancelled"].includes(b.status) ? h("button", { class: "mini", title: "Retry what didn't finish", onclick: async () => { await call("POST", `/api/batches/${b.id}/resume`); loadBatches(); } }, "Resume") : null,
+    h("button", { class: "ghost mini", title: "Delete this batch and its videos", onclick: () => confirmDanger("Delete this batch?", "Deletes all its variations, including exported videos. Variations you kept are deleted too.", "Delete", async () => { await call("DELETE", `/api/batches/${b.id}`); loadBatches(); load(); }) }, "Delete"));
+  const panel = h("div", { class: "batch" }, head);
+  if (b.progress && active) panel.append(h("div", { class: "meta", style: { margin: "-4px 0 12px" } }, b.progress));
+  if (b.error) panel.append(h("div", { class: "note err" }, b.error));
+  if (b.variations.length) panel.append(h("div", { class: "vgrid" }, b.variations.map((v) => varCard(b, v))));
+  else if (active) panel.append(h("div", { class: "vgrid" }, Array.from({ length: b.count }, (_, i) =>
+    h("div", { class: "vcard" }, h("div", { class: "vthumb" }, h("span", { class: "num" }, `v${i + 1}`), h("div", { class: "wait" }, spinner(), "Waiting for the plan"))))));
+  return panel;
+}
+function varCard(b, v) {
+  const busy = VACTIVE.includes(v.status);
+  const thumb = h("div", { class: "vthumb", title: v.status === "done" ? "Play" : "" }, h("span", { class: "num" }, `v${v.idx}`));
+  if (v.has_poster) thumb.append(h("img", { src: `/api/variations/${v.id}/poster.jpg?v=${Math.round(v.updated_at)}`, alt: "" }));
+  if (v.status === "done") { thumb.append(h("div", { class: "play" }, "▶")); thumb.onclick = () => play(v); }
+  else thumb.append(h("div", { class: "wait" }, busy ? [spinner(), v.progress || "Queued"] : v.status === "failed" ? "Failed" : "Cancelled"));
+  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && !["order", "music_section"].includes(k)).map(([, x]) => x.replace(/_/g, " "));
+  const body = h("div", { class: "vbody" },
+    h("div", { class: "hook" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
+    v.angle ? h("div", { class: "angle" }, v.angle) : null,
+    axes.length ? h("div", { class: "chips" }, axes.slice(0, 4).map((a) => h("span", { class: "chip" }, a))) : h("div", { class: "chips" }, h("span", { class: "chip on" }, "closest to reference")),
+    v.error ? h("div", { class: "err", title: v.error }, v.error.split("\n")[0].slice(0, 140)) : null,
+    v.review && v.review.fixed && v.review.fixed.length ? h("div", { class: "angle", title: (v.review.issues || []).join("\n") }, `AI review fixed ${v.review.fixed.length} thing${v.review.fixed.length > 1 ? "s" : ""}`) : null);
+  const acts = h("div", { class: "vacts" });
+  if (v.status === "done") acts.append(
+    h("button", { class: "grow", title: "Open in the editor to keep editing", onclick: () => openVar(v) }, "Edit"),
+    h("button", { class: v.verdict === "keep" ? "on-keep" : "", title: "Keep: adds it to Projects", onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); loadBatches(); } } }, "✓"),
+    h("button", { title: "Discard", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); loadBatches(); } }, "✕"));
+  if (!busy) acts.append(h("button", { title: "Make this variation again, differently", onclick: async () => { await call("POST", `/api/variations/${v.id}/regenerate`); loadBatches(); } }, "↻"));
+  body.append(acts);
+  return h("div", { class: `vcard ${v.verdict || ""}` }, thumb, body);
+}
+async function openVar(v) { const r = await call("POST", `/api/variations/${v.id}/open`); if (r) location.href = "/editor"; }
+function play(v) {
+  const body = $("#play-body"); body.innerHTML = "";
+  body.append(h("h2", {}, v.hook_text ? `v${v.idx}: “${v.hook_text}”` : `Variation ${v.idx}`),
+    h("p", {}, v.angle || ""),
+    h("video", { class: "vplayer", src: `/api/variations/${v.id}/video.mp4`, controls: true, autoplay: true, playsinline: true }),
+    h("div", { class: "actions" }, h("button", { onclick: () => { hide("#dlg-play"); body.innerHTML = ""; }, title: "Close" }, "Close"),
+      h("button", { class: "primary", onclick: () => openVar(v), title: "Open in the editor" }, "Open in editor")));
+  show("#dlg-play");
+}
+$("#b-gen-new").onclick = () => openWizard();
+
+// ============================================================ generate: wizard
+const STEPS = ["References", "Footage", "Brief", "Variations", "Review"];
+let W = null;
+function newWizard() {
+  return { step: 0, refs: new Set(), lead: null, footage: [], uploading: 0, est: null,
+    brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "" },
+    count: 3, axes: null, quality: "balanced", review: true };
+}
+async function openWizard() {
+  const o = await options();
+  await loadRefs();
+  if (!REFS.length) { toast("Add a reference video first"); setTab("references"); return; }
+  if (!W) W = newWizard();
+  if (!W.axes) W.axes = new Set(o.axes.map((a) => a.id));
+  W.step = 0;
+  if (!W.refs.size) REFS.filter((r) => r.status === "ready").slice(0, 1).forEach((r) => W.refs.add(r.id));
+  renderWiz();
+  show("#dlg-wiz");
+}
+const payload = () => ({ refs: [...W.refs], lead: W.refs.size > 1 ? W.lead : null, footage: W.footage.map((f) => f.id),
+  brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review });
+function stepOk(i) {
+  if (i === 0) return W.refs.size > 0;
+  if (i === 1) return W.footage.some((f) => f.kind === "video") && W.footage.filter((f) => f.kind === "audio").length <= 1 && !W.uploading;
+  if (i === 2) return W.brief.length_s >= 5 && W.brief.length_s <= 90;
+  return W.count >= 1;
+}
+function renderWiz() {
+  const body = $("#wiz-body"); body.innerHTML = "";
+  body.append(h("h2", {}, "New generation"),
+    h("div", { class: "steps" }, STEPS.map((s, i) => h("div", { class: "stp" + (i === W.step ? " on" : i < W.step ? " done" : "") }, `${i + 1}. ${s}`))));
+  const content = h("div", {});
+  [wizRefs, wizFootage, wizBrief, wizVariations, wizReview][W.step](content);
+  body.append(content);
+  const last = W.step === STEPS.length - 1;
+  const next = h("button", { class: "primary", disabled: stepOk(W.step) ? null : "", title: last ? "Start generating" : "Next step",
+    onclick: () => (last ? submitWiz() : (W.step++, renderWiz())) }, last ? `Generate ${W.count} video${W.count > 1 ? "s" : ""}` : "Next");
+  body.append(h("div", { class: "actions" },
+    h("button", { class: "ghost", onclick: () => hide("#dlg-wiz"), title: "Close (your choices are kept)" }, "Close"),
+    h("div", { class: "spacer" }),
+    W.step ? h("button", { onclick: () => { W.step--; renderWiz(); }, title: "Previous step" }, "Back") : null, next));
+}
+function wizRefs(el) {
+  el.append(h("p", {}, "Tick the references whose style you want. With several, the styles are blended; the lead breaks ties."));
+  const grid = h("div", { class: "pick" });
+  for (const r of REFS) {
+    const usable = r.status !== "failed";
+    const on = W.refs.has(r.id);
+    const card = h("div", { class: `pickcard${on ? " on" : ""}${usable ? "" : " off"}`, title: usable ? (r.summary || r.name) : (r.error || "Failed"),
+      onclick: () => { if (!usable) return; on ? W.refs.delete(r.id) : W.refs.add(r.id); if (W.lead === r.id && !W.refs.has(r.id)) W.lead = null; renderWiz(); } },
+      h("img", { src: `/api/references/${r.id}/thumb.jpg`, alt: "", onerror: (e) => (e.target.style.visibility = "hidden") }),
+      h("div", { class: "box" }, on ? "✓" : ""),
+      h("div", { class: "pn" }, r.name),
+      h("div", { class: "meta", style: { padding: "0 9px 8px" } }, r.status === "ready" ? (r.auto_tags || []).slice(0, 2).join(" · ") || "ready" : r.status === "failed" ? "failed" : "studying… (we'll wait)"));
+    if (on && W.refs.size > 1) card.append(h("button", { class: `lead${W.lead === r.id ? " on" : ""}`, title: "Make this the lead style",
+      onclick: (e) => { e.stopPropagation(); W.lead = W.lead === r.id ? null : r.id; renderWiz(); } }, W.lead === r.id ? "★ lead" : "☆ lead"));
+    grid.append(card);
+  }
+  el.append(grid);
+  const merged = h("div", { class: "merged" }, h("div", { class: "meta", style: { padding: "8px" } }, "Pick a reference to preview the style."));
+  el.append(h("div", { class: "sect" }, W.refs.size > 1 ? "Blended style" : "Style"), merged);
+  if (W.refs.size) fetch("/api/references/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...W.refs], lead: W.lead }) })
+    .then((r) => r.json()).then((d) => {
+      merged.innerHTML = "";
+      if (!d.card.length) return merged.append(h("div", { class: "meta", style: { padding: "8px" } }, "Still being studied. You can continue: generation waits for it."));
+      merged.append(h("table", { class: "traits" }, d.card.filter((t) => t.label !== "Colour").map((t) => h("tr", {}, h("td", {}, t.label), h("td", {}, t.value)))));
+      if (d.pending) merged.append(h("div", { class: "meta", style: { padding: "6px 8px" } }, `${d.pending} more still being studied.`));
+    });
+}
+async function uploadFootage(files) {
+  const fd = new FormData(); [...files].forEach((f) => fd.append("files", f));
+  W.uploading++; renderWiz();
+  const r = await fetch("/api/uploads", { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  W.uploading--;
+  if (!r.ok) toast(d.detail || "Upload failed", true);
+  else {
+    for (const f of d.added) if (!W.footage.some((x) => x.id === f.id)) W.footage.push(f);
+    if (d.errors.length) toast(d.errors.join("; "), true);
+  }
+  if ($("#dlg-wiz").style.display === "flex") renderWiz();
+}
+$("#foot-file").onchange = (e) => { uploadFootage(e.target.files); e.target.value = ""; };
+function wizFootage(el) {
+  el.append(h("p", {}, "Your own material. Videos are required; add one music track and images (logo, product shots) if you like. Only these files are used: never the reference's footage or music."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos, a music track or images here, or ",
+    h("button", { class: "mini", onclick: () => $("#foot-file").click(), title: "Choose files" }, "choose files")]);
+  dropTarget(zone, uploadFootage);
+  el.append(zone);
+  const icon = { video: "🎬", audio: "🎵", image: "🖼" };
+  const list = h("div", { class: "files" });
+  for (const f of W.footage) {
+    const meta = f.kind === "video" ? `video · ${dur(f.duration)} · ${f.width}×${f.height}` : f.kind === "audio" ? `music · ${dur(f.duration)}${f.bpm ? ` · ${f.bpm} BPM` : ""}` : `image · ${f.width}×${f.height}`;
+    list.append(h("div", { class: "file" },
+      f.kind === "audio" ? h("div", { class: "ic" }, icon.audio) : h("img", { src: `/api/uploads/${f.id}/thumb.jpg`, alt: "" }),
+      h("div", { class: "fn" }, h("b", {}, f.name), h("small", {}, meta)),
+      h("button", { class: "ghost mini", title: "Remove", onclick: () => { W.footage = W.footage.filter((x) => x !== f); renderWiz(); } }, "✕")));
+  }
+  el.append(list);
+  const audio = W.footage.filter((f) => f.kind === "audio").length;
+  if (audio > 1) el.append(h("div", { class: "note" }, "Use only one music track."));
+  if (W.footage.length && !W.footage.some((f) => f.kind === "video")) el.append(h("div", { class: "note" }, "Add at least one video."));
+}
+function field(label, input) { return h("div", {}, h("label", {}, label), input); }
+function wizBrief(el) {
+  const b = W.brief;
+  const bind = (key, el2, num) => { el2.oninput = () => { b[key] = num ? parseFloat(el2.value) : el2.value; if (num) lenOut.textContent = `${b.length_s}s`; }; return el2; };
+  const lenOut = h("b", {}, `${b.length_s}s`);
+  el.append(h("div", { class: "form-grid" },
+    field("What is it about?", bind("product", h("input", { type: "text", value: b.product, placeholder: "e.g. Raya sale at our bakery, 30% off", maxlength: 300 }))),
+    field("Goal", bind("goal", h("select", {}, OPTS.goals.map((g) => h("option", { value: g, selected: g === b.goal ? "" : null }, g))))),
+    field("Hook line (optional)", bind("hook", h("input", { type: "text", value: b.hook, placeholder: "Leave empty and the AI writes one per video", maxlength: 200 }))),
+    field("Call to action (optional)", bind("cta", h("input", { type: "text", value: b.cta, placeholder: "e.g. Order on WhatsApp", maxlength: 120 }))),
+    field("Language", bind("language", h("input", { type: "text", value: b.language, placeholder: "en, ms, id, zh…", maxlength: 20 }))),
+    h("div", {}, h("label", {}, "Length ", lenOut), bind("length_s", h("input", { type: "range", min: 5, max: 60, step: 1, value: b.length_s, style: { width: "100%", accentColor: "var(--accent)" } }), true))));
+  el.append(h("label", {}, "Format"));
+  const fmts = h("div", { class: "formats" });
+  for (const f of FORMATS) fmts.append(h("button", { type: "button", class: "fmtbtn" + (f.id === b.format ? " on" : ""), title: `${f.label}: ${f.sub}`, onclick: () => { b.format = f.id; renderWiz(); } },
+    h("div", { class: "shape", style: { width: f.w + "px", height: f.h + "px" } }), h("b", {}, f.label), h("small", {}, f.sub)));
+  el.append(fmts, h("label", {}, "Anything else the AI should know? (optional)"),
+    bind("notes", h("textarea", { maxlength: 1000, placeholder: "e.g. show the price early; no faces; keep it playful" }, b.notes)));
+}
+const refreshEstimate = debounce(async (box) => {
+  const r = await fetch("/api/batches/estimate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()) });
+  const d = await r.json().catch(() => ({}));
+  W.est = r.ok ? d : null;
+  box.innerHTML = "";
+  if (!r.ok) return box.append(d.detail || "Can't estimate yet");
+  box.append("About ", h("b", {}, `${d.calls} AI calls`), " and ", h("b", {}, `~${d.minutes} min`), `. ${d.note}`);
+}, 250);
+function wizVariations(el) {
+  const out = h("b", {}, String(W.count));
+  const est = h("div", { class: "estimate" }, "Estimating…");
+  const range = h("input", { type: "range", min: 1, max: 10, value: W.count });
+  range.oninput = () => { W.count = parseInt(range.value, 10); out.textContent = String(W.count); refreshEstimate(est); };
+  el.append(h("label", {}, "How many videos?"), h("div", { class: "count" }, range, out),
+    h("p", { style: { marginTop: "10px" } }, "Video 1 stays closest to the reference. Every other video changes each ticked item below, so no two look alike."));
+  const checks = h("div", { class: "checks" });
+  for (const a of OPTS.axes) {
+    const cb = h("input", { type: "checkbox", checked: W.axes.has(a.id) ? "" : null });
+    cb.onchange = () => { cb.checked ? W.axes.add(a.id) : W.axes.delete(a.id); refreshEstimate(est); };
+    checks.append(h("label", { title: a.values.map((x) => x.replace(/_/g, " ")).join(", ") }, cb, a.label));
+  }
+  el.append(h("label", {}, "What may change between videos"), checks);
+  const radios = h("div", { class: "radios" });
+  for (const [q, label] of [["best", "Best (slowest)"], ["balanced", "Balanced"], ["economy", "Economy (uses less quota)"]]) {
+    const rb = h("input", { type: "radio", name: "q", checked: W.quality === q ? "" : null });
+    rb.onchange = () => { W.quality = q; refreshEstimate(est); };
+    radios.append(h("label", {}, rb, label));
+  }
+  const rv = h("input", { type: "checkbox", checked: W.review ? "" : null });
+  rv.onchange = () => { W.review = rv.checked; refreshEstimate(est); };
+  el.append(h("label", {}, "AI quality"), radios, h("div", { class: "checks", style: { marginTop: "8px" } },
+    h("label", { title: "The AI looks at each result and fixes text placement once" }, rv, "AI reviews each video (one round of fixes)")), est);
+  refreshEstimate(est);
+}
+function wizReview(el) {
+  const names = REFS.filter((r) => W.refs.has(r.id)).map((r) => r.name + (W.lead === r.id ? " ★" : ""));
+  const f = W.footage, b = W.brief;
+  const est = h("div", { class: "estimate" }, "Estimating…");
+  el.append(h("dl", { class: "review-list" }, [
+    ["Style of", names.join(", ")],
+    ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "audio") ? ", 1 music track" : ", no music") + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
+    ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"],
+    ["Length / format", `${b.length_s}s · ${(FORMATS.find((x) => x.id === b.format) || {}).label}`],
+    ["Videos", `${W.count}, varying: ${OPTS.axes.filter((a) => W.axes.has(a.id)).map((a) => a.label.toLowerCase()).join(", ") || "nothing"}`],
+    ["AI", `${W.quality}${W.review ? ", with review" : ""}`],
+  ].map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]).flat()), est);
+  refreshEstimate(est);
+}
+async function submitWiz() {
+  const r = await call("POST", "/api/batches", payload());
+  if (!r) return;
+  hide("#dlg-wiz");
+  W = null;
+  toast("Generating… you can close this window; it keeps going in the background.");
+  setTab("generate");
+}
+
+// ============================================================ keys + start
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-  if (e.key === "Escape") { document.querySelectorAll(".veil").forEach((v) => (v.style.display = "none")); hideMenu(); }
-  if (typing) return;
-  if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
-  if (e.key.toLowerCase() === "n") { e.preventDefault(); openNew(); }
+  if (e.key === "Escape") { document.querySelectorAll(".veil").forEach((v) => (v.style.display = "none")); hideMenu(); $("#play-body").innerHTML = ""; }
+  if (typing || document.querySelector(".veil[style*=flex]")) return;
+  if (e.key === "/" && TAB === "projects") { e.preventDefault(); $("#search").focus(); }
+  if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : openWizard(); }
+  if (["1", "2", "3"].includes(e.key)) setTab(TABS[+e.key - 1]);
 });
-load();
+setTab(TAB);
+loadRefs();
+loadBatches();
 </script>
 </body>
 </html>
