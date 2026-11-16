@@ -16,6 +16,8 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 - 🧍 **Background removal:** replace with a colour, blur, image or video (MediaPipe fast mode, or BiRefNet quality mode)
 - 🎭 **Face mesh / AR:** 478-point tracked face mesh, stickers that follow the face, 3D props on the head, and face blur / pixelate
 - 🎵 **Music:** background tracks with automatic ducking under speech
+- 📚 **References:** add videos whose style you like. The AI studies their pacing, hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat), and you can correct any trait
+- 🪄 **Generate:** a wizard makes N clearly different videos from your own footage in the style of chosen references. Each one is a normal, undoable project
 - 🖥️ **Desktop editor:** a 4-pane window
   - **Project:** inspector with drill-down settings
   - **Preview**
@@ -24,7 +26,7 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 
 Rendering, background removal and face tracking all run locally on macOS, Windows and Linux. Your original files are never modified.
 
-The AI sends your instructions to Claude, along with the project details and any preview frames it looks at. Your video files themselves are never uploaded.
+The AI sends your instructions to Claude, along with the project details and any preview frames it looks at. Your video files themselves are never uploaded. References and Generate work the same way: measurements, transcripts and small contact sheets are sent, never the videos.
 
 ## Quick start
 
@@ -55,6 +57,29 @@ uv run vedit app projects/myreel      # or jump straight into one project (creat
 - "Open folder…" adds an existing project from anywhere on disk.
 - The project list is a small SQLite library at `~/.claude-cut/library.db`. Each project's edit stays in its own `project.json`.
 - Projects created with the CLI show up automatically. `uv run vedit projects` prints the list.
+
+**The References tab** is a library of videos you want to learn from.
+- Drop in TikToks, Reels or ads (as files). Each one is studied once:
+  - **Code measures** what needs to be exact: cuts and shot lengths, motion, tempo, the beat grid, and how many cuts land on a beat.
+  - **The AI looks at** contact sheets (the first 3 seconds at 4 fps, plus one frame per shot) and describes the hook, text, captions, animation and transitions.
+- Click a reference to see its **Style card**: a cut / beat / loudness timeline, every trait with the AI's confidence, and the frames it looked at. **Edit traits** corrects anything it got wrong. Your corrections survive a re-study.
+- Without an AI login, a reference still gets its measured traits.
+
+**The Generate tab** makes several videos at once:
+1. **References:** tick one or more. With several, the styles are blended and the ★ lead reference breaks ties.
+2. **Footage:** your clips, plus optionally one music track and some images. Only these files are used, never the reference's footage or music.
+3. **Brief:** what it's about, an optional hook and CTA, length, format and language.
+4. **Variations:** how many (1-10) and what may change between them: hook, clip order, pacing, caption style, text animation, transitions, music section. Video 1 stays closest to the reference.
+5. **Review:** shows the number of AI calls and the expected time, then you click Generate.
+
+It runs in the background (closing the app is fine). For each video:
+- The AI plans the edit.
+- Code snaps the cuts to the beat and fits the length.
+- vedit builds it as a normal project.
+- The AI reviews a contact sheet and fixes text placement once.
+- The video is exported.
+
+You can play each result, **Edit** it in the editor (with full undo history), keep it (it moves into Projects), discard it, or regenerate it. If your AI subscription hits its limit, the batch pauses and resumes by itself. The same works from the CLI: `vedit ref add`, `vedit gen run`.
 
 ```
 ┌──────────────────────┬─────────────────────────────┐
@@ -153,7 +178,11 @@ src/vedit/
   ops/                cut, silence, animate, text, captions, effects, bg_remove, face_ar
   render/             filter-graph builder, overlay renderer, runner
   editor/             desktop app: GUI actions, AI chat agent (Claude Agent SDK), native window
-  preview_server/     FastAPI server + the 4-pane editor UI
+  preview_server/     FastAPI server + the 4-pane editor UI + home tabs (gen_routes.py)
+  references/         reference library: measuring (analysis), Style DNA (dna), store
+  generate/           footage log, variation planner, beat timing, plan executor, batches
+  ai/                 one LLM client for references + generate (routing, JSON, retries), prompts
+  jobs.py             durable background job queue (SQLite)
 .claude/              skills, slash commands, permissions for Claude Code
 tests/                pytest suite (uses FFmpeg-generated clips)
 ```
