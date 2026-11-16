@@ -143,6 +143,11 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
 
         art: dict[str, Path] = {}
         mode = eff.params.get("mode", "spotlight") if eff.type == "focus" else "mask"
+        if eff.type == "mask" and eff.params.get("style") == "remove":  # rebuilt background, as an overlay
+            out = cdir / f"remove-{_key(path, eff, track.REMOVE_VERSION)}.mov"
+            if not out.exists():
+                track.render_remove(pdir, project, source_id, eff, out, log)
+            return {"overlay": out}
         if mode in ("mask", "spotlight", "both"):
             out = cdir / f"{eff.type}-{key}.mp4"
             if not out.exists():

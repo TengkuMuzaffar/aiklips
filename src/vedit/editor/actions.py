@@ -81,13 +81,15 @@ def _transition_set(p: Project, a: dict) -> str:
 def _mask_add(p: Project, a: dict) -> str:
     from ..ops import track
 
-    style = a.get("style") or "blur"
+    style = a.get("style") or "remove"
     if style not in track.STYLES:
         raise VeditError(f"style must be one of {', '.join(track.STYLES)}")
-    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"))
+    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"),
+                                paint=a.get("paint") or None, keep=a.get("keep") or None)
+    painted = params.get("shape") == "paint"
     params.update({"id": track.new_mask_id(p), "style": style, "color": a.get("color") or "#000000",
-                   "shape": a.get("shape") or "rect", "feather": float(a.get("feather") or 0.04),
-                   "expand": float(a.get("expand") or 1.1), "track": bool(a.get("track", True)), "smooth": 0.6,
+                   "shape": "paint" if painted else (a.get("shape") or "rect"), "feather": float(a.get("feather") or 0.04),
+                   "expand": float(a.get("expand") or (1.0 if painted else 1.1)), "track": bool(a.get("track", True)), "smooth": 0.6,
                    "invert": bool(a.get("invert", False))})
     c.effects.append(Effect(type="mask", params=params))
     return f"{c.id}: mask {params['id']} ({style})"

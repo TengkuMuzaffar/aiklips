@@ -33,7 +33,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Don't touch user media files.** Never delete or overwrite them. Never hand-edit `.vedit/`.
 - **Hand-editing `project.json` is a last resort.** It's acceptable for complex keyframes, but keep it valid. The next command records it in history automatically.
 - **Report errors.** If a command errors, read the message and fix the inputs. Don't retry blindly.
-- **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add` (blur / pixelate). Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
+- **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add`. The default style `remove` rebuilds the background so the thing looks like it was never there; use `--style blur|pixelate` only for privacy censoring (faces, plates) or when the user asks for blur. Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
 - **Stay inside vedit.** Don't run raw ffmpeg / python for edits. If vedit can't do something, say so and suggest the closest vedit command.
 
 ## Canvas & safe zones (default 1080×1920, Reels/TikTok)
@@ -62,7 +62,7 @@ captions srt <file> [--style] | captions auto [--language en|ms|...] | captions 
 bg remove [--clip --mode fast|quality --replace color:#hex|blur|image:path|video:path] | bg replace <spec> | bg clear
 face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|mouth|face | face prop <model.obj> | face blur [--style pixelate] | face clear
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
-mask add --at T --box x,y,w,h | --object NAME [--style blur|pixelate|fill|dim --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
+mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
 focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --zoom 1.3] | focus clear
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | music remove <id>
 undo [--steps N] | redo | history | checkout <step>
@@ -77,7 +77,7 @@ Detailed recipes live in `.claude/skills/`:
 - `captions`
 - `background-removal`
 - `face-ar`
-- `masking-focus`: hide / censor regions with tracking, and spotlight or follow an object
+- `masking-focus`: remove / hide / censor regions with tracking (box, multi-box or painted shape), and spotlight or follow an object
 - `transitions`
 
 Load the relevant one before doing that kind of edit.
