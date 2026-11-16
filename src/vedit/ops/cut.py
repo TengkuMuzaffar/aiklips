@@ -34,6 +34,12 @@ def split_at(project: Project, t: float) -> int:
             left = c.model_copy(update={"out": src_t}, deep=True)
             right = c.model_copy(update={"in_": src_t, "id": project.new_id("c"), "transition": None}, deep=True)
             clips[i : i + 1] = [left, right]
+            from .fx_filters import _new_id
+
+            for eff in right.effects:  # each half gets its own filter ids so they can be edited separately
+                if eff.type == "fx":
+                    eff.params["id"] = "?"
+                    eff.params["id"] = _new_id(project)
             return i + 1
         if abs(t - e) < EPS:
             return i + 1

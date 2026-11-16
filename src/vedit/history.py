@@ -16,6 +16,7 @@ from typing import Iterator
 from .project import PROJECT_FILE, Project, VeditError, dump_json, load, save, state_dir
 
 MAX_SNAPSHOTS = 500
+COALESCE_SECONDS = 1.5  # repeated edits of the same field this close together become one undo step
 
 
 def _hdir(pdir: Path) -> Path:
@@ -51,15 +52,30 @@ def _read(pdir: Path, n: int) -> dict:
     return json.loads(p.read_text())
 
 
-def commit(pdir: Path, project: Project, message: str) -> int:
+def commit(pdir: Path, project: Project, message: str, coalesce: str | None = None) -> int:
+    """`coalesce` is a key naming the field being edited (e.g. "layer_set:t1:style.size"). When the newest step has
+    the same key and was written moments ago (a slider drag, typing in a number box), it is replaced instead of
+    adding a step, so one undo reverts the whole gesture."""
     h = head(pdir)
-    for i in _indices(pdir):
+    idx = _indices(pdir)
+    now = time.time()
+    if coalesce and h >= 1 and h == (idx[-1] if idx else -1):
+        try:
+            prev = _read(pdir, h)
+        except (OSError, ValueError, VeditError):
+            prev = {}
+        if prev.get("coalesce") == coalesce and now - float(prev.get("time", 0)) < COALESCE_SECONDS:
+            _snap_path(pdir, h).write_text(json.dumps(
+                {"message": message, "time": now, "coalesce": coalesce, "project": project.to_dict()}, indent=1))
+            return h
+    for i in idx:
         if i > h:
             _snap_path(pdir, i).unlink()  # drop redo branch
     n = h + 1
-    _snap_path(pdir, n).write_text(
-        json.dumps({"message": message, "time": time.time(), "project": project.to_dict()}, indent=1)
-    )
+    snap = {"message": message, "time": now, "project": project.to_dict()}
+    if coalesce:
+        snap["coalesce"] = coalesce
+    _snap_path(pdir, n).write_text(json.dumps(snap, indent=1))
     _set_head(pdir, n)
     # trim very old history
     idx = _indices(pdir)
@@ -149,6 +165,7 @@ class Tx:
         self.project = project
         self.message = message
         self.cancelled = False
+        self.coalesce: str | None = None
 
 
 @contextmanager
@@ -163,4 +180,4 @@ def transaction(pdir: Path, message: str) -> Iterator[Tx]:
     if tx.cancelled:
         return
     save(pdir, tx.project)
-    commit(pdir, tx.project, tx.message)
+    commit(pdir, tx.project, tx.message, tx.coalesce)

@@ -6,6 +6,7 @@ so GUI edits, CLI edits and AI edits all share one history.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, Callable
@@ -204,6 +205,70 @@ def _remove_effect(p: Project, a: dict) -> str:
     return f"{c.id}: remove {a['type']}"
 
 
+# ---- filters (Effects tab): ops/fx_filters.py ----------------------------------------------------------------
+@op("fx_add")
+def _fx_add(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    targets = p.clips if a.get("clip") in (None, "", "all") else [p.clip(a["clip"])]
+    added = [fx_filters.add(p, c, a["key"], a.get("params") or {}) for c in targets]
+    label = fx_filters.get(a["key"]).label
+    return f"{label} on {targets[0].id}" if len(targets) == 1 else f"{label} on {len(added)} clips"
+
+
+@op("fx_set")
+def _fx_set(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    vals = {k: v for k, v in a.items() if k != "id"}
+    eff = fx_filters.set_params(p, a["id"], vals)
+    return f"{a['id']} ({eff.params['key']}): " + ", ".join(f"{k}={v}" for k, v in vals.items())
+
+
+@op("fx_reset")
+def _fx_reset(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    fx_filters.reset(p, a["id"])
+    return f"reset {a['id']}"
+
+
+@op("fx_remove")
+def _fx_remove(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    c = fx_filters.remove(p, a["id"])
+    return f"{c.id}: remove {a['id']}"
+
+
+@op("fx_move")
+def _fx_move(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    fx_filters.move(p, a["id"], int(a["index"]))
+    return f"move {a['id']} to {a['index']}"
+
+
+@op("fx_copy")
+def _fx_copy(p: Project, a: dict) -> str:
+    from ..ops import fx_filters
+
+    src = p.clip(a["clip"])
+    to = a.get("to", "all")
+    targets = p.clips if to == "all" else [p.clip(x) for x in to]
+    n = fx_filters.copy_to(p, src, targets)
+    return f"copy {src.id} effects to {n} clip(s)"
+
+
+@op("move_apply")
+def _move_apply(p: Project, a: dict) -> str:
+    from ..ops import moves
+
+    at = a.get("at")
+    return moves.apply(p, a["name"], clip=a.get("clip") or None, at=None if at in (None, "") else float(at),
+                       text=a.get("text") or None)
+
+
 @op("split")
 def _split(p: Project, a: dict) -> str:
     cut.split_at(p, float(a["at"]))
@@ -256,6 +321,9 @@ def _layer_set(p: Project, a: dict) -> str:
             v = None if v in (None, "") else int(v)
         setattr(l, k, v)
         changed.append(k)
+    from ..ops import overlays
+
+    changed += overlays.set_fields(l, a)
     if l.end is not None and l.end - l.start < 0.05:
         raise VeditError("Layer end must be after its start")
     if isinstance(a.get("style"), dict):
@@ -303,6 +371,40 @@ def _layer_add_text(p: Project, a: dict) -> str:
               end=_num(a, "end") or min(p.duration, start + 3), y=a.get("y") or "30%")
     p.layers.append(l)
     return f"add text {l.id}"
+
+
+@op("layer_add_video")
+def _layer_add_video(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    start = float(a.get("start") or 0)
+    extra = {k: a[k] for k in ("x", "y", "width", "volume", "src_in", "loop", "blend", "mask") if a.get(k) not in (None, "")}
+    l = overlays.add_video(p, a["source"], start, _num(a, "end"), **extra)
+    return f"add video overlay {l.id}"
+
+
+@op("layer_add_shape")
+def _layer_add_shape(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"))
+    return f"add {l.shape} {l.id}"
+
+
+@op("overlay_add")
+def _overlay_add(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    l = overlays.add_from_library(p, _PDIR[0], a["key"], float(a.get("start") or 0))
+    return f"add {overlays.LIBRARY[a['key']].label} ({l.id})"
+
+
+@op("layer_move")
+def _layer_move(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    i = overlays.move_layer(p, a["layer"], a.get("to", "up"))
+    return f"{a['layer']} to position {i}"
 
 
 @op("layer_remove")
@@ -375,12 +477,30 @@ def _music_remove(p: Project, a: dict) -> str:
     return f"remove music {a['music']}"
 
 
+_ID_KEYS = {"clip", "layer", "music", "source", "id", "effect", "index"}
+
+
+def _shape(v: Any, key: str = "") -> Any:
+    """The args with every value blanked except the ids: the same field on the same object gives the same shape."""
+    if isinstance(v, dict):
+        return {k: _shape(x, k) for k, x in sorted(v.items())}
+    return v if key in _ID_KEYS else None
+
+
+def coalesce_key(name: str, args: dict[str, Any]) -> str | None:
+    """Property edits (`*_set`) of the same field on the same object can merge into one undo step."""
+    if not name.endswith("_set"):
+        return None
+    return f"{name}:{json.dumps(_shape(args), sort_keys=True)}"
+
+
 def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     fn = _OPS.get(name)
     if not fn:
         raise VeditError(f"Unknown action '{name}'")
     _PDIR[0] = pdir
     with history.transaction(pdir, name) as tx:
+        tx.coalesce = coalesce_key(name, args)
         tx.message = fn(tx.project, args)
     return {"ok": True, "message": tx.message}
 

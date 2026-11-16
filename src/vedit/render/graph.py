@@ -101,7 +101,7 @@ def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float
 
 def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, fps: float, log,
                   src_start: float | None = None, src_len: float | None = None) -> str:
-    if not clip.effects:
+    if not any(e.type != "fx" for e in clip.effects):  # filters ("fx") run later, at canvas size
         return cur
     from ..ops import effects  # optional heavy deps are imported lazily inside
 
@@ -110,6 +110,8 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
     dur_src = clip.out - clip.in_ if src_len is None else src_len
     sw, sh = src.width or 1080, src.height or 1920
     for eff in clip.effects:
+        if eff.type == "fx":
+            continue
         art = effects.prepare(eff, project, pdir, clip.source, log)
         if "mask" in art:
             mi = g.add_input(["-ss", _f(s0), "-t", _f(dur_src), "-i", str(art["mask"])])
@@ -196,10 +198,34 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
     return cur
 
 
+BLEND_FILTER = {"screen": "screen", "multiply": "multiply", "overlay": "overlay", "add": "addition",
+                "lighten": "lighten", "darken": "darken"}
+
+
+def _blend_layer(g: Graph, base: str, li: int, start: float, mode: str, out: str) -> str:
+    """Composite a full-canvas RGBA layer video over `base` with a blend mode, limited to the layer's own alpha.
+
+    blend works on colour only, so: blend the base with the layer's colours, give that result the layer's alpha,
+    and lay it over the base. The layer is padded with transparent frames until its start so both line up."""
+    lp, l1, l2, b1, b2, bb, lr, bl, al, blm = (g.label(x) for x in ("lp", "l1", "l2", "b1", "b2", "bb", "lr", "bl", "al", "blm"))
+    pad = f"tpad=start_duration={_f(start)}:start_mode=add:color=black@0," if start > 1e-3 else ""
+    g.add(f"[{li}:v]setpts=PTS-STARTPTS,{pad}format=rgba[{lp}]")
+    g.add(f"[{lp}]split=2[{l1}][{l2}]")
+    g.add(f"[{base}]split=2[{b1}][{b2}]")
+    g.add(f"[{b1}]format=gbrp[{bb}]")
+    g.add(f"[{l1}]format=gbrp[{lr}]")
+    g.add(f"[{bb}][{lr}]blend=all_mode={BLEND_FILTER[mode]}:eof_action=pass:shortest=0[{bl}]")
+    g.add(f"[{l2}]alphaextract[{al}]")
+    g.add(f"[{bl}][{al}]alphamerge[{blm}]")
+    g.add(f"[{b2}][{blm}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+    return out
+
+
 def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None,
-          encode: list[str] | None = None, audio: bool = True) -> tuple[list[str], float]:
+          encode: list[str] | None = None, audio: bool = True, layers: bool = True) -> tuple[list[str], float]:
     """`encode` replaces the default H.264 encoder arguments (codec, quality, pixel format, container flags) for exports
-    in other formats; `audio=False` writes a silent file (GIF)."""
+    in other formats; `audio=False` writes a silent file (GIF). `layers=False` leaves out the overlay layers: the
+    editor's live preview draws them in the browser over this "base" video."""
     if not project.clips:
         raise VeditError("Timeline is empty. Import a video first: `vedit import <file>`")
     log = log or (lambda msg: None)
@@ -244,6 +270,10 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             gl = g.label("grade")
             g.add(f"[{vlab}]{grade},format=yuv420p[{gl}]")
             vlab = gl
+        if src.has_video and any(e.type == "fx" for e in clip.effects):  # filters: blur, vignette, grain, shake...
+            from ..ops import fx_filters
+
+            vlab = fx_filters.apply_filters(g, clip, vlab, fx_filters.Ctx(W, H, scale, fps))
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:
@@ -275,18 +305,41 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             else:
                 g.add(f"[{vcur}][{vsegs[k]}]concat=n=2:v=1:a=0,settb=AVTB[{out}]")
             vcur = out
-    g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
+    # sound of video overlays (picture-in-picture with its voice, ...) mixes with the clips' sound
+    ov_audio = []
+    for layer in (project.layers if layers else []):
+        if layer.type != "video" or layer.volume <= 0 or layer.source not in project.sources:
+            continue
+        src = project.sources[layer.source]
+        start, ldur = layer_span(layer, total)
+        if not src.has_audio or ldur <= 0.01:
+            continue
+        ai = g.add_input((["-stream_loop", "-1"] if layer.loop else []) + ["-ss", _f(layer.src_in), "-t", _f(ldur),
+                                                                         "-i", str(resolve_media(pdir, src.path))])
+        al, ms = g.label("ova"), int(start * 1000)
+        g.add(f"[{ai}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,"
+              f"volume={_f(layer.volume)},adelay={ms}|{ms}[{al}]")
+        ov_audio.append(al)
+    if ov_audio:
+        g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat0]")
+        g.add(f"[acat0]{''.join(f'[{x}]' for x in ov_audio)}amix=inputs={len(ov_audio) + 1}:duration=first:normalize=0:"
+              f"dropout_transition=0[acat]")
+    else:
+        g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
 
 
-    for layer in project.layers:
+    for layer in (project.layers if layers else []):
         start, ldur = layer_span(layer, total)
         f = ensure_layer(project, pdir, layer, scale)
         if f is None:
             continue
         li = g.add_input(["-i", str(f)])
         ll, out = g.label("L"), g.label("V")
-        g.add(f"[{li}:v]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
-        g.add(f"[{vcur}][{ll}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+        if layer.blend == "normal":
+            g.add(f"[{li}:v]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
+            g.add(f"[{vcur}][{ll}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+        else:
+            vcur = _blend_layer(g, vcur, li, start, layer.blend, out)
         vcur = out
     g.add(f"[{vcur}]format=yuv420p[vout]")
 

@@ -538,7 +538,7 @@ class ChatSession:
                 starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
                 c = p.clip(sid)
                 lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
-                             f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: {', '.join(e.type for e in c.effects) or 'none'})")
+                             f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: {', '.join(str(e.params.get('key')) if e.type == 'fx' else e.type for e in c.effects) or 'none'})")
             elif kind == "layer":
                 l = p.layer(sid)
                 label = l.text or l.image or " ".join(w.text for w in l.words[:8])

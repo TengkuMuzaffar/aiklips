@@ -44,6 +44,12 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
   muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
   those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
 - **Signature moves.** One memorable move beats five generic ones: `vedit fx apply <move>` (at most 2 per video).
+- **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
+  Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
+  and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
+- **Filters** (`vedit fx add blur|sharpen|denoise|glow|vignette|grain|rgb_split|edges|posterize|invert|mirror|pixelate|letterbox|film|vhs|shake|zoom_pulse|trails`):
+  use them to serve the look, not to decorate. Prefer one look across the whole edit (`fx add film` with no `--clip`
+  adds it to every clip) over different filters per clip; for colour itself use `color look`, not filters.
 - **Consistency.** One text look for all titles (`text look apply`), at most two fonts, one colour look on every
   clip, and run `color match` whenever the edit mixes footage from different cameras or lighting.
 - **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add`. The default style `remove` rebuilds the background so the thing looks like it was never there; use `--style blur|pixelate` only for privacy censoring (faces, plates) or when the user asks for blur. Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
@@ -67,6 +73,9 @@ trim --head S --tail S | keep --from A --to B | delete --from A --to B | split -
 move <clip> --to N | remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
+overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
+shape add rect|ellipse|line|arrow [--start --end --x --y --width --height --fill --border --border-color --radius --rotation --blend --preset]
+layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill]
 text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
 text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
@@ -85,6 +94,7 @@ music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | m
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
 fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
+fx filters | fx add <filter> [--clip ID --set amount=20 ...] | fx set <fxN> amount=30 on=false | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
 undo [--steps N] | redo | history | checkout <step>
 preview [--open] | frame --at T[,T2,...] | sheet | serve
@@ -127,10 +137,23 @@ Load the relevant one before doing that kind of edit.
   - FFmpeg graph: `render/graph.py`
   - Overlay rendering: `render/layers.py`
   - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
+  - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
+    applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.
+  - Overlays: `Layer` types video / shape + frame fields (blend, radius, border, mask, chroma) in `project.py`;
+    `ops/overlays.py` (add / order / style + the generated library, cached in ~/.claude-cut/overlays), pixels in
+    `ops/overlay_style.py` (shared by export and live sprites), video frames decoded per layer in `render/layers.py`,
+    blend modes in `render/graph.py` `_blend_layer`. Live preview plays video layers in `<video>` elements (keyed on a
+    canvas for green screen) with CSS mix-blend-mode, so #pv-hold / #pv-layers must not get a z-index.
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
   - Colour: `Clip.grade` + `ops/color.py` (measure / match / looks -> FFmpeg filters, applied after fit in `render/graph.py`)
   - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`
     (built-in + saved looks in ~/.claude-cut/text-looks.json), rendering in `ops/text.py`
+  - Editor live preview: the editor plays `base.mp4` (rendered with `layers=False`) and draws overlay layers in the
+    browser from `/api/sprite` (`preview_server/sprites.py`, same `render_text`). Layer motion runs in
+    `preview_server/static/animate.js`, a port of `ops/animate.py`: **change both together**
+    (`tests/test_live_preview.py` checks they agree). The "Final" toggle and `vedit frame` / audit use the full render.
+    Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
+    frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
   - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
     `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).

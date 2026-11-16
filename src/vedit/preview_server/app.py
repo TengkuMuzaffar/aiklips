@@ -21,7 +21,7 @@ import webbrowser
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 
 from .. import history, library, media
 from ..project import PROJECT_FILE, VeditError, load, resolve_media, state_dir
@@ -30,12 +30,25 @@ from ..render.runner import preview_dir, render_preview
 STATIC = Path(__file__).parent / "static"
 
 
+def _rev(pdir: Path) -> float:
+    """Changes whenever project.json is written (by the GUI, the AI or the CLI)."""
+    try:
+        return (pdir / PROJECT_FILE).stat().st_mtime_ns / 1e9
+    except FileNotFoundError:
+        return 0.0
+
+
 class Renderer:
     """Re-renders the preview whenever project.json changes."""
 
     def __init__(self, pdir: Path, watch: bool = True):
         self.pdir = pdir
         self.version = 0
+        # live mode (default): render base.mp4 without overlay layers; the browser draws them from sprites.
+        # final mode: render the full preview.mp4 exactly as it will export.
+        self.final = False
+        self.passes = 0  # finished render passes (cache hits too): tells the browser the edit has been handled
+        self._shown_final: bool | None = None
         self.status = "idle"
         self.error: str | None = None
         self.pending = threading.Event()
@@ -54,21 +67,30 @@ class Renderer:
             self.pending.wait()
             if self.stopped.is_set():
                 return
-            time.sleep(0.2)  # debounce bursts of edits
+            time.sleep(0.15)  # debounce bursts of edits
             self.pending.clear()
             self.status = "rendering"
-            self.version += 1
+            fresh, final = False, self.final
             try:
                 p = load(self.pdir)
                 if p.clips:
-                    render_preview(p, self.pdir, progress=False)
+                    # a newer edit makes this render stale: stop FFmpeg now and start over
+                    res = render_preview(p, self.pdir, progress=False, should_stop=self.pending.is_set, base=not final)
+                    fresh = not res.get("cached")
                 self.error = None
+            except media.Cancelled:
+                continue  # `pending` is set: the loop renders the newer edit straight away
             except VeditError as e:
                 self.error = str(e)
             except Exception as e:  # keep the server alive
                 self.error = f"{type(e).__name__}: {e}"
             self.status = "idle"
-            self.version += 1
+            # the version only moves when there is a new file to load (or on the first pass), so the
+            # browser never re-downloads an unchanged preview
+            if fresh or self.version == 0 or self._shown_final != final:
+                self.version += 1
+                self._shown_final = final
+            self.passes += 1
 
     def _watch(self) -> None:
         from watchfiles import watch
@@ -159,6 +181,12 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         if host.pdir is None:
             return RedirectResponse("/")
         return (STATIC / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/static/{name}")
+    def static_file(name: str):
+        if name not in ("animate.js",):
+            raise HTTPException(404)
+        return FileResponse(STATIC / name, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     # ---- project library ------------------------------------------------------------
     @app.get("/api/projects")
@@ -423,7 +451,9 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
             "duration": p.duration,
             "starts": p.clip_starts(),
             "history": history.log(d, 80),
-            "render": {"status": r.status, "error": r.error, "version": r.version} if r else {"status": "idle", "error": None, "version": 0},
+            "rev": _rev(d),
+            "render": {"status": r.status, "error": r.error, "version": r.version, "final": r.final, "passes": r.passes} if r
+            else {"status": "idle", "error": None, "version": 0, "final": False, "passes": 0},
         }
 
     def _hist(fn, *a):
@@ -598,12 +628,116 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
 
     @app.get("/media/{name}")
     def media_file(name: str):
-        if name not in ("preview.mp4", "thumbs.jpg", "wave.png"):
+        if name not in ("preview.mp4", "base.mp4", "thumbs.jpg", "wave.png"):
             raise HTTPException(404)
         f = preview_dir(host.need()) / name
         if not f.exists():
             raise HTTPException(404)
-        return FileResponse(f, headers={"Cache-Control": "no-store"})
+        # FileResponse answers Range requests and sends ETag/Last-Modified; "no-cache" makes the
+        # browser revalidate instead of re-downloading an unchanged file
+        return FileResponse(f, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/source/{sid}/media")
+    def source_media(sid: str):
+        """A source's media file (Range requests work), for video layers the live preview plays itself."""
+        d = host.need()
+        p = load(d)
+        if sid not in p.sources:
+            raise HTTPException(404)
+        f = resolve_media(d, p.sources[sid].path)
+        if not f.exists():
+            raise HTTPException(404)
+        return FileResponse(f, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/overlays")
+    def overlays_catalog() -> dict:
+        from ..ops import overlays
+
+        return {"library": overlays.catalog()}
+
+    @app.get("/api/overlays/{key}/thumb.jpg")
+    async def overlay_thumb(key: str):
+        """A still of a library overlay (generating the overlay on first use; cached afterwards)."""
+        from ..ops import overlays
+
+        if key not in overlays.LIBRARY or overlays.LIBRARY[key].kind == "shape":
+            raise HTTPException(404)
+        p = load(host.need())
+
+        def make() -> Path:
+            f = overlays.library_file(key, p.canvas.width, p.canvas.height)
+            thumb = f.with_name(f"thumb-{f.stem}.jpg")
+            if not thumb.exists():
+                if f.suffix == ".png":  # stickers / frames: on a dark checker so transparent parts read as such
+                    from PIL import Image
+
+                    img = Image.open(f).convert("RGBA")
+                    img.thumbnail((360, 360))
+                    bg = Image.new("RGBA", img.size, (40, 44, 52, 255))
+                    Image.alpha_composite(bg, img).convert("RGB").save(thumb, quality=85)
+                else:
+                    media.extract_frame(f, 1.5, thumb, width=240)
+            return thumb
+
+        try:
+            return FileResponse(await asyncio.to_thread(make), headers={"Cache-Control": "max-age=3600"})
+        except VeditError as e:
+            raise bad(e)
+
+    @app.get("/api/effects")
+    def effects_catalog() -> dict:
+        """Everything the Effects tab can apply: filters (ops/fx_filters.py) and signature moves (ops/moves.py)."""
+        from ..ops import fx_filters, moves
+
+        return {"filters": fx_filters.catalog(), "categories": list(fx_filters.CATEGORIES), "moves": moves.catalog()}
+
+    @app.post("/api/preview-mode")
+    def preview_mode(body: dict) -> dict:
+        """Live (base video + browser-drawn overlays) or final (the full FFmpeg render, as exported)."""
+        host.need()
+        r = host.renderer
+        if r is None:
+            raise HTTPException(409, "No renderer")
+        final = bool(body.get("final"))
+        if final != r.final:
+            r.final = final
+            r.pending.set()
+        return {"final": r.final}
+
+    @app.post("/api/frame")
+    async def frame(body: dict):
+        """One preview frame at `t` (JPEG, no overlays), in ~0.1-0.3 s. `clip` (optional) replaces a clip's settings
+        for this frame only, so dragging a slider shows its effect before it is saved. 409 = an effect of that clip
+        is still being computed (the background render will show it)."""
+        from ..ops.effects import NotReady
+        from ..render.frame import render_frame
+
+        d = host.need()
+        try:
+            jpg = await asyncio.to_thread(render_frame, load(d), d, float(body.get("t", 0)), body.get("clip") or None)
+        except NotReady as e:
+            raise HTTPException(409, str(e))
+        except VeditError as e:
+            raise bad(e)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, f"Bad request: {e}")
+        return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/sprite")
+    async def sprite(body: dict):
+        """A layer's overlay sprite as PNG, drawn by the export's own text/image renderer."""
+        from .sprites import sprite_png
+
+        d = host.need()
+        opt = lambda k: None if body.get(k) is None else int(body[k])  # noqa: E731
+        try:
+            png = await asyncio.to_thread(sprite_png, d, body.get("layer") or {}, float(body.get("scale", 0.5)),
+                                          opt("reveal"), opt("group"), opt("hi"))
+        except VeditError as e:
+            raise bad(e)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, f"Bad layer: {e}")
+        return Response(png, media_type="image/png")
 
     @app.get("/api/source/{sid}/thumb.jpg")
     def source_thumb(sid: str):
@@ -618,15 +752,14 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
                 if r is None or d is None:
                     yield f"data: {json.dumps({'closed': True})}\n\n"
                     return
-                try:
-                    mtime = (d / PROJECT_FILE).stat().st_mtime
-                except FileNotFoundError:
-                    mtime = 0
-                key = (id(r), r.version, r.status, mtime)
+                rev = _rev(d)
+                key = (id(r), r.version, r.status, r.error, rev, r.final, r.passes)
                 if key != last:
                     last = key
-                    yield f"data: {json.dumps({'version': r.version, 'status': r.status, 'error': r.error})}\n\n"
-                await asyncio.sleep(0.3)
+                    msg = {'version': r.version, 'status': r.status, 'error': r.error, 'rev': rev, 'final': r.final,
+                           'passes': r.passes}
+                    yield f"data: {json.dumps(msg)}\n\n"
+                await asyncio.sleep(0.15)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 

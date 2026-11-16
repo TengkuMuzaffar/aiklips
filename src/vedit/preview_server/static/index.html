@@ -10,8 +10,8 @@
   --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
   --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25;
   --clip: #23344f; --clip-b: #4a6fa8; --text-l: #2f4a2a; --text-b: #6aa860; --img-l: #3a2f4f; --img-b: #9a7fd0;
-  --cap-l: #4a3c18; --cap-b: #d0a640; --mus-l: #173a45; --mus-b: #3fa5c0; --sel: #fbbf24; --danger: #f87171; --ok: #4ade80;
-  --col: 340px; --row: 58%;
+  --cap-l: #4a3c18; --cap-b: #d0a640; --vid-l: #4a2330; --vid-b: #d0607e; --shp-l: #24383a; --shp-b: #5fb3b8; --mus-l: #173a45; --mus-b: #3fa5c0; --sel: #fbbf24; --danger: #f87171; --ok: #4ade80;
+  --colf: 0.5; --rowf: 0.5;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -43,7 +43,7 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .pill.rendering { color: #fde68a; } .pill.error { color: var(--danger); } .pill.ready { color: var(--accent); }
 
 /* ---- 4-pane grid ---- */
-#grid { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--col) 5px 1fr; grid-template-rows: var(--row) 5px 1fr; }
+#grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, calc((100% - 5px) * var(--colf))) 5px minmax(0, 1fr); grid-template-rows: minmax(0, calc((100% - 5px) * var(--rowf))) 5px minmax(0, 1fr); }
 .pane { background: var(--pane); min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pane-h { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--pane2); }
 .pane-h h2 { white-space: nowrap; margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
@@ -87,7 +87,7 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .src .nm { font-size: 11px; padding: 5px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .dropzone { border: 1px dashed var(--line2); border-radius: 10px; padding: 26px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--faint); text-align: center; font-size: 12px; }
 .dropzone > .ic { width: 26px; height: 26px; color: var(--muted); }
-.fields { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px 10px; align-items: center; }
+.fields { display: grid; grid-template-columns: minmax(80px, 34%) minmax(0, 1fr); gap: 7px 10px; align-items: center; }
 .fields label { color: var(--muted); font-size: 12px; }
 .fields .full { grid-column: 1 / 3; }
 .fields .pair { display: flex; gap: 6px; align-items: center; }
@@ -113,10 +113,109 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .font-preview { background: var(--pane3); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 10px; font-size: 22px;
   line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .font-pick .hint { font-size: 11px; line-height: 1.35; }
+/* font picker popover: every font is shown in its own face */
+.fp-btn { width: 100%; justify-content: space-between; text-align: left; font-size: 15px; padding: 5px 9px; background: var(--bg); }
+.fp-btn .fp-cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-pop { position: fixed; z-index: 60; width: 340px; max-height: 70vh; display: flex; flex-direction: column; background: var(--pane2);
+  border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 14px 40px #000a; overflow: hidden; }
+.fp-top { padding: 8px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
+.fp-top input { width: 100%; }
+.fp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.fp-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: transparent; color: var(--muted); }
+.fp-chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.fp-list { overflow: auto; padding: 4px; }
+.fp-grp { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); padding: 8px 8px 3px; }
+.fp-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+.fp-row:hover, .fp-row.hl { background: var(--pane3); }
+.fp-row.on { border-color: var(--accent); }
+.fp-row .fp-sample { font-size: 21px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fp-row .fp-name { font-size: 11px; color: var(--muted); grid-column: 1; }
+.fp-row .fp-star { grid-row: 1 / 3; grid-column: 2; background: transparent; border: none; color: var(--faint); padding: 2px 4px; }
+.fp-row .fp-star.on { color: var(--sel); }
+.fp-foot { border-top: 1px solid var(--line); padding: 8px; display: flex; gap: 6px; }
+.fp-foot input { flex: 1; }
+/* size control: slider + number + drag-scrub label + preset chips */
+.sz { display: grid; gap: 5px; }
+.sz .pair input[type=range] { flex: 1; }
+.sz .pair input[type=number] { flex: none !important; width: 64px !important; }
+.sz-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.sz-chips button { font-size: 11px; padding: 2px 8px; }
+.sz-chips button.on { color: var(--accent); border-color: var(--accent); }
+label.scrub { cursor: ew-resize; user-select: none; }
+label.scrub:hover { color: var(--accent); }
 .fields .pair > * { flex: 1; min-width: 0; }
 .fields .pair > input[type=color], .fields .pair > .hint { flex: none; }
 .fields input:not([type=checkbox]):not([type=color]), .fields select, .fields textarea { width: 100%; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+/* ---- Effects tab ---- */
+.fx-search { position: sticky; top: -10px; z-index: 2; background: var(--pane); padding: 0 0 8px; display: grid; gap: 6px; }
+.fx-search input { width: 100%; }
+.fx-target { font-size: 12px; color: var(--muted); }
+.fx-target b { color: var(--text); font-weight: 600; }
+.fx-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.fx-card { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--pane2); cursor: pointer; text-align: left; padding: 0;
+  display: block; transition: border-color .12s, transform .12s; }
+.fx-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.fx-card.on { border-color: var(--sel); }
+.fx-card .fx-th { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: linear-gradient(135deg, #3b82f6, #ec4899 55%, #f59e0b); }
+.fx-card .fx-th i { position: absolute; inset: 0; background: var(--thumb) center / cover no-repeat; }
+.fx-card .fx-th b { position: absolute; inset: 0; pointer-events: none; }
+.fx-card .fx-nm { font-size: 12px; padding: 5px 8px 1px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-card .fx-ab { font-size: 10.5px; padding: 0 8px 6px; color: var(--faint); line-height: 1.3; height: 2.6em; overflow: hidden; }
+.fx-card .fx-badge { position: absolute; right: 5px; top: 5px; background: var(--sel); color: #000; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 4px; }
+/* card previews: a CSS approximation of each filter on the clip's own thumbnail */
+.fxp-blur i { filter: blur(3px); transform: scale(1.08); }
+.fxp-sharpen i { filter: contrast(1.35) saturate(1.15); }
+.fxp-denoise i { filter: blur(.7px) saturate(1.05); }
+.fxp-glow i { filter: brightness(1.18) saturate(1.25) blur(.5px); }
+.fxp-glow b { background: radial-gradient(circle at 50% 45%, #fff6 0, transparent 60%); mix-blend-mode: screen; }
+.fxp-vignette b, .fxp-film b { background: radial-gradient(ellipse at center, transparent 40%, #000d 100%); }
+.fxp-grain b, .fxp-vhs b { background-image: repeating-radial-gradient(circle at 17% 32%, #fff2 0 1px, transparent 1px 3px); opacity: .9; mix-blend-mode: overlay; }
+.fxp-rgb_split i { filter: drop-shadow(4px 0 0 #ff0040aa) drop-shadow(-4px 0 0 #00a0ffaa); }
+.fxp-edges i { filter: grayscale(1) contrast(4) invert(1); }
+.fxp-posterize i { filter: contrast(2.2) saturate(2); }
+.fxp-invert i { filter: invert(1); }
+.fxp-mirror i { transform: scaleX(-1); }
+.fxp-pixelate i { filter: blur(2px) contrast(1.6) saturate(1.3); }
+.fxp-letterbox b { background: linear-gradient(#000 0 18%, transparent 18% 82%, #000 82%); }
+.fxp-film i { filter: sepia(.25) saturate(.8) contrast(1.06); }
+.fxp-vhs i { filter: saturate(1.5) blur(.6px) drop-shadow(3px 0 0 #ff004088); }
+.fxp-trails i { filter: drop-shadow(6px 0 0 #fff5) drop-shadow(12px 0 0 #fff3); }
+.fx-card:hover.fxp-shake i { animation: fxshake .12s linear infinite; }
+.fx-card:hover.fxp-zoom_pulse i { animation: fxpulse .8s ease-in-out infinite; }
+.fxp-shake i, .fxp-zoom_pulse i { transform: scale(1.12); }
+@keyframes fxshake { 0% { transform: scale(1.12) translate(2px, -1px); } 50% { transform: scale(1.12) translate(-2px, 2px); } 100% { transform: scale(1.12) translate(1px, -2px); } }
+@keyframes fxpulse { 0%, 100% { transform: scale(1.05); } 50% { transform: scale(1.18); } }
+.fxp-move .fx-th { background: linear-gradient(135deg, #0f2a26, #1f4a43); display: flex; align-items: center; justify-content: center; color: var(--accent); }
+.fxp-move .fx-th .ic { width: 26px; height: 26px; }
+/* applied filter stack in clip properties */
+.fxs { grid-column: 1 / 3; display: grid; gap: 6px; }
+.fxs-item { border: 1px solid var(--line2); border-radius: 9px; background: var(--pane2); }
+.fxs-item.off { opacity: .55; }
+.fxs-item.drag { border-color: var(--accent); }
+.fxs-h { display: flex; align-items: center; gap: 4px; padding: 4px 6px; }
+.fxs-h .nm { flex: 1; font-size: 12px; font-weight: 600; cursor: grab; }
+.fxs-h button { padding: 2px 5px; height: 24px; }
+.fxs-b { display: grid; grid-template-columns: minmax(70px, 30%) minmax(0, 1fr); gap: 5px 8px; align-items: center; padding: 2px 8px 8px; }
+.fxs-b label { font-size: 11.5px; color: var(--muted); }
+.fxs-b .pair { display: flex; gap: 6px; align-items: center; }
+.fxs-b .pair input[type=range] { flex: 1; min-width: 0; }
+/* command palette (Cmd/Ctrl+K) */
+#palette { position: fixed; inset: 0; z-index: 80; background: #0008; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+#palette .pl-box { width: min(560px, calc(100vw - 32px)); background: var(--pane2); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 20px 60px #000c; overflow: hidden; }
+#palette input { width: 100%; border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 14px; font-size: 15px; background: transparent; }
+#palette .pl-list { max-height: 50vh; overflow: auto; padding: 4px; }
+#palette .pl-row { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+#palette .pl-row.hl { background: var(--pane3); }
+#palette .pl-row .k { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); width: 64px; flex: none; }
+#palette .pl-row .t { flex: 1; }
+#palette .pl-row .d { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+/* property search */
+.insp-search { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.insp-search input { flex: 1; }
+.fields .q-hide { display: none !important; }
+.fields .q-hit { color: var(--accent) !important; }
 .chip { display: inline-flex; gap: 4px; align-items: center; background: var(--pane3); border: 1px solid var(--line2); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 12px; }
 .chip button { padding: 0 5px; border: none; background: transparent; color: var(--muted); }
 .chip button:hover { color: var(--danger); }
@@ -133,7 +232,17 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; background: radial-gradient(circle at 50% 40%, #151a21, var(--bg)); }
 video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px; box-shadow: 0 10px 40px #0009; }
 /* preview busy: keep the last frame on screen (frozen canvas) and show what is happening over it */
-#pv-hold { position: absolute; pointer-events: none; z-index: 2; border-radius: 10px; display: none; }
+/* no z-index on the hold frame and the overlay stage: they must not form stacking contexts, so the layers' blend modes
+   (mix-blend-mode) mix with the video under them. DOM order puts the overlays above the hold frame. */
+#pv-hold { position: absolute; pointer-events: none; border-radius: 10px; display: none; }
+/* live overlays: text / image / caption sprites drawn over the base video (above the frozen frame, below the busy card) */
+#pv-layers { position: absolute; pointer-events: none; overflow: hidden; border-radius: 10px; display: none; }
+#pv-layers > img, #pv-layers > .vl { position: absolute; left: 0; top: 0; transform-origin: 50% 50%; user-select: none; }
+#pv-layers .vl { overflow: hidden; }
+#pv-layers .vl video, #pv-layers .vl canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#pv-layers .vl-border { position: absolute; inset: 0; border-radius: inherit; box-sizing: border-box; }
+#t-mode { font-size: 11px; padding: 3px 8px; }
+#t-mode.final { border-color: var(--sel); color: var(--sel); }
 #pv-busy { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; pointer-events: none;
   background: #0b0d1059; backdrop-filter: blur(2px) saturate(.6); -webkit-backdrop-filter: blur(2px) saturate(.6); overflow: hidden; animation: fadein .18s ease-out; }
 #pv-busy[hidden] { display: none; }
@@ -275,6 +384,10 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .blk.text { background: var(--text-l); border-color: var(--text-b); }
 .blk.image { background: var(--img-l); border-color: var(--img-b); }
 .blk.captions { background: var(--cap-l); border-color: var(--cap-b); }
+.blk.video { background: var(--vid-l); border-color: var(--vid-b); }
+.blk.shape { background: var(--shp-l); border-color: var(--shp-b); }
+.head.dragover { box-shadow: inset 0 2px 0 var(--accent); }
+.badge.blend { text-transform: uppercase; font-size: 9px; letter-spacing: .04em; }
 .blk.music { background: var(--mus-l); border-color: var(--mus-b); }
 .lane.wave { background: var(--pane2) 0 50% / 100% 100% no-repeat; }
 #playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; z-index: 6; }
@@ -455,6 +568,9 @@ dialog#dlg-export::backdrop { background: #000b; }
   <div id="proj-name"></div>
   <div class="spacer"></div>
   <span class="pill" id="status">connecting…</span>
+  <select id="layout-preset" title="Panel layout (⇧0 balances, double-click a divider to reset it)">
+    <option value="">Layout…</option><option value="balanced">Balanced</option><option value="edit">Edit (big timeline)</option><option value="color">Color (big preview)</option>
+  </select>
   <button class="ghost icon" id="b-undo" data-icon="undo" title="Undo (⌘Z)"></button>
   <button class="ghost icon" id="b-redo" data-icon="redo" title="Redo (⇧⌘Z)"></button>
   <button class="primary" id="b-export" data-icon="download" title="Export: choose the file type, size, frame rate, quality and folder"><span class="lb">Export</span></button>
@@ -464,7 +580,7 @@ dialog#dlg-export::backdrop { background: #000b; }
   <!-- 1. project / inspector -->
   <section class="pane" id="p-insp">
     <div class="pane-h">
-      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
+      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="overlays" title="Overlays: light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture">Overlays</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
     <div class="ai-lock slim" id="insp-lock" hidden><div class="ai-card"><span class="ai-orb"></span><span>AI is editing, so properties are locked</span></div></div>
@@ -477,6 +593,7 @@ dialog#dlg-export::backdrop { background: #000b; }
     <div id="stage">
       <video id="video" playsinline preload="auto"></video>
       <canvas id="pv-hold"></canvas>
+      <div id="pv-layers"></div>
       <div id="pv-busy" hidden><div class="pv-card"><span class="spin big"></span><div><b id="pv-title">Updating preview</b><span id="pv-sub"></span></div><span id="pv-time"></span><div class="pv-bar"></div></div></div>
       <div id="pv-ai" hidden><i></i>AI is editing</div>
       <div id="nomedia"><span data-icon="film"></span><div>Drop a video anywhere to start,<br>or ask the AI in the chat.</div><button id="b-import2" data-icon="upload" title="Pick video, audio or image files to add">Import media</button></div>
@@ -489,6 +606,7 @@ dialog#dlg-export::backdrop { background: #000b; }
       <span id="tc">0:00.00 / 0:00.00</span>
       <span style="width:14px"></span>
       <button class="ghost" id="t-mask" data-icon="mask" title="Paint or box over something to hide it: remove it (blend into the background) or blur / pixelate. It follows the object.">Mask</button>
+      <button class="ghost" id="t-mode" title="Live: text and images update instantly over the video. Final: the exact FFmpeg render, as it will export (slower to update).">Live</button>
       <button class="ghost" id="t-focus" data-icon="target" title="Draw a box around an object to spotlight it or make the camera follow it">Focus</button>
     </div>
   </section>
@@ -548,6 +666,7 @@ dialog#dlg-export::backdrop { background: #000b; }
 <dialog id="dlg-export"></dialog>
 <div id="dropveil">Drop to import</div>
 
+<script src="/static/animate.js"></script>
 <script>
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
@@ -575,6 +694,8 @@ function h(tag, attrs = {}, ...kids) {
 }
 // one outline icon set (24px grid, 1.75 stroke) used everywhere
 const ICONS = {
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  shape: '<rect x="3" y="3" width="10" height="10" rx="1.5"/><circle cx="16" cy="16" r="5"/>',
   grid: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
@@ -668,6 +789,8 @@ async function api(url, body) {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
     ok = true;
+    if (url === "/api/op" && frameOp(body?.op)) requestFrame();
+    if (url === "/api/undo" || url === "/api/redo") requestFrame();
     return r.json();
   } finally { if (lbl) pvEnd(ok); }
 }
@@ -683,7 +806,12 @@ const OP_LABELS = {
   split: ["Splitting clip", "", "Rendering preview"],
   add_text: ["Adding text", "", "Rendering preview"],
 };
+// edits that only change overlay layers: in live mode the browser redraws them, no video render needed
+const OVERLAY_OPS = new Set(["layer_set", "text_look", "layer_add_text", "layer_remove", "preset_add", "preset_remove", "keyframes_clear", "clip_why", "rename",
+  "layer_add_video", "layer_add_shape", "overlay_add", "layer_move"]);
 function editLabel(url, body) {
+  if (url === "/api/op" && liveMode() && OVERLAY_OPS.has(body?.op)) return null;
+  if (url === "/api/op" && frameOp(body?.op)) return null; // shown at once by the instant frame
   if (url === "/api/op") { const L = OP_LABELS[body?.op]; return L || ["Applying edit", "", "Rendering preview"]; }
   if (url === "/api/undo") return ["Undoing", "", "Rendering preview"];
   if (url === "/api/redo") return ["Redoing", "", "Rendering preview"];
@@ -705,7 +833,9 @@ function updatePreviewBusy() {
   const rendering = ST?.render?.status === "rendering";
   if (rendering) PV.waitUntil = 0;
   const waiting = PV.waitUntil > Date.now();
-  const on = !!(ST && P().clips.length && (PV.op || rendering || waiting || PV.loading)) || !!PV.op;
+  // an instant frame already shows the edit: the header pill says it's rendering, no card over the picture
+  const quiet = FRAME.active && !PV.op;
+  const on = !quiet && (!!(ST && P().clips.length && (PV.op || rendering || waiting || PV.loading)) || !!PV.op);
   const box = $("#pv-busy");
   if (!on) {
     box.hidden = true; PV.t0 = 0; PV.label = null; clearInterval(PV.timer); PV.timer = null; return;
@@ -736,10 +866,246 @@ function holdFrame() {
   try { ctx.drawImage(video, (c.width - w) / 2, (c.height - hh) / 2, w, hh); } catch { c.style.display = "none"; }
 }
 function releaseFrame() { $("#pv-hold").style.display = "none"; }
+
+// ---------- live overlays: base video + layers drawn in the browser ----------
+// In live mode the server renders base.mp4 (clips, effects, colour, transitions, sound: no overlay layers) and the
+// browser draws each layer on top from sprites made by the export's own text renderer (POST /api/sprite). Moving,
+// scaling, rotating, fading and animating a layer is computed here per frame (VAnim = port of ops/animate.py), so
+// text edits show up immediately instead of after a full FFmpeg render. "Final" plays the real render.
+const liveMode = () => !ST?.render?.final;
+function updateModeBtn() {
+  const b = $("#t-mode"); if (!b) return;
+  const fin = !liveMode();
+  b.textContent = fin ? "Final" : "Live"; b.classList.toggle("final", fin);
+}
+$("#t-mode").onclick = async () => {
+  const r = await fetch("/api/preview-mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ final: liveMode() }) });
+  if (r.ok && ST) { ST.render.final = (await r.json()).final; updateModeBtn(); PV.waitUntil = Date.now() + 2500; updatePreviewBusy(); }
+};
+const SPRITES = new Map();   // request key -> {img, w, h, scale} once loaded
+const SPR_WAIT = new Map();  // request key -> Promise while loading
+const CONTENT = new WeakMap(); // layer object -> JSON of what its pixels depend on
+const LV = new Map();        // layer id -> {img, shown: key, want: key}
+let SPR_SCALE = 0.5;
+function markDirty(l) { CONTENT.delete(l); }
+function contentKey(l) {
+  let k = CONTENT.get(l);
+  if (!k) {
+    k = JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, words: l.words, wpg: l.words_per_group,
+      // frame styling / shape: drawn into the sprite
+      radius: l.radius, bw: l.border_width, bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity,
+      shape: l.shape, height: l.height, fill: l.fill });
+    CONTENT.set(l, k);
+  }
+  return k;
+}
+function spriteFetch(l, opts) {
+  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.group ?? ""}|${opts.hi ?? ""}`;
+  if (SPRITES.has(key) || SPR_WAIT.has(key)) return key;
+  const layer = { ...l, keyframes: [], presets: [] }; // the transform is applied here, not baked into the sprite
+  const pr = fetch("/api/sprite", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ layer, scale: SPR_SCALE, ...opts }) })
+    .then((r) => (r.ok ? r.blob() : null))
+    .then((b) => new Promise((res) => {
+      if (!b) return res(null);
+      const img = new Image();
+      img.onload = () => res({ url: img.src, w: img.naturalWidth, h: img.naturalHeight, scale: SPR_SCALE });
+      img.onerror = () => res(null);
+      img.src = URL.createObjectURL(b);
+    }))
+    .then((sp) => { SPR_WAIT.delete(key); if (sp) { SPRITES.set(key, sp); trimSprites(); } })
+    .catch(() => SPR_WAIT.delete(key));
+  SPR_WAIT.set(key, pr);
+  return key;
+}
+function trimSprites() {
+  if (SPRITES.size < 800) return;
+  const inUse = new Set([...LV.values()].map((v) => v.shown));
+  for (const [k, sp] of SPRITES) { if (SPRITES.size < 600) break; if (!inUse.has(k)) { URL.revokeObjectURL(sp.url); SPRITES.delete(k); } }
+}
+// which sprite a layer needs at absolute time T, plus the extra caption "pop" scale (same as render/layers.py)
+function spriteFor(l, T, pr) {
+  if (l.type === "image" || l.type === "shape") return [spriteFetch(l, {}), 1];
+  if (l.type === "text") {
+    const total = (l.text || "").split(/\s+/).filter(Boolean).reduce((a, w) => a + w.length, 0);
+    const k = VAnim.pyRound(total * pr.reveal);
+    return [spriteFetch(l, k >= total ? {} : { reveal: k }), 1];
+  }
+  let groups = l._groups;
+  if (!groups || l._groupsKey !== contentKey(l)) { groups = l._groups = VAnim.captionGroups(l); l._groupsKey = contentKey(l); }
+  const W = l.words;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi], gs = W[g[0]].start;
+    const ge = gi + 1 < groups.length ? W[groups[gi + 1][0]].start : W[g[g.length - 1]].end + 0.3;
+    if (gs <= T && T < ge) {
+      let hi = 0;
+      g.forEach((wi, j) => { if (W[wi].start <= T) hi = j; });
+      // warm up the rest of this group and the next one so playback never waits
+      g.forEach((_, j) => j !== hi && spriteFetch(l, { group: gi, hi: j }));
+      if (gi + 1 < groups.length) groups[gi + 1].forEach((_, j) => spriteFetch(l, { group: gi + 1, hi: j }));
+      return [spriteFetch(l, { group: gi, hi }), 0.86 + 0.14 * VAnim.ease("back_out", (T - gs) / 0.15)];
+    }
+  }
+  return [null, 1];
+}
+// blend modes: the same names as the export (render/graph.py BLEND_FILTER), as CSS mix-blend-mode
+const BLEND_CSS = { normal: "normal", screen: "screen", multiply: "multiply", overlay: "overlay", add: "plus-lighter", lighten: "lighten", darken: "darken" };
+function stopLayerVideos() { for (const v of LV.values()) if (v.vid && !v.vid.paused) v.vid.pause(); }
+function makeLayerEl(l) {
+  if (l.type !== "video") return { el: h("img", { alt: "" }), type: l.type, shown: null };
+  // video layers play in the browser: a <video> (or, with green screen, a keyed <canvas>) in a frame div
+  const vid = h("video", { playsinline: true, preload: "auto", muted: true });
+  const cnv = h("canvas");
+  const bord = h("div", { class: "vl-border" });
+  const el = h("div", { class: "vl" }, vid, cnv, bord);
+  return { el, vid, cnv, bord, type: "video", src: null };
+}
+// position in the overlay source for timeline time T (matches render/layers.py: -ss src_in, -stream_loop when looping)
+function layerVideoTime(l, src, T) {
+  const local = T - l.start, first = src.duration - l.src_in;
+  if (local < first) return l.src_in + local;
+  return l.loop ? (local - first) % src.duration : null; // null: the source has ended
+}
+function syncLayerVideo(v, want) {
+  const vid = v.vid, playing = !video.paused;
+  if (playing) {
+    if (vid.paused) vid.play().catch(() => {});
+    if (Math.abs(vid.currentTime - want) > 0.25 && !vid.seeking) vid.currentTime = want;
+  } else {
+    if (!vid.paused) vid.pause();
+    if (Math.abs(vid.currentTime - want) > 0.02 && !vid.seeking) vid.currentTime = want;
+  }
+}
+// green screen in the browser: same formula as ops/overlay_style.chroma_alpha
+function keyFrame(v, l, w, hh) {
+  const c = v.cnv, vid = v.vid;
+  if (!vid.videoWidth) return;
+  const cw = Math.max(2, Math.min(480, Math.round(w))), ch = Math.max(2, Math.round(cw * hh / w));
+  if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const s = Math.max(cw / vid.videoWidth, ch / vid.videoHeight), dw = vid.videoWidth * s, dh = vid.videoHeight * s;
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.drawImage(vid, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  const im = ctx.getImageData(0, 0, cw, ch), d = im.data;
+  const k = l.chroma.replace("#", ""), kr = parseInt(k.slice(0, 2), 16), kg = parseInt(k.slice(2, 4), 16), kb = parseInt(k.slice(4, 6), 16);
+  const sim = l.chroma_similarity ?? 0.25, norm = 255 * Math.sqrt(3);
+  for (let i = 0; i < d.length; i += 4) {
+    const dr = d[i] - kr, dg = d[i + 1] - kg, db = d[i + 2] - kb;
+    const a = Math.min(1, Math.max(0, (Math.sqrt(dr * dr + dg * dg + db * db) / norm - sim) / 0.08));
+    d[i + 3] = Math.min(d[i + 3], Math.round(a * 255));
+  }
+  ctx.putImageData(im, 0, 0);
+}
+function drawVideoLayer(v, l, pr, box, cv, T) {
+  const src = P().sources[l.source];
+  const want = src && layerVideoTime(l, src, T);
+  if (!src || want == null || pr.opacity <= 0.001 || pr.scale <= 0.001) { v.el.style.display = "none"; if (!v.vid.paused) v.vid.pause(); return; }
+  if (v.src !== l.source) { v.src = l.source; v.vid.src = `/api/source/${encodeURIComponent(l.source)}/media`; }
+  // sound: the live preview's base video has none of the overlays' sound, so the layer plays its own
+  v.vid.muted = !(l.volume > 0); v.vid.volume = Math.min(1, Math.max(0, l.volume || 0));
+  syncLayerVideo(v, want);
+  // size: as render/layers.py video_size + overlay_style.style_frame (a circle is a square of the width)
+  const W = l.width || Math.round(cv.width * 0.45), aspect = (src.height || 1080) / (src.width || 1920);
+  const bw = W, bh = l.mask === "circle" ? W : W * aspect;
+  const k = pr.scale * box.sc, w = bw * k, hh = bh * k;
+  const st = v.el.style;
+  st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
+  st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
+  st.borderRadius = l.mask === "circle" ? "50%" : `${(l.radius || 0) * k}px`;
+  v.bord.style.border = l.border_width > 0 ? `${l.border_width * k}px solid ${l.border_color}` : "none";
+  const keyed = !!l.chroma;
+  v.vid.style.display = keyed ? "none" : "block"; v.cnv.style.display = keyed ? "block" : "none";
+  if (keyed) keyFrame(v, l, w * (window.devicePixelRatio || 1), hh * (window.devicePixelRatio || 1));
+}
+function drawOverlays() {
+  requestAnimationFrame(drawOverlays);
+  const stage = $("#pv-layers");
+  const on = ST && (liveMode() || FRAME.active) && P().clips.length && video.style.display !== "none" && video.videoWidth;
+  if (!on) { if (stage.style.display !== "none") { stage.style.display = "none"; stopLayerVideos(); } return; }
+  const box = videoBox(), cv = P().canvas, D = dur();
+  Object.assign(stage.style, { display: "block", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+  // sprite resolution: about screen resolution, in steps so a small resize doesn't redraw everything
+  const want = Math.max(0.25, Math.min(1, Math.ceil(((box.width * (window.devicePixelRatio || 1)) / cv.width) * 4) / 4));
+  if (want !== SPR_SCALE) SPR_SCALE = want;
+  const T = PV_TIME.override ?? video.currentTime, seen = new Set();
+  P().layers.forEach((l, z) => {
+    seen.add(l.id);
+    let v = LV.get(l.id);
+    if (v && v.type !== l.type && (v.type === "video" || l.type === "video")) { v.el.remove(); v = null; }
+    if (!v) { v = makeLayerEl(l); LV.set(l.id, v); }
+    if (v.el.parentNode !== stage || stage.children[z] !== v.el) stage.insertBefore(v.el, stage.children[z] || null); // list order = stacking order
+    v.el.style.mixBlendMode = BLEND_CSS[l.blend] || "normal";
+    const end = l.end == null ? D : Math.min(l.end, D), ldur = Math.max(0, end - l.start), t = T - l.start;
+    if (ldur <= 0.01 || t < 0 || t >= ldur) { v.el.style.display = "none"; if (v.vid && !v.vid.paused) v.vid.pause(); return; }
+    const pr = VAnim.propsAt(l, t, ldur, cv);
+    if (l.type === "video") return drawVideoLayer(v, l, pr, box, cv, T);
+    const [key, extra] = spriteFor(l, T, pr);
+    if (key && SPRITES.has(key)) v.shown = key; // otherwise keep the last sprite until the new one arrives
+    const sp = v.shown && SPRITES.get(v.shown), s = pr.scale * extra;
+    if (!key || !sp || pr.opacity <= 0.001 || s <= 0.001) { v.el.style.display = "none"; return; }
+    if (v.el.src !== sp.url) v.el.src = sp.url;
+    const w = (sp.w / sp.scale) * s * box.sc, hh = (sp.h / sp.scale) * s * box.sc;
+    const st = v.el.style;
+    st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
+    st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
+  });
+  for (const [id, v] of LV) if (!seen.has(id)) { if (v.vid) v.vid.pause(); v.el.remove(); LV.delete(id); }
+}
+const PV_TIME = { override: null };
+requestAnimationFrame(drawOverlays);
+
+// ---------- instant frame: video edits show in ~0.1-0.3 s while the preview re-renders ----------
+// POST /api/frame renders just the clip under the playhead, a couple of frames long, through the same graph as the
+// preview. It is drawn on the hold canvas (over the video, under the live overlays) until the new preview loads.
+// While a slider is dragged the clip's unsaved values go with the request, so the drag itself is live.
+const FRAME = { active: false, busy: false, next: null, gen: 0, at: 0 };
+function requestFrame(clip = null) {
+  if (!ST || !P().clips.length) return;
+  FRAME.next = { t: video.currentTime, clip: clip ? JSON.parse(JSON.stringify(clip)) : null, gen: ++FRAME.gen };
+  if (!FRAME.busy) pumpFrame();
+}
+async function pumpFrame() {
+  const req = FRAME.next; FRAME.next = null;
+  if (!req) return;
+  FRAME.busy = true;
+  try {
+    const r = await fetch("/api/frame", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ t: req.t, clip: req.clip }) });
+    if (r.ok && req.gen > FRAME.shown) {
+      const img = await createImageBitmap(await r.blob());
+      if (req.gen > FRAME.shown && !FRAME.dropped) { showFrame(img); FRAME.shown = req.gen; }
+    }
+  } catch {}
+  FRAME.busy = false;
+  if (FRAME.next) pumpFrame();
+}
+FRAME.shown = 0;
+function showFrame(img) {
+  if (!video.videoWidth && !video.getBoundingClientRect().width) return;
+  const c = $("#pv-hold"), r = video.getBoundingClientRect(), st = $("#stage").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  Object.assign(c.style, { left: `${r.left - st.left}px`, top: `${r.top - st.top}px`, width: `${r.width}px`, height: `${r.height}px`, display: "block" });
+  const ctx = c.getContext("2d"), sc = Math.min(c.width / img.width, c.height / img.height), w = img.width * sc, hh = img.height * sc;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, (c.width - w) / 2, (c.height - hh) / 2, w, hh);
+  FRAME.active = true; FRAME.at = Date.now();
+  updatePreviewBusy();
+}
+// drop the instant frame: the real preview is back (or the user moved on)
+function dropFrame() { if (!FRAME.active) return; FRAME.active = false; FRAME.shown = FRAME.gen; releaseFrame(); }
+video.addEventListener("play", dropFrame);
+// ops whose result the instant frame can show (the slow ones keep their progress card: OP_LABELS)
+function frameOp(name) { return !OVERLAY_OPS.has(name) && !OP_LABELS[name]; }
+// live drag of a clip setting: change the local copy and ask for a frame with it
+let DRAGGING = false;
+document.addEventListener("pointerdown", (e) => { if (e.target.matches?.("input[type=range]")) DRAGGING = true; }, true);
+document.addEventListener("pointerup", () => { DRAGGING = false; }, true);
+function scrubClip(c) { requestFrame(c); }
 async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
 function layerLabel(l) {
   if (l.type === "text") return l.text || "";
   if (l.type === "image") return (l.image || "").split(/[\\/]/).pop();
+  if (l.type === "video") { const s = ST && P().sources[l.source]; return s ? sourceName(s) : l.source || ""; }
+  if (l.type === "shape") return l.shape;
   return l.words.slice(0, 6).map((w) => w.text).join(" ");
 }
 function sourceName(s) { return s.path.split(/[\\/]/).pop(); }
@@ -768,7 +1134,7 @@ function selExists() {
   if (SEL.kind === "source") return SEL.id in p.sources;
   return false;
 }
-function select(sel) { SEL = sel; TAB = "inspector"; setTabs(); renderInspector(); renderTimeline(); updateCtx(); }
+function select(sel) { SEL = sel; if (!(TAB === "effects" && (!sel || sel.kind === "clip"))) TAB = "inspector"; setTabs(); renderInspector(); renderTimeline(); updateCtx(); }
 function setStatus(r) {
   const el = $("#status");
   el.className = "pill " + (r.error ? "error" : r.status === "rendering" ? "rendering" : "ready");
@@ -778,12 +1144,12 @@ function setStatus(r) {
 }
 function reloadVideo() {
   const t = video.currentTime, playing = !video.paused, v = Date.now();
-  holdFrame();
+  if (!FRAME.active) holdFrame();
   PV.loading = true; updatePreviewBusy();
   let done = false;
-  const ready = () => { if (done) return; done = true; clearTimeout(fallback); releaseFrame(); PV.loading = false; updatePreviewBusy(); };
+  const ready = () => { if (done) return; done = true; clearTimeout(fallback); FRAME.active = false; FRAME.shown = FRAME.gen; releaseFrame(); PV.loading = false; updatePreviewBusy(); };
   const fallback = setTimeout(ready, 4000);
-  video.src = `/media/preview.mp4?v=${v}`;
+  video.src = `/media/${liveMode() ? "base" : "preview"}.mp4?v=${v}`;
   video.addEventListener("loadedmetadata", () => {
     video.addEventListener("seeked", ready, { once: true });
     video.currentTime = Math.min(t, video.duration || t);
@@ -802,10 +1168,12 @@ function field(label, el) { return [h("label", {}, label), el]; }
 function numIn(value, commit, step = 0.1, attrs = {}) {
   return h("input", { type: "number", step, value: value ?? "", ...attrs, onchange: (e) => commit(e.target.value) });
 }
-function textIn(value, commit, attrs = {}) { return h("input", { type: "text", value: value ?? "", ...attrs, onchange: (e) => commit(e.target.value) }); }
-function colorIn(value, commit) {
+function textIn(value, commit, attrs = {}, live = null) {
+  return h("input", { type: "text", value: value ?? "", ...attrs, onchange: (e) => commit(e.target.value), oninput: live && ((e) => live(e.target.value)) });
+}
+function colorIn(value, commit, live = null) {
   const v = (value || "#000000").slice(0, 7);
-  return h("input", { type: "color", value: v, onchange: (e) => commit(e.target.value) });
+  return h("input", { type: "color", value: v, onchange: (e) => commit(e.target.value), oninput: live && ((e) => live(e.target.value)) });
 }
 function selectIn(value, options, commit) {
   return h("select", { onchange: (e) => commit(e.target.value) }, options.map(([v, l]) => h("option", { value: v, selected: v === value }, l)));
@@ -824,27 +1192,134 @@ function fontFace(key) {  // load a bundled font into the page so the preview li
   }
   return `vfont-${key}`;
 }
-function fontIn(value, commit, sample) {
+// ---- font picker: a searchable popover where every font is drawn in its own face ----
+const FP_KEY = "cc-fonts";
+function fpPrefs() { try { return { fav: [], recent: [], ...JSON.parse(localStorage.getItem(FP_KEY) || "{}") }; } catch { return { fav: [], recent: [] }; } }
+function fpSave(p) { try { localStorage.setItem(FP_KEY, JSON.stringify(p)); } catch {} }
+function fontStack(key) { const fam = fontFace(key); return fam ? `"${fam}", sans-serif` : key ? `"${key}", sans-serif` : "inherit"; }
+// bundled fonts are local files: warm them all up while the editor is idle so the picker opens instantly
+(window.requestIdleCallback || ((f) => setTimeout(f, 1500)))(function warm() {
+  if (!TYPO) return setTimeout(warm, 1000);
+  TYPO.fonts.forEach((f, i) => setTimeout(() => fontFace(f.key), i * 40));
+});
+function fontIn(value, commit, sample, live = null) {
   if (!TYPO) return textIn(value ?? "", commit, { placeholder: "default" });
   const known = TYPO.fonts.some((f) => f.key === value);
-  const def = TYPO.fonts.find((f) => f.key === TYPO.default);
-  const sel = h("select", { title: "Bundled fonts look the same on every computer" },
-    h("option", { value: "", selected: !value }, `Default (${def ? def.family : "Poppins Black"})`),
-    TYPO.feels.map((feel) => h("optgroup", { label: FEEL_LABEL[feel] || feel },
-      TYPO.fonts.filter((f) => f.feel === feel).map((f) => h("option", { value: f.key, selected: f.key === value, title: f.use }, f.family)))),
-    value && !known ? h("option", { value, selected: true }, `Custom: ${value}`) : null,
-    h("option", { value: "__other" }, "Other font… (name or .ttf path)"));
-  sel.onchange = (e) => {
-    if (e.target.value !== "__other") return commit(e.target.value);
-    const v = prompt("Font name or .ttf/.otf path (installed fonts work too):", value && !known ? value : "");
-    if (v && v.trim()) commit(v.trim()); else renderInspector();
-  };
   const key = value || TYPO.default;
-  const fam = fontFace(key);
   const info = TYPO.fonts.find((f) => f.key === key);
-  const preview = h("div", { class: "font-preview", title: info?.use || "",
-    style: { fontFamily: fam ? `"${fam}", sans-serif` : value || "inherit" } }, (sample || "").trim().slice(0, 40) || "Stop scrolling 50%");
-  return h("div", { class: "font-pick" }, sel, preview, info ? h("span", { class: "hint" }, info.use) : null);
+  const text = (sample || "").trim().slice(0, 40) || "Stop scrolling 50%";
+  const label = value && !known ? `Custom: ${value}` : (info ? info.family : "Default");
+  const preview = h("div", { class: "font-preview", title: info?.use || "", style: { fontFamily: fontStack(value && !known ? value : key) } }, text);
+  const btn = h("button", { class: "fp-btn", title: "Choose a font (bundled fonts look the same on every computer)", style: { fontFamily: fontStack(key) } },
+    h("span", { class: "fp-cur" }, label), h("span", { class: "hint" }, "▾"));
+  btn.onclick = () => openFontPicker(btn, value, text, (k) => {
+    const pr = fpPrefs(); pr.recent = [k, ...pr.recent.filter((x) => x !== k)].slice(0, 6); fpSave(pr);
+    commit(k);
+  }, (k) => { // hover: try the font on the preview line without committing
+    preview.style.fontFamily = fontStack(k ?? key);
+    live && live(k ?? value ?? null); // and on the video itself (live overlays)
+  });
+  return h("div", { class: "font-pick" }, btn, preview, info ? h("span", { class: "hint" }, info.use) : null);
+}
+function openFontPicker(anchor, value, sample, commit, hover) {
+  document.querySelector(".fp-pop")?.remove();
+  let feel = "", q = "", hl = -1, rows = [];
+  const pop = h("div", { class: "fp-pop" });
+  const search = h("input", { type: "search", placeholder: "Search fonts…  (name, feel or use)" });
+  const chips = h("div", { class: "fp-chips" });
+  const list = h("div", { class: "fp-list" });
+  const custom = h("input", { type: "text", placeholder: "Installed font name or .ttf/.otf path", value: value && !TYPO.fonts.some((f) => f.key === value) ? value : "" });
+  const close = () => { pop.remove(); hover(null); document.removeEventListener("pointerdown", outside, true); };
+  const outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+  const pick = (k) => { close(); hover(k || null); commit(k); }; // keep showing the pick while it saves
+  // only load a face once its row scrolls into view
+  const io = new IntersectionObserver((ents) => ents.forEach((en) => {
+    if (!en.isIntersecting) return;
+    const el = en.target; el.style.fontFamily = fontStack(el.dataset.key); io.unobserve(el);
+  }), { root: list, rootMargin: "120px" });
+  const row = (f) => {
+    const pr = fpPrefs(), fav = pr.fav.includes(f.key);
+    const smp = h("div", { class: "fp-sample", "data-key": f.key }, sample);
+    io.observe(smp);
+    const star = h("button", { class: "fp-star" + (fav ? " on" : ""), title: fav ? "Remove from favourites" : "Add to favourites",
+      onclick: (e) => { e.stopPropagation(); const p2 = fpPrefs(); p2.fav = fav ? p2.fav.filter((x) => x !== f.key) : [...p2.fav, f.key]; fpSave(p2); draw(); } }, fav ? "★" : "☆");
+    const r = h("div", { class: "fp-row" + (f.key === (value || "") || (!value && f.key === TYPO.default) ? " on" : ""), title: f.use,
+      onclick: () => pick(f.key === TYPO.default && !value ? "" : f.key), onmouseenter: () => hover(f.key), onmouseleave: () => hover(null) },
+      smp, h("div", { class: "fp-name" }, `${f.family} · ${FEEL_LABEL[f.feel] || f.feel}`), star);
+    r._key = f.key; rows.push(r);
+    return r;
+  };
+  function draw() {
+    rows = []; hl = -1; list.innerHTML = "";
+    const pr = fpPrefs(), ql = q.toLowerCase();
+    const match = (f) => (!feel || (feel === "fav" ? pr.fav.includes(f.key) : f.feel === feel)) &&
+      (!ql || [f.family, f.key, f.feel, FEEL_LABEL[f.feel] || "", f.use].join(" ").toLowerCase().includes(ql));
+    const fonts = TYPO.fonts.filter(match);
+    if (!q && !feel) {
+      const rec = pr.recent.map((k) => TYPO.fonts.find((f) => f.key === k)).filter(Boolean);
+      if (rec.length) list.append(h("div", { class: "fp-grp" }, "Recent"), ...rec.map(row));
+    }
+    for (const fe of TYPO.feels) {
+      const group = fonts.filter((f) => f.feel === fe);
+      if (group.length) list.append(h("div", { class: "fp-grp" }, FEEL_LABEL[fe] || fe), ...group.map(row));
+    }
+    if (!fonts.length) list.append(h("div", { class: "empty" }, "No font matches. Type an installed font name below."));
+  }
+  const chip = (k, lbl) => h("button", { class: "fp-chip" + (feel === k ? " on" : ""), onclick: () => { feel = feel === k ? "" : k; chips.querySelectorAll(".fp-chip").forEach((c) => c.classList.toggle("on", c.dataset.k === feel)); draw(); }, "data-k": k }, lbl);
+  chips.append(chip("fav", "★ Favourites"), ...TYPO.feels.map((fe) => chip(fe, FEEL_LABEL[fe] || fe)));
+  search.oninput = () => { q = search.value.trim(); draw(); };
+  search.onkeydown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!rows.length) return;
+      rows[hl]?.classList.remove("hl");
+      hl = (hl + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+      rows[hl].classList.add("hl"); rows[hl].scrollIntoView({ block: "nearest" }); hover(rows[hl]._key);
+    } else if (e.key === "Enter") { e.preventDefault(); const r = rows[Math.max(hl, 0)]; if (r) pick(r._key); }
+  };
+  custom.onkeydown = (e) => { if (e.key === "Enter" && custom.value.trim()) pick(custom.value.trim()); if (e.key === "Escape") close(); };
+  pop.append(h("div", { class: "fp-top" }, search, chips), list,
+    h("div", { class: "fp-foot" }, custom, h("button", { onclick: () => custom.value.trim() && pick(custom.value.trim()) }, "Use")));
+  document.body.append(pop);
+  const r = anchor.getBoundingClientRect();
+  const top = Math.min(r.bottom + 4, window.innerHeight - Math.min(pop.offsetHeight, window.innerHeight * 0.7) - 8);
+  Object.assign(pop.style, { left: `${Math.max(8, Math.min(r.left, window.innerWidth - 348))}px`, top: `${Math.max(8, top)}px` });
+  draw();
+  search.focus();
+  setTimeout(() => document.addEventListener("pointerdown", outside, true));
+  list.querySelector(".fp-row.on")?.scrollIntoView({ block: "center" });
+}
+// ---- size: slider + number box + drag-scrub label + preset chips; commits once, on release ----
+const SIZE_PRESETS = [["S", 48], ["M", 72], ["L", 110], ["XL", 160], ["Hook", 220]];
+function sizeIn(value, commit, live, { min = 12, max = 400 } = {}) {
+  let v = Number(value) || 80;
+  const clamp = (x) => Math.round(Math.max(min, Math.min(1000, x)));
+  const num = h("input", { type: "number", min, max: 1000, step: 1, value: v });
+  const rng = h("input", { type: "range", min, max, step: 1, value: Math.min(v, max) });
+  const show = (x) => { v = clamp(x); num.value = v; rng.value = Math.min(v, max); live && live(v); };
+  const done = () => commit(v);
+  rng.oninput = () => show(+rng.value); rng.onchange = done;
+  num.onchange = () => { show(+num.value); done(); };
+  num.onkeydown = (e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); show(v + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1)); done(); } };
+  const chips = h("div", { class: "sz-chips" }, SIZE_PRESETS.map(([n, px]) =>
+    h("button", { class: "ghost" + (v === px ? " on" : ""), title: `${px}px`, onclick: () => { show(px); done(); } }, n)));
+  const box = h("div", { class: "sz" }, h("div", { class: "pair" }, rng, num), chips);
+  box.scrub = (lbl) => scrub(lbl, () => v, show, done);
+  return box;
+}
+// drag a field label left/right to change its number (Shift ×10, Alt fine)
+function scrub(label, get, set, done) {
+  label.classList.add("scrub");
+  label.title = (label.title ? label.title + " · " : "") + "Drag left/right to change (Shift faster, Alt finer)";
+  label.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); label.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, v0 = get(); let moved = false;
+    const mv = (ev) => { moved = true; set(v0 + (ev.clientX - x0) * (ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1)); };
+    label.addEventListener("pointermove", mv);
+    label.addEventListener("pointerup", () => { label.removeEventListener("pointermove", mv); if (moved) done(); }, { once: true });
+  });
+  return label;
 }
 function lookIn(l) {
   const cur = l.style.look || "";
@@ -857,9 +1332,10 @@ function lookIn(l) {
   const about = TYPO.looks.find((k) => k.name === cur)?.about;
   return h("div", { class: "font-pick" }, h("div", { class: "pair" }, sel, all), about ? h("span", { class: "hint" }, about) : null);
 }
-function rangeIn(value, min, max, step, commit) {
+function rangeIn(value, min, max, step, commit, live = null) {
   const out = h("span", { class: "hint" }, Number(value).toFixed(2));
-  const r = h("input", { type: "range", min, max, step, value, oninput: (e) => (out.textContent = Number(e.target.value).toFixed(2)), onchange: (e) => commit(e.target.value) });
+  const r = h("input", { type: "range", min, max, step, value, onchange: (e) => commit(e.target.value),
+    oninput: (e) => { out.textContent = Number(e.target.value).toFixed(2); live && live(Number(e.target.value)); } });
   return h("div", { class: "pair" }, r, out);
 }
 function crumb(...parts) {
@@ -871,12 +1347,267 @@ function renderInspector() {
   if (!ST) return;
   if (TAB === "history") return body.append(renderHistory());
   if (TAB === "media") return body.append(...renderMedia());
+  if (TAB === "effects") return body.append(...renderEffects());
+  if (TAB === "overlays") return body.append(...renderOverlays());
   if (!SEL) return body.append(...renderRoot());
   const p = P();
+  body.append(propSearch());
   if (SEL.kind === "clip") body.append(...renderClip(p.clips.find((c) => c.id === SEL.id)));
   else if (SEL.kind === "layer") body.append(...renderLayer(p.layers.find((l) => l.id === SEL.id)));
   else if (SEL.kind === "music") body.append(...renderMusic(p.music.find((m) => m.id === SEL.id)));
   else if (SEL.kind === "source") body.append(...renderSource(SEL.id, p.sources[SEL.id]));
+  applyPropSearch();
+}
+
+// ---------- property search: filter the inspector's fields by name (and common synonyms) ----------
+let PROP_Q = "";
+const PROP_SYN = {
+  warm: "warmth temperature", cold: "warmth temperature", temperature: "warmth", size: "font size scale width", big: "scale font size zoom",
+  bright: "brightness exposure", exposure: "brightness", dark: "brightness", fade: "opacity animation transition", transparent: "opacity",
+  move: "position", place: "position", turn: "rotation", rotate: "rotation", angle: "rotation", loud: "volume", sound: "volume", audio: "volume",
+  mute: "volume", fast: "speed", slow: "speed", crop: "fit zoom focus", frame: "fit zoom", colour: "colour look", color: "colour look",
+  font: "font look", outline: "outline", stroke: "outline", border: "outline box", shadow: "glow outline", motion: "animation",
+  animate: "animation", effect: "effects", fx: "effects", blur: "effects", filter: "effects", cut: "transition", wipe: "transition", grade: "look colour",
+};
+function propSearch() {
+  const inp = h("input", { type: "search", id: "prop-q", value: PROP_Q, placeholder: "Search properties…  ( / )",
+    oninput: (e) => { PROP_Q = e.target.value; applyPropSearch(); },
+    onkeydown: (e) => { if (e.key === "Escape") { PROP_Q = ""; e.target.value = ""; applyPropSearch(); e.target.blur(); } } });
+  return h("div", { class: "insp-search" }, inp);
+}
+function applyPropSearch() {
+  const q = PROP_Q.trim().toLowerCase();
+  const terms = q ? [q, ...(PROP_SYN[q] || "").split(" ").filter(Boolean)] : [];
+  const matches = (txt) => !q || terms.some((t) => txt.toLowerCase().includes(t));
+  document.querySelectorAll("#insp-body .fields").forEach((f) => {
+    const kids = [...f.children];
+    let head = null, headHit = false, hits = 0;
+    const endSection = () => { if (head) head.classList.toggle("q-hide", !!q && !headHit && !hits); };
+    for (let i = 0; i < kids.length; i++) {
+      const el = kids[i];
+      el.classList.remove("q-hide", "q-hit");
+      if (el.tagName === "LABEL" && el.classList.contains("sec")) { // a section: matching its title shows all of it
+        endSection(); head = el; hits = 0; headHit = !!q && matches(el.textContent); continue;
+      }
+      if (el.tagName === "LABEL" && !el.classList.contains("full")) { // label + its control
+        const ctl = kids[i + 1] && kids[i + 1].tagName !== "LABEL" ? kids[i + 1] : null;
+        const hit = !q || headHit || matches(`${el.textContent} ${el.title || ""}`);
+        if (q && hit) { el.classList.add("q-hit"); hits++; }
+        el.classList.toggle("q-hide", !hit);
+        if (ctl) { ctl.classList.toggle("q-hide", !hit); i++; }
+        continue;
+      }
+      // a block of its own (the effect stack, a full-width label or text box): match on what it says
+      const hit = !q || headHit || matches(`${el.textContent} ${el.title || ""} ${el.placeholder || ""}`);
+      if (q && hit) hits++;
+      el.classList.toggle("q-hide", !hit);
+    }
+    endSection();
+  });
+}
+
+// ---------- Effects tab: searchable filter library + signature moves ----------
+let FX = null, FX_Q = "", FX_CAT = "";
+fetch("/api/effects").then((r) => r.json()).then((d) => { FX = d; if (TAB === "effects") renderInspector(); }).catch(() => {});
+function fxTargetClip() {
+  if (SEL?.kind === "clip") return P().clips.find((c) => c.id === SEL.id) || null;
+  return null;
+}
+function fxApply(key, clipId) {
+  const c = clipId ? P().clips.find((x) => x.id === clipId) : fxTargetClip();
+  if (!c) { toast("Select a clip on the timeline first (or drag the effect onto one)", true); return; }
+  op("fx_add", { clip: c.id, key }).then((r) => r && toast(r.message));
+}
+function moveApply(m, clipId) {
+  const c = clipId ? P().clips.find((x) => x.id === clipId) : fxTargetClip();
+  const args = { name: m.name };
+  if (m.needs.startsWith("at")) args.at = video.currentTime;
+  else if (c) args.clip = c.id;
+  else { toast("Select the clip this move goes into", true); return; }
+  if (m.needs.includes("+text")) {
+    const t = prompt(m.name === "keyword_pop" ? "The word that slams in (e.g. WOW, WAIT, 50% OFF):" : "Title text:", "");
+    if (!t || !t.trim()) return;
+    args.text = t.trim();
+  }
+  op("move_apply", args).then((r) => r && toast(r.message));
+}
+function renderEffects() {
+  if (!FX) return [h("div", { class: "empty" }, "Loading effects…")];
+  const c = fxTargetClip(), p = P();
+  const thumbSrc = c ? c.source : p.clips[0]?.source;
+  const thumb = thumbSrc && p.sources[thumbSrc]?.has_video ? `url(/api/source/${thumbSrc}/thumb.jpg)` : "none";
+  const applied = new Map();
+  (c?.effects || []).filter((e) => e.type === "fx").forEach((e) => applied.set(e.params.key, (applied.get(e.params.key) || 0) + 1));
+  // every word must appear somewhere in the name, description, category or tags ("retro tape", "cinematic bars")
+  const match = (txt) => FX_Q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => txt.toLowerCase().includes(w));
+  const grid = h("div");
+  const card = (cls, name, about, onclick, drag, badge) => h("button", { class: `fx-card ${cls}`, title: `${about}\nClick to add to the selected clip, or drag onto a clip`,
+    draggable: true, onclick, ondragstart: (e) => { e.dataTransfer.setData(drag[0], drag[1]); e.dataTransfer.effectAllowed = "copy"; } },
+    h("div", { class: "fx-th", style: { "--thumb": thumb } }, h("i"), h("b"), badge ? h("span", { class: "fx-badge" }, badge) : null, cls.includes("fxp-move") ? icon("sparkle") : null),
+    h("div", { class: "fx-nm" }, name), h("div", { class: "fx-ab" }, about));
+  const draw = () => {
+    grid.innerHTML = "";
+    let n = 0;
+    for (const cat of FX.categories) {
+      if (FX_CAT && FX_CAT !== cat) continue;
+      const items = FX.filters.filter((f) => f.category === cat && match([f.label, f.key, f.about, f.category, ...f.tags].join(" ")));
+      if (!items.length) continue;
+      n += items.length;
+      grid.append(h("div", { class: "fx-cat" }, cat), h("div", { class: "fx-grid" }, items.map((f) =>
+        card(`fxp-${f.key}`, f.label, f.about, () => fxApply(f.key), ["application/x-vedit-fx", f.key], applied.get(f.key) ? `✓${applied.get(f.key) > 1 ? applied.get(f.key) : ""}` : null))));
+    }
+    if (!FX_CAT || FX_CAT === "Signature moves") {
+      const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} signature move`));
+      if (moves.length) {
+        n += moves.length;
+        grid.append(h("div", { class: "fx-cat" }, "Signature moves"), h("div", { class: "fx-grid" }, moves.map((m) =>
+          card("fxp-move", m.name.replace(/_/g, " "), m.about, () => moveApply(m), ["application/x-vedit-move", m.name]))));
+      }
+    }
+    if (!n) grid.append(h("div", { class: "empty" }, `No effect matches “${FX_Q}”.`));
+  };
+  const search = h("input", { type: "search", id: "fx-q", value: FX_Q, placeholder: "Search effects…  (blur, retro, cinematic, shake…)",
+    oninput: (e) => { FX_Q = e.target.value; draw(); } });
+  const chips = h("div", { class: "fp-chips" }, ["", ...FX.categories, "Signature moves"].map((cat) =>
+    h("button", { class: "fp-chip" + (FX_CAT === cat ? " on" : ""), onclick: (e) => { FX_CAT = cat; e.target.parentNode.querySelectorAll(".fp-chip").forEach((b) => b.classList.toggle("on", b === e.target)); draw(); } }, cat || "All")));
+  const target = h("div", { class: "fx-target" }, c ? ["Adding to ", h("b", {}, `clip ${c.id}`), ` · ${(c.effects || []).filter((e) => e.type === "fx").length} effect(s) on it`]
+    : "Select a clip on the timeline, or drag an effect onto one.");
+  const all = c ? null : h("button", { class: "ghost", disabled: !p.clips.length, title: "Choose an effect, then add it to every clip",
+    onclick: () => { const k = prompt("Effect to add to every clip (e.g. film, vignette, grain):", "film"); if (k) op("fx_add", { key: k.trim() }); } }, "Add to all clips…");
+  draw();
+  setTimeout(() => { if (TAB === "effects" && document.activeElement === document.body) search.focus(); });
+  return [h("div", { class: "fx-search" }, search, chips, h("div", { class: "pair", style: { display: "flex", gap: "6px", alignItems: "center", justifyContent: "space-between" } }, target, all)), grid];
+}
+
+// ---------- command palette (Cmd/Ctrl+K): effects, moves, transitions, actions and properties in one search ----------
+function paletteItems() {
+  const c = fxTargetClip(), items = [];
+  const act = (t, d, run) => items.push({ k: "Action", t, d, run });
+  act("Split at playhead", "S", () => op("split", { at: video.currentTime }));
+  act("Add text at playhead", "T", () => addTextAtPlayhead());
+  act("Undo", "⌘Z", () => $("#b-undo").click());
+  act("Redo", "⇧⌘Z", () => $("#b-redo").click());
+  act("Export…", "", () => openExport());
+  act("Balance layout", "⇧0", () => setLayout(0.5, 0.5));
+  act(liveMode() ? "Preview: switch to Final render" : "Preview: switch to Live", "", () => $("#t-mode").click());
+  act("Open Effects", "", () => { TAB = "effects"; setTabs(); renderInspector(); });
+  act("Open Media", "", () => { TAB = "media"; setTabs(); renderInspector(); });
+  act("Open History", "", () => { TAB = "history"; setTabs(); renderInspector(); });
+  for (const f of FX?.filters || []) items.push({ k: "Effect", t: f.label, d: `${f.about}${c ? ` · on ${c.id}` : ""}`, s: f.tags.join(" "), run: () => fxApply(f.key) });
+  for (const m of FX?.moves || []) items.push({ k: "Move", t: m.name.replace(/_/g, " "), d: m.about, run: () => moveApply(m) });
+  for (const o of OVL || []) items.push({ k: "Overlay", t: o.label, d: o.about, s: o.tags.join(" "), run: () => overlayAdd({ op: "overlay_add", a: { key: o.key } }) });
+  for (const [k, n, a] of SHAPES) items.push({ k: "Shape", t: n, d: a, run: () => overlayAdd({ op: "layer_add_shape", a: { shape: k } }) });
+  act("Open Overlays", "", () => { TAB = "overlays"; setTabs(); renderInspector(); });
+  if (c && P().clips.indexOf(c) > 0) for (const [v, l] of TRANSITION_OPTS) items.push({ k: "Transition", t: l, d: `into ${c.id}`, run: () => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 }) });
+  if (SEL && TAB === "inspector") document.querySelectorAll("#insp-body .fields > label:not(.full)").forEach((lb) => {
+    const t = lb.textContent.trim();
+    if (t) items.push({ k: "Property", t, d: `of ${SEL.kind} ${SEL.id}`, run: () => { PROP_Q = t; renderInspector(); const el = [...document.querySelectorAll("#insp-body .fields > label")].find((x) => x.textContent.trim() === t); el?.nextElementSibling?.querySelector?.("input,select,textarea")?.focus(); el?.scrollIntoView({ block: "center" }); } });
+  });
+  return items;
+}
+function openPalette() {
+  if ($("#palette")) return;
+  const all = paletteItems();
+  let hl = 0, shown = [];
+  const list = h("div", { class: "pl-list" });
+  const close = () => wrap.remove();
+  const run = (it) => { close(); it?.run(); };
+  const draw = (q) => {
+    const ws = q.toLowerCase().split(/\s+/).filter(Boolean);
+    // rank: title starts with the query > a word of the title does > title contains it > only the description does
+    const score = (it) => { const t = it.t.toLowerCase(), q1 = ws.join(" ");
+      return t.startsWith(q1) ? 0 : t.split(/\W+/).some((w) => ws.some((x) => w.startsWith(x))) ? 1 : ws.every((w) => t.includes(w)) ? 2 : 3; };
+    shown = all.filter((it) => { const hay = `${it.k} ${it.t} ${it.d || ""} ${it.s || ""}`.toLowerCase(); return ws.every((w) => hay.includes(w)); })
+      .map((it, i) => [ws.length ? score(it) : 0, i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]).slice(0, 60);
+    hl = 0; list.innerHTML = "";
+    shown.forEach((it, i) => list.append(h("div", { class: "pl-row" + (i === 0 ? " hl" : ""), onclick: () => run(it), onmouseenter: () => mark(i) },
+      h("span", { class: "k" }, it.k), h("span", { class: "t" }, it.t), it.d ? h("span", { class: "d" }, it.d) : null)));
+    if (!shown.length) list.append(h("div", { class: "empty" }, "Nothing matches"));
+  };
+  const mark = (i) => { list.children[hl]?.classList.remove("hl"); hl = i; list.children[hl]?.classList.add("hl"); list.children[hl]?.scrollIntoView({ block: "nearest" }); };
+  const inp = h("input", { type: "text", placeholder: "Search effects, moves, transitions, actions, properties…", oninput: (e) => draw(e.target.value),
+    onkeydown: (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); if (shown.length) mark((hl + 1) % shown.length); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); if (shown.length) mark((hl - 1 + shown.length) % shown.length); }
+      else if (e.key === "Enter") { e.preventDefault(); run(shown[hl]); }
+    } });
+  const wrap = h("div", { id: "palette", onpointerdown: (e) => e.target === wrap && close() }, h("div", { class: "pl-box" }, inp, list));
+  document.body.append(wrap);
+  draw(""); inp.focus();
+}
+
+// ---------- Overlays tab: the overlay library, shapes, and your own videos as picture-in-picture ----------
+let OVL = null, OVL_Q = "";
+fetch("/api/overlays").then((r) => r.json()).then((d) => { OVL = d.library; if (TAB === "overlays") renderInspector(); }).catch(() => {});
+const SHAPES = [["rect", "Box", "Dark rounded box (behind a title)"], ["ellipse", "Ring", "Ring around a detail"], ["line", "Line", "Underline / divider"], ["arrow", "Arrow", "Point at something"]];
+function overlayAdd(args) { return op(args.op, { start: +video.currentTime.toFixed(3), ...args.a }).then((r) => r && toast(r.message)); }
+function renderOverlays() {
+  if (!OVL) return [h("div", { class: "empty" }, "Loading overlays…")];
+  const p = P(), grid = h("div");
+  const match = (txt) => OVL_Q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => txt.toLowerCase().includes(w));
+  const card = (thumbStyle, name, about, onclick, badge, iconName) => h("button", { class: "fx-card", title: `${about}\nAdds at the playhead`, onclick },
+    h("div", { class: "fx-th", style: thumbStyle }, iconName ? h("span", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" } }, icon(iconName)) : null,
+      badge ? h("span", { class: "fx-badge", style: { background: "var(--pane3)", color: "var(--muted)" } }, badge) : null),
+    h("div", { class: "fx-nm" }, name), h("div", { class: "fx-ab" }, about));
+  const draw = () => {
+    grid.innerHTML = "";
+    const lib = OVL.filter((o) => o.kind !== "shape" && match(`${o.label} ${o.about} ${o.tags.join(" ")} ${o.blend}`));
+    if (lib.length) grid.append(h("div", { class: "fx-cat" }, "Library"), h("div", { class: "fx-grid" }, lib.map((o) =>
+      card({ background: `#111 url(/api/overlays/${o.key}/thumb.jpg) center / cover no-repeat` }, o.label, o.about,
+        () => overlayAdd({ op: "overlay_add", a: { key: o.key } }), o.blend !== "normal" ? o.blend : null))));
+    const shapes = [...SHAPES.map(([k, n, a]) => ({ k, n, a, op: "layer_add_shape", args: { shape: k } })),
+      ...OVL.filter((o) => o.kind === "shape").map((o) => ({ k: o.key, n: o.label, a: o.about, op: "overlay_add", args: { key: o.key } }))]
+      .filter((x) => match(`${x.n} ${x.a} shape`));
+    if (shapes.length) grid.append(h("div", { class: "fx-cat" }, "Shapes"), h("div", { class: "fx-grid" }, shapes.map((x) =>
+      card({ background: "linear-gradient(135deg, #1b2a2c, #24383a)" }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), null, "shape"))));
+    const vids = Object.entries(p.sources).filter(([, s]) => s.has_video && !/[\\/]overlays[\\/]/.test(s.path) && match(`${sourceName(s)} video picture in picture pip`));
+    grid.append(h("div", { class: "fx-cat" }, "Your videos · picture-in-picture"), vids.length ? h("div", { class: "fx-grid" }, vids.map(([id, s]) =>
+      card({ background: `#000 url(/api/source/${id}/thumb.jpg) center / cover no-repeat` }, sourceName(s), `${fmt(s.duration)} · as an overlay, lower right`,
+        () => overlayAdd({ op: "layer_add_video", a: { source: id } }), "PiP")))
+      : h("div", { class: "empty" }, "Import a video (Media tab or drop it here) to put it on top as picture-in-picture."));
+  };
+  const search = h("input", { type: "search", id: "fx-q", value: OVL_Q, placeholder: "Search overlays…  (leak, dust, frame, arrow, retro…)",
+    oninput: (e) => { OVL_Q = e.target.value; draw(); } });
+  draw();
+  return [h("div", { class: "fx-search" }, search, h("div", { class: "fx-target" }, `Adds at the playhead (${fmt(video.currentTime)}). Select it afterwards to set blend, frame, timing and animation.`)), grid];
+}
+
+// applied filters on a clip: an ordered stack with on/off, settings, reorder, reset, remove
+function fxStack(c) {
+  const list = c.effects.filter((e) => e.type === "fx");
+  const def = (k) => FX?.filters.find((f) => f.key === k);
+  let dragId = null;
+  const items = list.map((e, i) => {
+    const f = def(e.params.key), id = e.params.id, on = e.params.on !== false;
+    const set = (k) => (v) => op("fx_set", { id, [k]: v });
+    const body = h("div", { class: "fxs-b" }, (f?.params || []).map((pm) => {
+      const v = e.params[pm.name] ?? pm.default;
+      const ctl = pm.choices.length ? selectIn(String(v), pm.choices.map((x) => [x, x]), set(pm.name))
+        : rangeIn(v, pm.min, pm.max, pm.step, set(pm.name), (x) => { e.params[pm.name] = x; scrubClip(c); });
+      return [h("label", { title: pm.name }, pm.label), ctl];
+    }));
+    const el = h("div", { class: "fxs-item" + (on ? "" : " off"), draggable: true, "data-id": id,
+      ondragstart: (ev) => { dragId = id; ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", id); },
+      ondragover: (ev) => { if (dragId && dragId !== id) { ev.preventDefault(); el.classList.add("drag"); } },
+      ondragleave: () => el.classList.remove("drag"),
+      ondrop: (ev) => { ev.preventDefault(); el.classList.remove("drag"); if (dragId && dragId !== id) op("fx_move", { id: dragId, index: i }); } },
+      h("div", { class: "fxs-h" },
+        h("button", { class: "ghost", title: on ? "Switch off (keep settings)" : "Switch on", onclick: () => op("fx_set", { id, on: !on }) }, on ? "●" : "○"),
+        h("span", { class: "nm", title: `${f?.about || ""} · drag to reorder (top runs first)` }, f?.label || e.params.key),
+        h("button", { class: "ghost", title: "Move up", disabled: i === 0, onclick: () => op("fx_move", { id, index: i - 1 }) }, "↑"),
+        h("button", { class: "ghost", title: "Move down", disabled: i === list.length - 1, onclick: () => op("fx_move", { id, index: i + 1 }) }, "↓"),
+        h("button", { class: "ghost", title: "Reset settings", onclick: () => op("fx_reset", { id }) }, "↺"),
+        h("button", { class: "ghost danger", title: "Remove", onclick: () => op("fx_remove", { id }) }, "×")),
+      f?.params.length ? body : null);
+    return el;
+  });
+  return [h("label", { class: "full sec" }, "Effects"),
+    h("div", { class: "fxs" }, items.length ? items : h("span", { class: "hint" }, "No effects yet."),
+      h("div", { class: "btnrow" },
+        h("button", { onclick: () => { TAB = "effects"; setTabs(); renderInspector(); } }, "＋ Add effect"),
+        items.length && P().clips.length > 1 ? h("button", { class: "ghost", title: "Give every clip this clip's effects (replaces theirs)",
+          onclick: () => op("fx_copy", { clip: c.id, to: "all" }) }, "Copy to all clips") : null))];
 }
 
 function renderRoot() {
@@ -987,7 +1718,7 @@ function renderClip(c) {
   const p = P(), s = p.sources[c.source], start = clipStart(c.id);
   const set = (args) => op("clip_set", { clip: c.id, ...args });
   const idx = p.clips.findIndex((x) => x.id === c.id);
-  const masks = c.effects.filter((e) => e.type === "mask"), effs = c.effects.filter((e) => e.type !== "mask");
+  const masks = c.effects.filter((e) => e.type === "mask"), effs = c.effects.filter((e) => e.type !== "mask" && e.type !== "fx");
   return [
     crumb("Clips", c.id),
     h("div", { class: "fields" },
@@ -1000,16 +1731,17 @@ function renderClip(c) {
         .concat([["0.25", "0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"].includes(String(c.speed)) ? [] : [[String(c.speed), `${c.speed}×`]]]), (v) => set({ speed: v }))),
       field("Volume", rangeIn(c.volume, 0, 2, 0.05, (v) => set({ volume: v }))),
       field("Fit", selectIn(c.fit, [["cover", "Fill (crop)"], ["contain", "Fit (bars)"], ["blur", "Fit + blurred bg"]], (v) => set({ fit: v }))),
-      field("Zoom", rangeIn(c.zoom, 1, 2, 0.01, (v) => set({ zoom: v }))),
+      field("Zoom", rangeIn(c.zoom, 1, 2, 0.01, (v) => set({ zoom: v }), (v) => { c.zoom = v; scrubClip(c); })),
       field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
-      field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }))),
-      field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }))),
+      field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }), (v) => { c.focus_x = v; scrubClip(c); })),
+      field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }), (v) => { c.focus_y = v; scrubClip(c); })),
       ...whyFields(c),
       ...colorFields(c),
       idx > 0 ? field("Transition in", h("div", { class: "pair" },
         selectIn(c.transition?.type || "none", TRANSITION_OPTS, (v) => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 })),
         numIn(c.transition?.duration ?? 0.5, (v) => c.transition && op("transition_set", { clip: c.id, type: c.transition.type, duration: v }), 0.05, { min: 0.05, max: 3, title: "Seconds", disabled: !c.transition }))) : null,
-      field("Effects", effs.length ? h("div", { class: "chips" }, effs.map((e) =>
+      ...fxStack(c),
+      field("AI effects", effs.length ? h("div", { class: "chips" }, effs.map((e) =>
         h("span", { class: "chip", title: JSON.stringify(e.params) }, effectLabel(e), h("button", { title: "Remove", onclick: () => op("remove_effect", { clip: c.id, type: e.type, id: e.params.id }) }, "×"))))
         : h("span", { class: "hint" }, "none — ask the AI, e.g. “remove my background”")),
       ...masks.map((e) => field(`Mask ${e.params.id}${e.params.shape === "paint" ? " (painted)" : ""}`, h("div", { class: "pair" },
@@ -1042,6 +1774,7 @@ function colorFields(c) {
   const intensity = g.intensity ?? 1;
   const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
   const adj = (key) => (v) => op("color_set", { clip: c.id, [key]: v });
+  const live = (key) => (v) => { c.grade = { ...(c.grade || {}), [key]: v }; scrubClip(c); };
   const looks = TYPO?.color_looks || [{ name: "natural", about: "" }];
   const about = looks.find((l) => l.name === look)?.about;
   const matchAll = h("button", { title: "Measure every clip and pull them toward their average, so the edit looks like one shoot",
@@ -1056,14 +1789,14 @@ function colorFields(c) {
         h("button", { class: "ghost", title: "Give every clip this look and strength, so the grade is consistent",
           onclick: () => op("color_look", { all: true, name: look, intensity }) }, "Use on all clips")),
       about ? h("span", { class: "hint" }, about) : null)),
-    look !== "natural" ? field("Look strength", rangeIn(intensity, 0, 1, 0.05, (v) => op("color_look", { clip: c.id, name: look, intensity: v }))) : null,
+    look !== "natural" ? field("Look strength", rangeIn(intensity, 0, 1, 0.05, (v) => op("color_look", { clip: c.id, name: look, intensity: v }), live("intensity"))) : null,
     field("Match", h("div", { class: "font-pick" }, h("div", { class: "pair" }, matchAll, matchHero),
       h("span", { class: "hint" }, g.matched_to ? `Matched to ${g.matched_to === "clips" ? "the clip average" : g.matched_to}` : "Not matched yet"))),
-    field("Brightness", rangeIn(g.brightness ?? 0, -0.3, 0.3, 0.01, adj("brightness"))),
-    field("Contrast", rangeIn(g.contrast ?? 1, 0.5, 1.6, 0.01, adj("contrast"))),
-    field("Saturation", rangeIn(g.saturation ?? 1, 0, 2, 0.01, adj("saturation"))),
-    field("Warmth", rangeIn(g.temperature ?? 0, -1, 1, 0.01, adj("temperature"))),
-    field("Tint", rangeIn(g.tint ?? 0, -1, 1, 0.01, adj("tint"))),
+    field("Brightness", rangeIn(g.brightness ?? 0, -0.3, 0.3, 0.01, adj("brightness"), live("brightness"))),
+    field("Contrast", rangeIn(g.contrast ?? 1, 0.5, 1.6, 0.01, adj("contrast"), live("contrast"))),
+    field("Saturation", rangeIn(g.saturation ?? 1, 0, 2, 0.01, adj("saturation"), live("saturation"))),
+    field("Warmth", rangeIn(g.temperature ?? 0, -1, 1, 0.01, adj("temperature"), live("temperature"))),
+    field("Tint", rangeIn(g.tint ?? 0, -1, 1, 0.01, adj("tint"), live("tint"))),
     c.grade ? field("", h("div", { class: "pair" },
       h("button", { class: "ghost", onclick: () => op("color_clear", { clip: c.id }) }, "Reset this clip"),
       h("button", { class: "ghost", onclick: () => op("color_clear", { all: true }) }, "Reset all clips"))) : null,
@@ -1084,17 +1817,50 @@ function effectLabel(e) {
 function renderLayer(l) {
   const set = (args) => op("layer_set", { layer: l.id, ...args });
   const st = (k) => (v) => set({ style: { [k]: v } });
+  // live: change the local copy so the overlay redraws now; the commit on release/blur saves it
+  const lv = (k) => (v) => { l[k] = v; };
+  const lst = (k) => (v) => { l.style[k] = v; markDirty(l); };
   const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "punch", "spin_in", "drop_in", "typewriter", "fade_out", "pop_out", "slide_out", "shake", "bob", "pulse", "wiggle", "spin"];
   const s = l.style;
+  const lf = (k) => (v) => { l[k] = v; markDirty(l); }; // live frame / shape change (sprite redraws)
+  const isText = l.type === "text" || l.type === "captions";
+  const src = l.type === "video" ? P().sources[l.source] : null;
+  const frameFields = [
+    h("label", { class: "full sec" }, isText ? "Blend" : "Frame & blend"),
+    field("Blend", selectIn(l.blend || "normal", [["normal", "Normal"], ["screen", "Screen (lighten: leaks, dust, glow)"], ["add", "Add (brighter)"],
+      ["overlay", "Overlay (texture, contrast)"], ["multiply", "Multiply (darken: paper, shadows)"], ["lighten", "Lighten"], ["darken", "Darken"]], (v) => set({ blend: v }))),
+    !isText && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
+    !isText ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
+      numIn(l.border_width || 0, (v) => set({ border_width: v }), 1, { min: 0, max: 60, title: "Border width px (inside the edge)" }))) : null,
+    l.type === "image" || l.type === "video" ? field("Circle", h("input", { type: "checkbox", checked: l.mask === "circle", title: "Cut it out as a circle (face cam)",
+      onchange: (e) => set({ mask: e.target.checked ? "circle" : "rect" }) })) : null,
+    l.type === "image" || l.type === "video" ? field("Green screen", h("div", { class: "pair" },
+      colorIn(l.chroma || "#00FF00", (v) => set({ chroma: v }), l.chroma ? lf("chroma") : null),
+      h("button", { class: "ghost", onclick: () => set({ chroma: l.chroma ? "" : "#00FF00" }) }, l.chroma ? "Off" : "Remove colour"))) : null,
+    l.chroma ? field("Key tolerance", rangeIn(l.chroma_similarity ?? 0.25, 0.01, 0.9, 0.01, (v) => set({ chroma_similarity: v }), lf("chroma_similarity"))) : null,
+  ];
   const styleFields = l.type === "image" ? [
     field("Width", numIn(l.width ?? "", (v) => set({ width: v }), 10, { placeholder: "original" })),
+  ] : l.type === "video" ? [
+    field("Source", h("span", {}, src ? sourceName(src) : l.source)),
+    field("Starts at", h("div", { class: "pair" }, numIn(l.src_in.toFixed(2), (v) => set({ src_in: v }), 0.05, { min: 0, max: src?.duration, title: "Seconds into the overlay video" }),
+      h("span", { class: "hint" }, `of ${src ? src.duration.toFixed(1) : "?"}s`))),
+    field("Width", numIn(l.width ?? "", (v) => set({ width: v }), 10, { placeholder: String(Math.round(P().canvas.width * 0.45)) })),
+    field("Volume", rangeIn(l.volume || 0, 0, 2, 0.05, (v) => set({ volume: v }), lv("volume"))),
+    field("Loop", h("input", { type: "checkbox", checked: l.loop, title: "Repeat the video when the layer is longer", onchange: (e) => set({ loop: e.target.checked }) })),
+  ] : l.type === "shape" ? [
+    field("Shape", selectIn(l.shape, [["rect", "Box"], ["ellipse", "Ellipse / ring"], ["line", "Line"], ["arrow", "Arrow"]], (v) => set({ shape: v }))),
+    field("Size", h("div", { class: "pair" }, numIn(l.width ?? 400, (v) => set({ width: v }), 10, { title: "Width px" }),
+      numIn(l.height ?? "", (v) => set({ height: v }), 2, { title: "Height px (line / arrow: thickness)", placeholder: "auto" }))),
+    field("Fill", h("div", { class: "pair" }, colorIn(l.fill || "#FFFFFF", (v) => set({ fill: v }), l.fill ? lf("fill") : null),
+      h("button", { class: "ghost", onclick: () => set({ fill: l.fill ? "" : "#FFFFFF" }) }, l.fill ? "No fill" : "Fill"))),
   ] : [
     l.type === "text" && TYPO ? field("Look", lookIn(l)) : null,
-    field("Font", fontIn(s.font, st("font"), s.uppercase ? (l.text || "").toUpperCase() : l.text)),
-    field("Font size", numIn(s.size, st("size"), 2)),
+    field("Font", fontIn(s.font, st("font"), s.uppercase ? (l.text || "").toUpperCase() : l.text, lst("font"))),
+    (() => { const sz = sizeIn(s.size, st("size"), lst("size")); const lb = h("label", {}, "Font size"); sz.scrub(lb); return [lb, sz]; })(),
     field("Letter spacing", numIn(s.letter_spacing ?? 0, st("letter_spacing"), 1, { min: -10, max: 40, title: "Extra px between letters" })),
-    field("Colour", h("div", { class: "pair" }, colorIn(s.color, st("color")), h("span", { class: "hint" }, "highlight"), colorIn(s.highlight_color, st("highlight_color")))),
-    field("Outline", h("div", { class: "pair" }, colorIn(s.stroke_color, st("stroke_color")), numIn(s.stroke_width, st("stroke_width"), 1, { min: 0, max: 30 }))),
+    field("Colour", h("div", { class: "pair" }, colorIn(s.color, st("color"), lst("color")), h("span", { class: "hint" }, "highlight"), colorIn(s.highlight_color, st("highlight_color"), lst("highlight_color")))),
+    field("Outline", h("div", { class: "pair" }, colorIn(s.stroke_color, st("stroke_color"), lst("stroke_color")), numIn(s.stroke_width, st("stroke_width"), 1, { min: 0, max: 30 }))),
     field("Box", h("div", { class: "pair" }, colorIn(s.bg_color || "#000000", st("bg_color")),
       h("button", { class: "ghost", onclick: () => st("bg_color")(s.bg_color ? "" : "#000000B0") }, s.bg_color ? "Remove box" : "Add box"))),
     field("Glow", h("div", { class: "pair" }, colorIn(s.glow_color || "#FF2BD6", st("glow_color")),
@@ -1109,23 +1875,30 @@ function renderLayer(l) {
   return [
     crumb("Layers", l.id),
     h("div", { class: "fields" },
-      l.type === "text" ? [h("label", { class: "full" }, "Text"), h("textarea", { class: "full", rows: 3, value: l.text || "", onchange: (e) => set({ text: e.target.value }) })] : [],
+      l.type === "text" ? [h("label", { class: "full" }, "Text"), h("textarea", { class: "full", rows: 3, value: l.text || "", onchange: (e) => set({ text: e.target.value }), oninput: (e) => { l.text = e.target.value; markDirty(l); } })] : [],
       l.type === "captions" ? [field("Words", h("span", { class: "hint" }, `${l.words.length} words · “${layerLabel(l)}…”`)),
         field("Words at once", numIn(l.words_per_group, (v) => set({ words_per_group: v }), 1, { min: 1, max: 8 }))] : [],
       l.type === "image" ? field("Image", h("span", { class: "hint" }, layerLabel(l))) : [],
       field("Start / end", h("div", { class: "pair" }, numIn(l.start.toFixed(2), (v) => set({ start: v }), 0.05, { min: 0 }),
         numIn(l.end == null ? "" : l.end.toFixed(2), (v) => set({ end: v }), 0.05, { placeholder: "end" }))),
-      field("Position", h("div", { class: "pair" }, textIn(l.x, (v) => set({ x: v }), { title: "x: px or %" }), textIn(l.y, (v) => set({ y: v }), { title: "y: px or %" }))),
-      field("Scale", rangeIn(l.scale, 0.2, 3, 0.05, (v) => set({ scale: v }))),
-      field("Rotation", rangeIn(l.rotation, -180, 180, 1, (v) => set({ rotation: v }))),
-      field("Opacity", rangeIn(l.opacity, 0, 1, 0.05, (v) => set({ opacity: v }))),
+      field("Position", h("div", { class: "pair" }, textIn(l.x, (v) => set({ x: v }), { title: "x: px or %" }, (v) => !isNaN(parseFloat(v)) && lv("x")(v)),
+        textIn(l.y, (v) => set({ y: v }), { title: "y: px or %" }, (v) => !isNaN(parseFloat(v)) && lv("y")(v)))),
+      field("Scale", rangeIn(l.scale, 0.2, 3, 0.05, (v) => set({ scale: v }), lv("scale"))),
+      field("Rotation", rangeIn(l.rotation, -180, 180, 1, (v) => set({ rotation: v }), lv("rotation"))),
+      field("Opacity", rangeIn(l.opacity, 0, 1, 0.05, (v) => set({ opacity: v }), lv("opacity"))),
       ...styleFields,
+      ...frameFields,
       field("Animation", h("div", { class: "chips" },
         l.presets.map((pr) => h("span", { class: "chip" }, pr.name, h("button", { onclick: () => op("preset_remove", { layer: l.id, name: pr.name }) }, "×"))),
         l.keyframes.length ? h("span", { class: "chip" }, `${l.keyframes.length} keyframes`, h("button", { onclick: () => op("keyframes_clear", { layer: l.id }) }, "×")) : "",
         selectIn("", [["", "＋ add…"], ...presets.map((n) => [n, n])], (v) => v && op("preset_add", { layer: l.id, name: v }))))),
     h("div", { class: "btnrow" },
       h("button", { onclick: () => { video.currentTime = l.start; } }, "Go to layer"),
+      h("span", { class: "pair", title: "Stacking order: which overlay is on top" },
+        h("button", { class: "ghost", title: "Bring to front", onclick: () => op("layer_move", { layer: l.id, to: "front" }) }, "⤒"),
+        h("button", { class: "ghost", title: "Bring forward", onclick: () => op("layer_move", { layer: l.id, to: "up" }) }, "↑"),
+        h("button", { class: "ghost", title: "Send backward", onclick: () => op("layer_move", { layer: l.id, to: "down" }) }, "↓"),
+        h("button", { class: "ghost", title: "Send to back", onclick: () => op("layer_move", { layer: l.id, to: "back" }) }, "⤓")),
       h("button", { class: "danger", onclick: () => op("layer_remove", { layer: l.id }) }, "Delete layer"),
       h("button", { onclick: () => askAbout(`layer ${l.id}`) }, "Ask AI to animate…")),
   ];
@@ -1158,6 +1931,8 @@ function renderSource(id, s) {
       field("On timeline", h("span", {}, used ? `${used} clip(s)` : "not used"))),
     h("div", { class: "btnrow" },
       s.has_video ? h("button", { onclick: () => op("insert_source", { source: id }) }, "Add to end of timeline") : "",
+      s.has_video ? h("button", { title: "Put this video on top of the edit (picture-in-picture), from the playhead",
+        onclick: () => overlayAdd({ op: "layer_add_video", a: { source: id } }) }, icon("layers"), "Add as overlay") : "",
       s.has_audio && !s.has_video ? h("button", { onclick: () => op("add_music", { source: id, start: 0 }) }, "Use as music") : ""),
     h("p", { class: "hint" }, "Tip: drag the thumbnail onto the timeline to insert it at a position."),
   ];
@@ -1688,7 +2463,7 @@ function renderSetup() {
 // ---------- timeline (pane 4) ----------
 const LANES = { ruler: 24, clips: 66, wave: 34, layer: 28 };
 function timeAt(clientX) { const r = $("#tl-inner").getBoundingClientRect(); return Math.max(0, (clientX - r.left) / PPS); }
-function seek(t) { video.currentTime = Math.max(0, Math.min(dur(), t)); updateTC(); updateCtx(); }
+function seek(t) { dropFrame(); video.currentTime = Math.max(0, Math.min(dur(), t)); updateTC(); updateCtx(); }
 function snapPoints(exclude) {
   const pts = [0, dur(), video.currentTime, ...ST.starts];
   for (const l of P().layers) if (l.id !== exclude) pts.push(l.start, layerEnd(l));
@@ -1762,14 +2537,24 @@ function renderTimeline() {
 
   // overlay layers (top layer first, like most editors)
   [...p.layers].reverse().forEach((l) => {
-    const meta = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"] }[l.type];
+    const meta = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
+      video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"] }[l.type];
     const el = lane("", LANES.layer, meta[0], meta[1], l.id, meta[2]);
     const s = l.start, e = layerEnd(l);
     const b = h("div", { class: `blk ${l.type}` + (SEL?.id === l.id ? " sel" : ""), title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}`,
       style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px` } },
       h("div", { class: "hd l" }), h("div", { class: "hd r" }),
       h("div", { class: "bl" }, icon(meta[0]), h("span", { class: "nm" }, layerLabel(l) || l.id),
-        l.presets.length ? h("span", { class: "badge", title: l.presets.map((x) => x.name).join(", ") }, icon("sparkle"), l.presets.length) : ""));
+        l.presets.length ? h("span", { class: "badge", title: l.presets.map((x) => x.name).join(", ") }, icon("sparkle"), l.presets.length) : "",
+        l.blend && l.blend !== "normal" ? h("span", { class: "badge blend", title: `Blend: ${l.blend}` }, l.blend) : ""));
+    // drag a layer's lane header onto another one to change which is on top
+    const head = heads.lastElementChild, idx = p.layers.indexOf(l);
+    head.draggable = true; head.title = `${head.title} · drag up/down to change which overlay is on top`;
+    head.addEventListener("dragstart", (ev) => { ev.dataTransfer.setData("application/x-vedit-layer", l.id); ev.dataTransfer.effectAllowed = "move"; });
+    head.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("application/x-vedit-layer")) { ev.preventDefault(); head.classList.add("dragover"); } });
+    head.addEventListener("dragleave", () => head.classList.remove("dragover"));
+    head.addEventListener("drop", (ev) => { ev.preventDefault(); head.classList.remove("dragover");
+      const id = ev.dataTransfer.getData("application/x-vedit-layer"); if (id && id !== l.id) op("layer_move", { layer: id, to: idx }); });
     b.addEventListener("pointerdown", (ev) => spanPointer(ev, b, s, e, (ns, ne, mode) => {
       const args = { layer: l.id, start: +ns.toFixed(3) };
       if (mode !== "l" || l.end != null) args.end = +ne.toFixed(3);
@@ -1873,12 +2658,21 @@ function dropIndex(clientX) {
 function setupDrop(vl) {
   vl.addEventListener("dragover", (e) => {
     e.preventDefault(); e.stopPropagation(); vl.classList.add("drop");
+    if (e.dataTransfer.types.includes("application/x-vedit-fx") || e.dataTransfer.types.includes("application/x-vedit-move")) { e.dataTransfer.dropEffect = "copy"; return; }
     const i = dropIndex(e.clientX), mark = $("#insmark");
     mark.style.display = "block"; mark.style.left = `${(i < P().clips.length ? ST.starts[i] : dur()) * PPS}px`;
   });
   vl.addEventListener("dragleave", () => { vl.classList.remove("drop"); $("#insmark").style.display = "none"; });
   vl.addEventListener("drop", async (e) => {
     e.preventDefault(); e.stopPropagation(); vl.classList.remove("drop"); $("#insmark").style.display = "none"; $("#dropveil").style.display = "none";
+    const fxKey = e.dataTransfer.getData("application/x-vedit-fx"), mv = e.dataTransfer.getData("application/x-vedit-move");
+    if (fxKey || mv) { // an effect dropped on a clip
+      const t = timeAt(e.clientX), i = P().clips.findIndex((c, k) => ST.starts[k] <= t && t < ST.starts[k] + clipDur(c));
+      const c = P().clips[i < 0 ? P().clips.length - 1 : i];
+      if (!c) return;
+      if (fxKey) return fxApply(fxKey, c.id);
+      return moveApply(FX.moves.find((m) => m.name === mv), c.id);
+    }
     const index = dropIndex(e.clientX);
     const sid = e.dataTransfer.getData("application/x-vedit-source");
     if (sid) {
@@ -2088,21 +2882,43 @@ function exUpdateRun() {  // update in place so the ring animates smoothly inste
 $("#b-export").onclick = () => openExport();
 
 // ---------- splitters ----------
+// Divider positions are stored as fractions of the grid, so the layout keeps its balance when the window resizes.
+const LAYOUTS = { balanced: { col: 0.5, row: 0.5 }, edit: { col: 0.5, row: 0.4 }, color: { col: 0.32, row: 0.66 } };
+function setLayout(col, row, save = true) {
+  const r = document.documentElement.style;
+  if (col != null) r.setProperty("--colf", String(col));
+  if (row != null) r.setProperty("--rowf", String(row));
+  if (save) try {
+    const cs = getComputedStyle(document.documentElement);
+    localStorage.setItem("cc-layout-v2", JSON.stringify({ col: +cs.getPropertyValue("--colf"), row: +cs.getPropertyValue("--rowf") }));
+  } catch {}
+  renderTimeline();
+}
 function splitter(el, axis) {
   el.addEventListener("pointerdown", (e) => {
     el.setPointerCapture(e.pointerId); el.classList.add("drag");
     const grid = $("#grid").getBoundingClientRect();
     const mv = (ev) => {
-      if (axis === "x") document.documentElement.style.setProperty("--col", `${Math.max(240, Math.min(grid.width - 400, ev.clientX - grid.left))}px`);
-      else document.documentElement.style.setProperty("--row", `${Math.max(160, Math.min(grid.height - 160, ev.clientY - grid.top))}px`);
+      if (axis === "x") {
+        const px = Math.max(240, Math.min(grid.width - 400, ev.clientX - grid.left));
+        document.documentElement.style.setProperty("--colf", (px / (grid.width - 5)).toFixed(4));
+      } else {
+        const px = Math.max(160, Math.min(grid.height - 160, ev.clientY - grid.top));
+        document.documentElement.style.setProperty("--rowf", (px / (grid.height - 5)).toFixed(4));
+      }
     };
     el.addEventListener("pointermove", mv);
-    el.addEventListener("pointerup", () => { el.removeEventListener("pointermove", mv); el.classList.remove("drag"); renderTimeline();
-      try { localStorage.setItem("cc-layout", JSON.stringify({ col: getComputedStyle(document.documentElement).getPropertyValue("--col"), row: getComputedStyle(document.documentElement).getPropertyValue("--row") })); } catch {} }, { once: true });
+    el.addEventListener("pointerup", () => { el.removeEventListener("pointermove", mv); el.classList.remove("drag"); setLayout(null, null); }, { once: true });
   });
+  el.addEventListener("dblclick", () => (axis === "x" ? setLayout(0.5, null) : setLayout(null, 0.5)));
 }
 splitter($("#split-v"), "x"); splitter($("#split-h"), "y");
-try { const l = JSON.parse(localStorage.getItem("cc-layout") || "null"); if (l) { document.documentElement.style.setProperty("--col", l.col); document.documentElement.style.setProperty("--row", l.row); } } catch {}
+$("#layout-preset").onchange = (e) => { const l = LAYOUTS[e.target.value]; if (l) setLayout(l.col, l.row); e.target.value = ""; };
+try {
+  localStorage.removeItem("cc-layout"); // old px-based layout: ignore it so everyone starts balanced
+  const l = JSON.parse(localStorage.getItem("cc-layout-v2") || "null");
+  if (l && l.col > 0.1 && l.col < 0.9 && l.row > 0.1 && l.row < 0.9) setLayout(l.col, l.row, false);
+} catch {}
 
 // ---------- keyboard ----------
 // ---- draw a box on the preview: tracked mask / object focus ------------------------
@@ -2316,6 +3132,7 @@ document.addEventListener("keydown", (e) => {
     if (!e.metaKey && !e.ctrlKey && "bgxek[]".includes(e.key.toLowerCase()) && e.key.length === 1) { e.preventDefault(); PAINT_UNDO.key(e.key.toLowerCase()); return; }
   }
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
   // Cmd/Ctrl+C on selected page text (the native desktop window doesn't copy it reliably)
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && !typing) {
     const sel = String(window.getSelection() || "");
@@ -2323,11 +3140,13 @@ document.addEventListener("keydown", (e) => {
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); if (aiBlocked()) return; (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
   if (typing) return;
+  if (e.key === "/") { const q = $("#prop-q") || $("#fx-q"); if (q) { e.preventDefault(); q.focus(); q.select(); return; } }
   if (busy && (["s", "t"].includes(e.key.toLowerCase()) || e.key === "Delete" || e.key === "Backspace")) { aiBlocked(); return; }
   if (e.key === " ") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
   else if (e.key === "ArrowLeft") step(e.shiftKey ? -fps() : -1);
   else if (e.key === "ArrowRight") step(e.shiftKey ? fps() : 1);
   else if (e.key === "Home") seek(0);
+  else if (e.key === ")" || (e.shiftKey && e.code === "Digit0")) setLayout(0.5, 0.5);
   else if (e.key.toLowerCase() === "s") op("split", { at: video.currentTime });
   else if (e.key.toLowerCase() === "t") addTextAtPlayhead();
   else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
@@ -2342,7 +3161,15 @@ const es = new EventSource("/api/events");
 es.onmessage = async (m) => {
   const d = JSON.parse(m.data);
   if (d.closed) { es.close(); location.href = "/"; return; }
-  await refresh();
+  // only re-fetch the project when it actually changed; render-status ticks just update the pill
+  const passes = ST?.render?.passes;
+  if (!ST || d.rev !== ST.rev) await refresh();
+  else { ST.render = { status: d.status, error: d.error, version: d.version, final: d.final, passes: d.passes }; setStatus(ST.render); }
+  if (passes != null && d.passes !== passes && d.status === "idle") { // edit handled (maybe a cache hit)
+    PV.waitUntil = 0; updatePreviewBusy();
+    if (d.version === lastVideoVersion && FRAME.active && !FRAME.busy && !FRAME.next && !DRAGGING) dropFrame();
+  }
+  updateModeBtn();
   if (d.status === "idle" && !d.error && d.version !== lastVideoVersion && P().clips.length) { lastVideoVersion = d.version; reloadVideo(); }
 };
 es.onerror = () => { const s = $("#status"); s.className = "pill error"; s.textContent = "disconnected"; };
