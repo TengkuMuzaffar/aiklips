@@ -52,10 +52,19 @@ class AIFinding(_M):
     fix: str = Field("", description="The concrete change you'd make")
 
 
+class IssueCheck(_M):
+    id: str = Field(description="Issue id from the OPEN ISSUES list (I1, I2...)")
+    status: Literal["fixed", "open", "worse"] = Field(description="In THIS version: fixed, still there, or worse than before")
+    note: str = Field("", description="A few words of evidence")
+
+
 class AIReview(_M):
     summary: str = Field("", description="One or two sentences: the edit's biggest strength and biggest weakness")
     scores: Scores = Field(default_factory=Scores)
     findings: list[AIFinding] = Field(default_factory=list, description="At most 8, most important first")
+    verdict: Literal["better", "same", "worse"] | None = Field(
+        None, description="Only when a PREVIOUS BEST version is shown: is THIS version better, the same, or worse overall?")
+    issue_checks: list[IssueCheck] = Field(default_factory=list, description="Only when OPEN ISSUES are listed: one check per issue")
 
 
 # ---- describing the edit (what the reviewer and the editor read) -------------------------------------
@@ -133,7 +142,10 @@ def make_sheets(video: Path, duration: float, out_dir: Path) -> tuple[list[Path]
 # ---- AI reviewer --------------------------------------------------------------------------------
 
 def ai_review(p: Project, code: dict, sheets: list[Path], times: list[float], quality: str = "balanced",
-              fid_of: dict[str, str] | None = None, pdir: Path | None = None) -> tuple[AIReview, dict]:
+              fid_of: dict[str, str] | None = None, pdir: Path | None = None, compare: dict | None = None,
+              issues: list[dict] | None = None) -> tuple[AIReview, dict]:
+    """`compare` = {"sheets": [overview, hook], "score", "scores", "summary"} of the best version so far. A single review
+    is noisy (the same video scored 64 and 53), so a revision is judged side by side against the best, on its scale."""
     measured = [f"{f['id']} [{f['severity']}] {f['category']}" + (f" @{f['at']}s" if f["at"] is not None else "") + f": {f['message']}"
                 for f in code["findings"]]
     prompt = (describe_edit(p, fid_of, pdir)
@@ -141,7 +153,29 @@ def ai_review(p: Project, code: dict, sheets: list[Path], times: list[float], qu
               + ("\n".join(measured) or "(none)")
               + f"\n\nThe overview sheet has frames 1..{len(times)} at: " + ", ".join(f"#{i + 1}={t:.1f}s" for i, t in enumerate(times))
               + "\nReview this edit.")
-    rev, usage = ai.call("auditor", prompt, AIReview, system=prompts.AUDITOR, images=sheets, quality=quality)
+    images = list(sheets)
+    if compare and all(Path(x).exists() for x in compare.get("sheets", [])):
+        images += list(compare["sheets"])[:2]
+        sc = compare.get("scores") or {}
+        prompt += ("\n\nCOMPARE: images 1-2 are THIS version; images 3-4 are the PREVIOUS BEST version of the same video "
+                   f"(its overview and hook strip). That version scored {compare.get('score')}/100"
+                   + (" with " + ", ".join(f"{k} {v}/5" for k, v in sc.items()) if sc else "")
+                   + (f". Its review said: {compare['summary']}" if compare.get("summary") else "") + ".\n"
+                   "Score THIS version on that same scale: where it is about as good, give about the same rubric score; raise "
+                   "only what is clearly better, lower what is clearly worse. Then set `verdict` (better / same / worse overall, "
+                   "as a viewer would feel it). Findings and frame numbers refer to THIS version only.")
+    open_ai = [i for i in (issues or []) if i.get("status") != "fixed" and i.get("source") == "ai"]
+    if open_ai:
+        prompt += ("\n\nOPEN ISSUES from earlier reviews of this video. First check EACH one against THIS version in "
+                   "`issue_checks` (fixed / open / worse). Then add at most 3 NEW problems as findings; don't repeat an "
+                   "open issue as a finding:\n" + "\n".join(
+                       f"- {i['id']} [{i['severity']}] {i['category']}" + (f" @{i['at']}s" if i.get("at") is not None else "")
+                       + f": {i['message']}" for i in open_ai))
+    rev, usage = ai.call("auditor", prompt, AIReview, system=prompts.AUDITOR, images=images, quality=quality)
+    if not compare:
+        rev.verdict = None
+    known = {i["id"] for i in open_ai}
+    rev.issue_checks = [c for c in rev.issue_checks if c.id in known]
     rev.findings = verify(rev.findings, times, p.duration)
     return rev, usage
 
@@ -187,7 +221,10 @@ def merge(code: dict, rev: AIReview | None) -> dict:
 
 
 def full_audit(pdir: Path, use_ai: bool = True, quality: str = "balanced", fid_of: dict | None = None,
-               usage_cb: Callable[[str, dict], None] | None = None) -> dict:
+               usage_cb: Callable[[str, dict], None] | None = None, compare: dict | None = None,
+               issues: list[dict] | None = None, round_no: int = 0) -> dict:
+    """Code checks + the AI reviewer. With `issues` (the best version's tracked issues), the review checks each one,
+    and the result carries the updated list (`issues`) plus what this version fixed or made worse."""
     from .jobs import render_lock
     from .render.runner import render_preview
 
@@ -199,7 +236,7 @@ def full_audit(pdir: Path, use_ai: bool = True, quality: str = "balanced", fid_o
     if use_ai:
         sheets, times = make_sheets(Path(res["output"]), p.duration, pdir / ".vedit" / "review")
         try:
-            rev, u = ai_review(p, code, sheets, times, quality, fid_of, pdir)
+            rev, u = ai_review(p, code, sheets, times, quality, fid_of, pdir, compare, issues)
             if usage_cb:
                 usage_cb("auditor", u)
         except ai.RateLimited:
@@ -209,7 +246,99 @@ def full_audit(pdir: Path, use_ai: bool = True, quality: str = "balanced", fid_o
                                      "message": f"AI review skipped: {e}", "evidence": "", "fix": None})
     out = merge(code, rev)
     out["step"] = history.head(pdir)
+    out["verdict"] = rev.verdict if rev is not None else None
+    out["sheets"] = [str(x) for x in sheets_of(pdir)]
+    tracked, fixed, worse = track(issues or [], out["findings"], rev.issue_checks if rev is not None else [], round_no)
+    out.update(issues=tracked, fixed_now=fixed, worse_now=worse)
     return out
+
+
+# ---- the issue list: one problem keeps one id across rounds ----------------------------------------
+
+def _code_key(f: dict) -> str:
+    """Code findings are re-generated each round; key them by check + subject (numbers stripped)."""
+    import re as _re
+
+    return f["category"] + ":" + _re.sub(r"[-\d.]+", "#", f["message"])[:70]
+
+
+def track(prev: list[dict], findings: list[dict], checks: list, round_no: int) -> tuple[list[dict], list[str], list[str]]:
+    """Carry the issue list forward. Code issues are open while their check still fires; AI issues follow the
+    reviewer's check (missing check = still open). New must/should findings become new issues."""
+    issues = [dict(i) for i in prev]
+    by_id = {i["id"]: i for i in issues}
+    n = max([int(i["id"][1:]) for i in issues if i["id"][1:].isdigit()] or [0])
+    fixed, worse = [], []
+    code_now = {_code_key(f): f for f in findings if f.get("source") != "ai" and f["severity"] != "note"}
+    for i in issues:
+        if i["status"] == "fixed":
+            continue
+        if i["source"] == "code":
+            hit = code_now.pop(i["key"], None)
+            if hit is None:
+                i.update(status="fixed", closed=round_no)
+                fixed.append(i["id"])
+            else:
+                i.update(message=hit["message"], at=hit.get("at"), severity=hit["severity"])
+    for c in checks:
+        i = by_id.get(c.id)
+        if i is None or i["status"] == "fixed":
+            continue
+        if c.status == "fixed":
+            i.update(status="fixed", closed=round_no)
+            fixed.append(i["id"])
+        elif c.status == "worse":
+            i["status"] = "worse"
+            worse.append(i["id"])
+        else:
+            i["status"] = "open"
+        if c.note:
+            i["check_note"] = c.note
+    new = list(code_now.values()) + [f for f in findings if f.get("source") == "ai" and f["severity"] != "note"]
+    for f in new:
+        if f.get("source") == "ai" and any(i["status"] != "fixed" and i["category"] == f["category"] and i.get("at") is not None
+                                           and f.get("at") is not None and abs(i["at"] - f["at"]) < 1.0 for i in issues):
+            continue  # the reviewer restated an open issue
+        n += 1
+        issues.append({"id": f"I{n}", "source": "ai" if f.get("source") == "ai" else "code", "key": _code_key(f),
+                       "severity": f["severity"], "category": f["category"], "at": f.get("at"), "message": f["message"],
+                       "fix": f.get("fix"), "status": "open", "opened": round_no})
+    order = {"worse": 0, "open": 1, "fixed": 2}
+    sev = {"must-fix": 0, "should-fix": 1, "note": 2}
+    issues.sort(key=lambda i: (order[i["status"]], sev.get(i["severity"], 2), int(i["id"][1:])))
+    return issues, fixed, worse
+
+
+def open_issues(issues: list[dict]) -> list[dict]:
+    return [i for i in issues if i["status"] != "fixed"]
+
+
+def sheets_of(pdir: Path) -> list[Path]:
+    d = pdir / ".vedit" / "review"
+    return [x for x in (d / "review-overview.jpg", d / "review-hook.jpg") if x.exists()]
+
+
+SCORE_SLACK = 5  # a revision may score this much under the best (review noise), never more
+
+
+def beats(new: dict, best: dict, targeted: list[str] | None = None) -> bool:
+    """Is a revision better than the best so far?
+    - Never if it adds must-fix problems, makes an issue worse, or scores more than SCORE_SLACK under the best.
+    - With a side-by-side verdict (single scores drift ~10 points): "better" wins; "same" wins only if it fixed an
+      issue the patch was aimed at (`targeted`). Fixes the patch didn't aim at don't count: e.g. a render-wide change
+      fixes the same code issue in every rebuild (live run: a "same" revision scoring 29 replaced a 40).
+    - Without a verdict (code-only): a fixed targeted issue or a higher score decides."""
+    if new.get("counts", {}).get("must-fix", 0) > best.get("counts", {}).get("must-fix", 0):
+        return False
+    if new.get("worse_now"):
+        return False
+    if new.get("score", 0) < best.get("score", 0) - SCORE_SLACK:
+        return False
+    aimed = set(targeted or []) & set(new.get("fixed_now") or [])
+    v = new.get("verdict")
+    if v:
+        return v == "better" or (v == "same" and bool(aimed))
+    return bool(aimed) or new.get("score", 0) > best.get("score", 0)
 
 
 # ---- the loop ------------------------------------------------------------------------------------
@@ -227,8 +356,21 @@ def fid_map(p: Project, files: dict[str, dict]) -> dict[str, str]:
 
 def brief(r: dict) -> dict:
     """A round's summary for reports and the UI."""
-    return {k: r.get(k) for k in ("score", "passed", "counts", "scores", "summary")} | {
-        "must_fix": [f["message"] for f in r["findings"] if f["severity"] == "must-fix"][:6]}
+    return {k: r.get(k) for k in ("score", "passed", "counts", "scores", "summary", "verdict")} | {
+        "fixed": r.get("fixed_now") or [], "worse": r.get("worse_now") or [],
+        "open": len(open_issues(r.get("issues") or [])),
+        "must_fix": [f["message"] for f in r["findings"] if f["severity"] == "must-fix"][:6],
+        "must_cats": sorted({f["category"] for f in r["findings"] if f["severity"] == "must-fix"})}
+
+
+def recurring(rounds: list[dict], n: int = 3) -> str | None:
+    """A must-fix category flagged in each of the last n rounds: the edit can't fix it, the footage probably can't."""
+    if len(rounds) < n:
+        return None
+    common = set(rounds[-1].get("must_cats") or [])
+    for r in rounds[-n:-1]:
+        common &= set(r.get("must_cats") or [])
+    return sorted(common)[0] if common else None
 
 
 # ---- settings: when is an edit good enough? ------------------------------------------------------
