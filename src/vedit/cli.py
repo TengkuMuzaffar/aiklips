@@ -1353,19 +1353,46 @@ def sheet(count: int = 12, cols: int = 4, width: int = 240):
 
 
 @app.command()
-def export(out: Optional[str] = typer.Argument(None, help="Output .mp4 (default exports/<name>.mp4)"),
-           scale: float = typer.Option(1.0, help="Resolution scale (0.5 = half)"),
+def export(out: Optional[str] = typer.Argument(None, help="Output file (the extension picks the type: .mp4 .mov .webm .gif). "
+                                                          "Default: <folder>/<project name>.<ext>"),
+           fmt: Optional[str] = typer.Option(None, "--format", help="mp4 (H.264) | hevc | prores | webm | gif"),
+           fps: Optional[float] = typer.Option(None, help="Frames per second (default: the project's)"),
+           scale: Optional[float] = typer.Option(None, help="Resolution: 0.5 half, 1 full, 2 double"),
+           quality: Optional[str] = typer.Option(None, help="high | standard | small"),
+           folder: Optional[str] = typer.Option(None, help="Folder to save into (default: the project's exports/)"),
+           name: Optional[str] = typer.Option(None, help="File name without extension (default: the project name)"),
+           audio: Optional[bool] = typer.Option(None, "--audio/--no-audio", help="Include sound"),
            open_: bool = typer.Option(False, "--open")):
-    """Render the final high-quality MP4."""
-    from .render.runner import render
+    """Render the final video. Unset options reuse this project's last export settings; never overwrites a file."""
+    from .render import export as ex
 
     d = pdir()
     p = load(d)
-    dest = Path(out).expanduser().resolve() if out else d / "exports" / f"{p.name}.mp4"
-    res = render(p, d, dest, scale, "export", progress=not STATE["json"])
+    st = ex.load_settings(d).model_dump()
+    if out:
+        target = Path(out).expanduser().resolve()
+        st["folder"], st["filename"] = str(target.parent), target.stem
+        by_ext = {".gif": "gif", ".mov": "prores", ".webm": "webm"}
+        if not fmt and target.suffix.lower() in by_ext:
+            fmt = by_ext[target.suffix.lower()]
+        elif not fmt and target.suffix.lower() == ".mp4":
+            fmt = "mp4"
+    for k, v in dict(format=fmt, fps=fps, scale=scale, quality=quality, folder=folder, filename=name, audio=audio).items():
+        if v is not None:
+            st[k] = v
+    try:
+        settings = ex.ExportSettings.model_validate(st)
+    except ValueError as e:
+        raise VeditError(f"Bad export option: {e}") from None
+    ex.save_settings(d, settings)
+    bar = None if STATE["json"] else (lambda f, stage: sys.stderr.write(f"\r{stage}: {f * 100:5.1f}%"))
+    res = ex.run(p, d, settings, on_progress=bar)
+    if bar:
+        sys.stderr.write("\n")
     if open_:
-        media.open_file(dest)
-    emit(res, f"Exported {res['output']}  {res['width']}x{res['height']}  {res['duration']}s  (took {res['seconds']}s)")
+        media.open_file(Path(res["output"]))
+    emit(res, f"Exported {res['output']}  {res['width']}x{res['height']} {res['fps']}fps {res['label']}  "
+              f"{res['bytes'] / 1048576:.1f} MB  (took {res['seconds']}s)")
 
 
 @app.command("app")

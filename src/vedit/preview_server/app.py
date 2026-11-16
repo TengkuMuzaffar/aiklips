@@ -484,6 +484,104 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
             Path(tmp.name).unlink(missing_ok=True)
             raise bad(e)
 
+    # ---- exports: settings dialog, background job with progress, cancel, reveal --------------------
+    EXPORTS: dict[str, dict] = {}
+
+    @app.get("/api/exports/options")
+    def api_export_options() -> dict:
+        from ..render import export as ex
+
+        d = host.need()
+        run = next((j for j in EXPORTS.values() if j["status"] == "running"), None)
+        return ex.options(load(d), d) | {"running": {"id": run["id"], "status": "running", "progress": run["progress"],
+                                                     "stage": run["stage"]} if run else None}
+
+    @app.post("/api/exports/preview")
+    def api_export_preview(body: dict) -> dict:
+        """What these settings would produce (size, fps, file name) without exporting."""
+        from ..render import export as ex
+
+        d = host.need()
+        try:
+            return ex.describe(load(d), d, ex.ExportSettings.model_validate(body or {}))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/exports")
+    def api_export_start(body: dict) -> dict:
+        from ..render import export as ex
+
+        d = host.need()
+        try:
+            st = ex.ExportSettings.model_validate(body or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if any(j["status"] == "running" for j in EXPORTS.values()):
+            raise HTTPException(409, "An export is already running")
+        ex.save_settings(d, st)
+        eid = f"e{int(time.time() * 1000)}"
+        job = {"id": eid, "status": "running", "progress": 0.0, "stage": "Starting", "started": time.time(), "result": None,
+               "error": None, "stop": False, "format": st.format}
+        EXPORTS[eid] = job
+
+        def work():
+            from ..jobs import render_lock
+
+            try:
+                with render_lock:
+                    job["result"] = ex.run(load(d), d, st, on_progress=lambda f, stage: job.update(progress=round(f, 4), stage=stage),
+                                           should_stop=lambda: job["stop"])
+                job["status"] = "done"
+            except media.Cancelled:
+                job["status"] = "cancelled"
+            except VeditError as e:
+                job.update(status="failed", error=str(e))
+            except Exception as e:  # noqa: BLE001 - surface anything to the dialog
+                job.update(status="failed", error=f"{type(e).__name__}: {e}")
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"id": eid}
+
+    @app.get("/api/exports/{eid}")
+    def api_export_status(eid: str) -> dict:
+        job = EXPORTS.get(eid)
+        if not job:
+            raise HTTPException(404, "No such export")
+        el = time.time() - job["started"]
+        eta = (el / job["progress"] - el) if 0.03 < job["progress"] < 1 else None
+        return {k: v for k, v in job.items() if k != "stop"} | {"elapsed": round(el, 1), "eta": None if eta is None else round(eta, 1)}
+
+    @app.post("/api/exports/{eid}/cancel")
+    def api_export_cancel(eid: str) -> dict:
+        job = EXPORTS.get(eid)
+        if not job:
+            raise HTTPException(404, "No such export")
+        job["stop"] = True
+        return {"ok": True}
+
+    @app.post("/api/exports/pick-folder")
+    async def api_pick_folder(body: dict | None = None) -> dict:
+        from ..render import export as ex
+
+        folder = await asyncio.to_thread(ex.pick_folder, (body or {}).get("start"))
+        return {"folder": folder}
+
+    @app.post("/api/exports/reveal")
+    def api_reveal(body: dict) -> dict:
+        from ..render import export as ex
+
+        path = Path(str((body or {}).get("path") or "")).expanduser()
+        made = {Path(j["result"]["output"]) for j in EXPORTS.values() if j.get("result")}
+        if path not in made:  # only files this server exported: never open arbitrary paths
+            raise HTTPException(403, "Only exported files can be opened from here")
+        if not path.exists():
+            raise HTTPException(404, "File not found")
+        if body.get("open"):
+            media.open_file(path)
+        else:
+            ex.reveal(path)
+        return {"ok": True}
+
     @app.post("/api/export")
     def api_export() -> dict:
         from ..render.runner import render

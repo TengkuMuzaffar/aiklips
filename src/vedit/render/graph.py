@@ -196,7 +196,10 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
     return cur
 
 
-def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None) -> tuple[list[str], float]:
+def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None,
+          encode: list[str] | None = None, audio: bool = True) -> tuple[list[str], float]:
+    """`encode` replaces the default H.264 encoder arguments (codec, quality, pixel format, container flags) for exports
+    in other formats; `audio=False` writes a silent file (GIF)."""
     if not project.clips:
         raise VeditError("Timeline is empty. Import a video first: `vedit import <file>`")
     log = log or (lambda msg: None)
@@ -325,7 +328,9 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         g.add(f"{ins}amix=inputs={len(music_labels) + 1}:duration=first:normalize=0:dropout_transition=0,atrim=duration={_f(total)}[amix]")
     else:
         g.add(f"[{acur}]anull[amix]")
-    if canvas.loudness is not None:  # one consistent level on every phone, and no clipping
+    if not audio:  # silent export (GIF, or sound switched off): the audio chain must still end somewhere
+        g.add("[amix]anullsink")
+    elif canvas.loudness is not None:  # one consistent level on every phone, and no clipping
         g.add(f"[amix]loudnorm=I={_f(canvas.loudness)}:TP=-1.5:LRA=11,aresample=48000,atrim=duration={_f(total)}[aout]")
     else:
         g.add("[amix]anull[aout]")
@@ -345,8 +350,10 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     cmd = [media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-nostdin"]
     for a in g.inputs:
         cmd += a
-    cmd += graph_flag + ["-map", "[vout]", "-map", "[aout]", *enc, "-pix_fmt", "yuv420p", "-r", _f(fps),
-                         "-movflags", "+faststart", "-t", _f(total), str(out_path)]
+    if encode is None:
+        encode = [*enc, "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    maps = ["-map", "[vout]"] + (["-map", "[aout]"] if audio else ["-an"])
+    cmd += graph_flag + [*maps, *encode, "-r", _f(fps), "-t", _f(total), str(out_path)]
     return cmd, total
 
 
