@@ -1,4 +1,4 @@
-"""Render overlay layers (text / image / captions) to transparent video files.
+"""Render overlay layers (text / image / captions / video / shape) to transparent video files.
 
 Each layer becomes a full-canvas RGBA video (PNG-in-MOV) for its own duration,
 cached by a hash of everything that affects its pixels.
@@ -16,10 +16,11 @@ from PIL import Image
 from .. import media
 from ..ops.animate import props_at
 from ..ops.animate import ease
+from ..ops.overlay_style import render_shape, style_frame, video_width
 from ..ops.text import find_font, render_image, render_text
 from ..project import Layer, Project, VeditError, resolve_media, state_dir
 
-RENDER_VERSION = "3"
+RENDER_VERSION = "4"
 
 
 def even(v: float) -> int:
@@ -32,10 +33,15 @@ def layer_span(layer: Layer, total: float) -> tuple[float, float]:
 
 
 def _cache_key(project: Project, pdir: Path, layer: Layer, scale: float) -> str:
-    extra = {"font": find_font(layer.style.font) if layer.type != "image" else None, "v": RENDER_VERSION, "scale": scale}
+    extra = {"font": find_font(layer.style.font) if layer.type in ("text", "captions") else None, "v": RENDER_VERSION,
+             "scale": scale, "fps": project.canvas.fps}
+    media_path = None
     if layer.type == "image" and layer.image:
-        p = resolve_media(pdir, layer.image)
-        extra["mtime"] = p.stat().st_mtime if p.exists() else 0
+        media_path = resolve_media(pdir, layer.image)
+    elif layer.type == "video" and layer.source in project.sources:
+        media_path = resolve_media(pdir, project.sources[layer.source].path)
+    if media_path is not None:
+        extra["mtime"] = media_path.stat().st_mtime if media_path.exists() else 0
     total = project.duration
     blob = json.dumps(
         [layer.model_dump(mode="json", by_alias=True), project.canvas.model_dump(mode="json"), layer_span(layer, total), extra],
@@ -59,22 +65,79 @@ def _caption_groups(layer: Layer) -> list[list[int]]:
     return groups
 
 
+def video_size(project: Project, layer: Layer, scale: float) -> tuple[int, int]:
+    """Pixel size of a video layer's frames at this render scale (before a circle cut-out squares them)."""
+    src = project.sources[layer.source]  # type: ignore[index]
+    w = even(video_width(layer, project.canvas) * scale)
+    aspect = (src.height or 1080) / (src.width or 1920)
+    if layer.mask == "circle" and aspect < 1:  # the circle's diameter is the width: scale the short side to it
+        return even(w / aspect), w
+    return w, even(w * aspect)
+
+
+class _VideoFrames:
+    """Frames of a video layer, decoded in order at their on-canvas size (FFmpeg -> raw RGB pipe)."""
+
+    def __init__(self, project: Project, pdir: Path, layer: Layer, scale: float, dur: float):
+        src = project.sources[layer.source]  # type: ignore[index]
+        self.w, self.h = video_size(project, layer, scale)
+        self.layer, self.scale = layer, scale
+        fps = project.canvas.fps
+        self.proc = subprocess.Popen(
+            [media.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", *(["-stream_loop", "-1"] if layer.loop else []),
+             "-ss", f"{layer.src_in:.3f}", "-t", f"{dur + 1 / fps:.3f}", "-i", str(resolve_media(pdir, src.path)),
+             "-vf", f"fps={fps},scale={self.w}:{self.h}:flags=bicubic,setsar=1", "-an",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        self.done = False
+
+    def next(self) -> Image.Image | None:
+        if self.done:
+            return None
+        n = self.w * self.h * 3
+        buf = self.proc.stdout.read(n) if self.proc.stdout else b""  # type: ignore[union-attr]
+        if len(buf) < n:  # the source ended (and doesn't loop): nothing more to show
+            self.close()
+            return None
+        return style_frame(Image.frombytes("RGB", (self.w, self.h), buf), self.layer, self.scale)
+
+    def close(self) -> None:
+        if not self.done:
+            self.done = True
+            if self.proc.stdout:
+                self.proc.stdout.close()
+            self.proc.kill()
+            self.proc.wait()
+
+
 class _SpriteSource:
-    def __init__(self, project: Project, pdir: Path, layer: Layer, scale: float):
+    def __init__(self, project: Project, pdir: Path, layer: Layer, scale: float, dur: float = 0.0):
         self.layer, self.scale = layer, scale
         self.cache: dict = {}
+        self.video: _VideoFrames | None = None
         if layer.type == "image":
             if not layer.image:
                 raise VeditError(f"Image layer {layer.id} has no image")
-            self.image = render_image(resolve_media(pdir, layer.image), layer.width, scale)
+            self.image = style_frame(render_image(resolve_media(pdir, layer.image), layer.width, scale), layer, scale)
+        if layer.type == "shape":
+            self.image = render_shape(layer, scale)
+        if layer.type == "video":
+            self.video = _VideoFrames(project, pdir, layer, scale, dur)
         if layer.type == "captions":
             self.groups = _caption_groups(layer)
 
+    def close(self) -> None:
+        if self.video:
+            self.video.close()
+
     def get(self, t_abs: float, reveal: float) -> tuple[Image.Image | None, float]:
-        """Sprite for this moment + an extra scale multiplier."""
+        """Sprite for this moment + an extra scale multiplier. Video layers: call once per frame, in order."""
         L = self.layer
-        if L.type == "image":
+        if L.type in ("image", "shape"):
             return self.image, 1.0
+        if L.type == "video":
+            return self.video.next(), 1.0  # type: ignore[union-attr]
         if L.type == "text":
             text = L.text or ""
             total = sum(len(w) for w in text.split())
@@ -117,7 +180,7 @@ def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0)
     W, H = even(canvas.width * scale), even(canvas.height * scale)
     fps = canvas.fps
     n = max(1, round(dur * fps))
-    sprites = _SpriteSource(project, pdir, layer, scale)
+    sprites = _SpriteSource(project, pdir, layer, scale, dur)
     tmp = out.with_suffix(".tmp.mov")
     proc = subprocess.Popen(
         [
@@ -160,6 +223,8 @@ def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0)
         proc.stdin.close()
     except BrokenPipeError:
         pass
+    finally:
+        sprites.close()
     err = proc.stderr.read().decode() if proc.stderr else ""
     if proc.wait() != 0:
         tmp.unlink(missing_ok=True)

@@ -353,7 +353,9 @@ def track(pdir: Path, project: Project, clip_source: str, params: dict, log: Cal
     cache = cache_dir(pdir) / f"objtrack-{key}.json"
     if cache.exists():
         return json.loads(cache.read_text())
+    from .effects import need_compute
 
+    need_compute("object tracking")
     boxes = np.tile(np.array(box, np.float64), (n_frames, 1))
     if params.get("track", True):
         pw, ph = proc_size(w, h, TRACK_SIDE)

@@ -6,6 +6,7 @@ so later cuts, splits and speed changes never trigger a recompute.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import subprocess
@@ -112,6 +113,20 @@ def _key(src_path: Path, eff: Effect, extra: str = "") -> str:
     return hashlib.sha1(blob.encode()).hexdigest()[:16]
 
 
+# While set, effects never start a slow one-time computation (masks, tracking, face AR): a missing artifact raises
+# NotReady instead. The editor's instant preview frame uses it; the background render computes them.
+CACHED_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("vedit_cached_only", default=False)
+
+
+class NotReady(VeditError):
+    """An effect's one-time computation hasn't run yet (only raised while CACHED_ONLY is set)."""
+
+
+def need_compute(what: str) -> None:
+    if CACHED_ONLY.get():
+        raise NotReady(f"{what} is still being computed")
+
+
 def cache_dir(pdir: Path) -> Path:
     d = state_dir(pdir) / "cache" / "effects"
     d.mkdir(parents=True, exist_ok=True)
@@ -127,6 +142,7 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
     if eff.type in ("bg", "face_blur"):
         out = cdir / f"{eff.type}-{key}.mp4"
         if not out.exists():
+            need_compute(eff.type)
             if eff.type == "bg":
                 from . import bg_remove
 
@@ -146,11 +162,13 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
         if eff.type == "mask" and eff.params.get("style") == "remove":  # rebuilt background, as an overlay
             out = cdir / f"remove-{_key(path, eff, track.REMOVE_VERSION)}.mov"
             if not out.exists():
+                need_compute("mask")
                 track.render_remove(pdir, project, source_id, eff, out, log)
             return {"overlay": out}
         if mode in ("mask", "spotlight", "both"):
             out = cdir / (f"mask-{_key(path, eff, track.MASK_VERSION)}.mp4" if eff.type == "mask" else f"{eff.type}-{key}.mp4")
             if not out.exists():
+                need_compute(eff.type)
                 log(f"Computing {eff.type} for {source_id} (one-time)...")
                 track.render_mask(pdir, project, source_id, eff, out, log)
             art["mask"] = out
@@ -162,6 +180,7 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
 
         out = cdir / f"{eff.type}-{key}.mov"
         if not out.exists():
+            need_compute(eff.type)
             log(f"Rendering {eff.type} for {source_id} (one-time)...")
             face_ar.render_effect(pdir, path, src, eff, out, log)
         return {"overlay": out}

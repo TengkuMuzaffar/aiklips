@@ -49,7 +49,8 @@ class Source(_Model):
 class Effect(_Model):
     """A per-clip effect computed on the clip's source (cached in .vedit/cache)."""
 
-    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur", "mask", "focus"]
+    # "fx" = a filter from ops/fx_filters.py (blur, vignette, grain...): params {"id", "key", "on", settings...}
+    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur", "mask", "focus", "fx"]
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -200,11 +201,16 @@ class Word(_Model):
     end: float
 
 
+BLEND_MODES = ("normal", "screen", "multiply", "overlay", "add", "lighten", "darken")
+SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
+
+
 class Layer(_Model):
-    """An overlay drawn on top of the timeline: text, image or captions."""
+    """An overlay drawn on top of the timeline: text, image, captions, video (picture-in-picture, b-roll, light leaks)
+    or a shape. The list order of project.layers is the stacking order (later = on top)."""
 
     id: str
-    type: Literal["text", "image", "captions"]
+    type: Literal["text", "image", "captions", "video", "shape"]
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -221,6 +227,24 @@ class Layer(_Model):
     words: list[Word] = Field(default_factory=list)
     words_per_group: int = 3
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
+    # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
+    blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"
+    # video layers: a project source played from src_in for the layer's duration
+    source: str | None = None
+    src_in: float = 0.0
+    loop: bool = False  # repeat the clip when the layer is longer than it
+    volume: float = 0.0  # overlay sound (0 = muted, the usual for b-roll / textures)
+    # frame of image / video / shape layers (canvas px): rounded corners, an inside border, circle cut-out, green screen
+    radius: int = 0
+    border_width: int = 0
+    border_color: str = "#FFFFFF"
+    mask: Literal["rect", "circle"] = "rect"
+    chroma: str | None = None  # key colour made transparent, e.g. "#00FF00"
+    chroma_similarity: float = 0.25
+    # shape layers
+    shape: Literal["rect", "ellipse", "line", "arrow"] = "rect"
+    height: int | None = None  # shape height in canvas px (line / arrow: thickness)
+    fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
 
 
 class MusicTrack(_Model):
@@ -353,6 +377,15 @@ def validate(project: Project) -> None:
     for m in project.music:
         if m.source not in project.sources:
             raise VeditError(f"Music {m.id} references unknown source '{m.source}'")
+    for layer in project.layers:
+        if layer.type == "video":
+            if not layer.source or layer.source not in project.sources:
+                raise VeditError(f"Video layer {layer.id} references unknown source '{layer.source}'")
+            src = project.sources[layer.source]
+            if not src.has_video:
+                raise VeditError(f"Video layer {layer.id}: source {layer.source} has no picture")
+            if not (0 <= layer.src_in < src.duration):
+                raise VeditError(f"Video layer {layer.id} starts at {layer.src_in:.2f}s, outside its source (0-{src.duration:.2f}s)")
 
 
 def state_dir(pdir: Path) -> Path:

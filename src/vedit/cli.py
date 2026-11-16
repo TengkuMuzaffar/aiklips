@@ -37,11 +37,16 @@ mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
 sound_app = typer.Typer(help="Footage sound vs music: what each clip's audio is (speech / background / silent), and sensible defaults")
-fx_app = typer.Typer(help="Signature moves: punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, zoom-out reveal")
+fx_app = typer.Typer(help="Signature moves (punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, "
+                          "zoom-out reveal) and clip filters (blur, sharpen, glow, vignette, grain, RGB split, film, VHS, shake...)")
+overlay_app = typer.Typer(help="Video overlays (picture-in-picture, b-roll on top, green screen) and the overlay library "
+                               "(light leaks, dust, grain, bokeh, VHS lines, frame, stickers)")
+shape_app = typer.Typer(help="Shapes: boxes, circles, lines, arrows (callouts, lower-third backgrounds)")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app)]:
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
+                  ("overlay", overlay_app), ("shape", shape_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -162,7 +167,7 @@ def info():
         clips.append({
             "id": c.id, "source": c.source, "timeline": [round(s, 3), round(s + c.duration, 3)],
             "source_range": [c.in_, c.out], "speed": c.speed, "fit": c.fit, "zoom": c.zoom, "zoom_to": c.zoom_to,
-            "effects": [e.type for e in c.effects],
+            "effects": [f"{e.params.get('key')} ({e.params.get('id')})" if e.type == "fx" else e.type for e in c.effects],
             **({"transition_in": c.transition.model_dump()} if c.transition else {}),
         })
     layers = [{"id": l.id, "type": l.type, "start": l.start, "end": l.end, "text": l.text or (" ".join(w.text for w in l.words[:8]) if l.words else l.image),
@@ -560,6 +565,130 @@ def image_add(
                       width=width, presets=_presets(preset))
         p.layers.append(layer)
     emit({"layer": layer.id}, f"Added image layer {layer.id}")
+
+
+def _frame_opts(blend, radius, border, border_color, circle, chroma, similarity) -> dict:
+    out: dict[str, Any] = {}
+    for k, v in (("blend", blend), ("radius", radius), ("border_width", border), ("border_color", border_color),
+                 ("chroma", chroma), ("chroma_similarity", similarity)):
+        if v is not None:
+            out[k] = v
+    if circle is not None:
+        out["mask"] = "circle" if circle else "rect"
+    return out
+
+
+@overlay_app.command("library")
+def overlay_library():
+    """The built-in overlays (made on first use, then cached)."""
+    from .ops import overlays
+
+    rows = overlays.catalog()
+    emit({"library": rows}, "\n".join(f"  {r['key']:<16} {r['kind']:<6} {r['blend']:<8} {r['about']}" for r in rows))
+
+
+@overlay_app.command("add")
+def overlay_add(
+    what: str = typer.Argument(..., help="A video file, an imported source id (s2), or a library key (see `overlay library`)"),
+    start: float = 0.0, end: Optional[float] = None,
+    x: Optional[str] = None, y: Optional[str] = None, width: Optional[int] = typer.Option(None, help="Width in canvas px"),
+    src_in: float = typer.Option(0.0, help="Start this many seconds into the overlay video"),
+    volume: Optional[float] = typer.Option(None, help="Overlay sound 0..2 (default: muted)"),
+    loop: bool = typer.Option(False, help="Repeat the video if the layer is longer"),
+    blend: Optional[str] = typer.Option(None, help="normal|screen|multiply|overlay|add|lighten|darken"),
+    radius: Optional[int] = None, border: Optional[int] = typer.Option(None, help="Border width px"),
+    border_color: Optional[str] = None, circle: Optional[bool] = typer.Option(None, "--circle/--rect", help="Circle cut-out"),
+    chroma: Optional[str] = typer.Option(None, help="Key colour to remove (green screen), e.g. #00FF00"),
+    similarity: Optional[float] = typer.Option(None, help="Green-screen tolerance 0.01..0.9 (default 0.25)"),
+    preset: Optional[list[str]] = typer.Option(None),
+):
+    """Put a video (or a library overlay) on top of the edit."""
+    from .ops import overlays
+
+    d = pdir()
+    with edit(f"overlay add {Path(what).name}") as tx:
+        p = tx.project
+        if what in overlays.LIBRARY:
+            layer = overlays.add_from_library(p, d, what, start)
+        else:
+            if what in p.sources:
+                sid = what
+            else:
+                path = Path(what).expanduser().resolve()
+                if not path.exists():
+                    raise VeditError(f"Not a file, source id or library overlay: {what}. Library: {', '.join(overlays.LIBRARY)}")
+                sid = overlays.add_source(p, d, path)
+            kw: dict[str, Any] = {"src_in": src_in, "loop": loop}
+            for k, v in (("x", x), ("y", y), ("width", width), ("volume", volume)):
+                if v is not None:
+                    kw[k] = v
+            layer = overlays.add_video(p, sid, start, end, **kw)
+        if end is not None:
+            layer.end = end
+        for k, v in (("x", x), ("y", y), ("width", width)):
+            if v is not None:
+                setattr(layer, k, v)
+        overlays.set_fields(layer, _frame_opts(blend, radius, border, border_color, circle, chroma, similarity))
+        if preset:
+            layer.presets = _presets(preset)
+    emit({"layer": layer.id, "type": layer.type}, f"Added {layer.type} overlay {layer.id}")
+
+
+@shape_app.command("add")
+def shape_add(
+    shape: str = typer.Argument(..., help="rect | ellipse | line | arrow"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    width: Optional[int] = None, height: Optional[int] = None, fill: Optional[str] = typer.Option(None, help="Fill colour, or 'none'"),
+    border: Optional[int] = None, border_color: Optional[str] = None, radius: Optional[int] = None,
+    rotation: float = 0.0, blend: Optional[str] = None, preset: Optional[list[str]] = typer.Option(None),
+):
+    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it)."""
+    from .ops import overlays
+
+    with edit(f"shape add {shape}") as tx:
+        kw: dict[str, Any] = {"x": x, "y": y, "rotation": rotation}
+        for k, v in (("width", width), ("height", height), ("radius", radius), ("border_width", border), ("border_color", border_color)):
+            if v is not None:
+                kw[k] = v
+        layer = overlays.add_shape(tx.project, shape, start, end, **kw)
+        vals = {} if fill is None else {"fill": fill}
+        if blend:
+            vals["blend"] = blend
+        overlays.set_fields(layer, vals)
+        layer.presets = _presets(preset)
+    emit({"layer": layer.id}, f"Added {shape} {layer.id}")
+
+
+@layer_app.command("order")
+def layer_order(layer_id: str, to: str = typer.Argument(..., help="up | down | front | back | index (0 = bottom)")):
+    """Change which overlay is on top."""
+    from .ops import overlays
+
+    with edit(f"layer order {layer_id} {to}") as tx:
+        i = overlays.move_layer(tx.project, layer_id, to)
+        order = [l.id for l in tx.project.layers]
+    emit({"layer": layer_id, "index": i, "order": order}, f"{layer_id} is now #{i} (bottom to top: {', '.join(order)})")
+
+
+@layer_app.command("style")
+def layer_style(
+    layer_id: str, blend: Optional[str] = None, radius: Optional[int] = None,
+    border: Optional[int] = typer.Option(None, help="Border width px"), border_color: Optional[str] = None,
+    circle: Optional[bool] = typer.Option(None, "--circle/--rect"), chroma: Optional[str] = typer.Option(None, help="Key colour, or 'none'"),
+    similarity: Optional[float] = None, volume: Optional[float] = None, loop: Optional[bool] = typer.Option(None, "--loop/--no-loop"),
+    src_in: Optional[float] = None, fill: Optional[str] = None, height: Optional[int] = None,
+):
+    """Blend mode and frame of an overlay: rounded corners, border, circle, green screen; video sound / loop; shape fill."""
+    from .ops import overlays
+
+    vals = _frame_opts(blend, radius, border, border_color, circle, chroma, similarity)
+    for k, v in (("volume", volume), ("loop", loop), ("src_in", src_in), ("fill", fill), ("height", height)):
+        if v is not None:
+            vals[k] = v
+    with edit(f"layer style {layer_id}") as tx:
+        layer = tx.project.layer(layer_id)
+        changed = overlays.set_fields(layer, vals)
+    emit({"layer": layer_id, "changed": changed}, f"{layer_id}: " + (", ".join(changed) or "nothing changed"))
 
 
 @layer_app.command("list")
@@ -997,6 +1126,94 @@ def fx_apply(name: str, clip: Optional[str] = typer.Option(None, help="Clip the 
     with edit(f"move {name}") as tx:
         msg = moves.apply(tx.project, name, clip=clip, at=at, text=text)
     emit({"move": name, "done": msg}, msg)
+
+
+def _kv(pairs: list[str] | None) -> dict:
+    out = {}
+    for p in pairs or []:
+        k, sep, v = p.partition("=")
+        if not sep:
+            raise VeditError(f"Use name=value, got '{p}'")
+        out[k.strip()] = v.strip()
+    return out
+
+
+@fx_app.command("filters")
+def fx_filters_list():
+    """The clip filter library (blur, vignette, grain, film, VHS, shake...) with their settings."""
+    from .ops import fx_filters
+
+    rows = fx_filters.catalog()
+    lines = []
+    for r in rows:
+        ps = ", ".join(f"{p['name']}={p['default']}" + (f" ({'|'.join(p['choices'])})" if p["choices"] else f" [{p['min']:g}..{p['max']:g}]")
+                       for p in r["params"])
+        lines.append(f"  {r['key']:<11} {r['category']:<15} {r['about']}" + (f"\n              {ps}" if ps else ""))
+    emit({"filters": rows}, "\n".join(lines))
+
+
+@fx_app.command("add")
+def fx_add(key: str, clip: Optional[str] = typer.Option(None, help="Clip id (default: every clip)"),
+           set_: Optional[list[str]] = typer.Option(None, "--set", help="Setting name=value (repeatable), e.g. --set amount=20")):
+    """Add a filter to a clip (or all clips). It stacks after the clip's other filters."""
+    from .ops import fx_filters
+
+    with edit(f"fx add {key}") as tx:
+        targets = [tx.project.clip(clip)] if clip else tx.project.clips
+        effs = [fx_filters.add(tx.project, c, key, _kv(set_)) for c in targets]
+    ids = [e.params["id"] for e in effs]
+    emit({"added": ids, "clips": [c.id for c in targets]}, f"{key} added: " + ", ".join(f"{i} on {c.id}" for i, c in zip(ids, targets)))
+
+
+@fx_app.command("set")
+def fx_set(fx_id: str, values: list[str] = typer.Argument(..., help="name=value pairs; on=false switches it off")):
+    """Change a filter's settings, e.g. `vedit fx set fx1 amount=30 on=true`."""
+    from .ops import fx_filters
+
+    with edit(f"fx set {fx_id}") as tx:
+        eff = fx_filters.set_params(tx.project, fx_id, _kv(values))
+    emit({"id": fx_id, "params": eff.params}, f"{fx_id}: {eff.params}")
+
+
+@fx_app.command("remove")
+def fx_remove(fx_id: str = typer.Argument(..., help="Filter id, or 'all'"),
+              clip: Optional[str] = typer.Option(None, help="With 'all': only this clip")):
+    """Remove a filter (or all filters)."""
+    from .ops import fx_filters
+
+    with edit(f"fx remove {fx_id}") as tx:
+        if fx_id == "all":
+            n = 0
+            for c in ([tx.project.clip(clip)] if clip else tx.project.clips):
+                before = len(c.effects)
+                c.effects = [e for e in c.effects if e.type != "fx"]
+                n += before - len(c.effects)
+        else:
+            fx_filters.remove(tx.project, fx_id)
+            n = 1
+    emit({"removed": n}, f"Removed {n} filter(s)")
+
+
+@fx_app.command("move")
+def fx_move(fx_id: str, index: int = typer.Argument(..., help="New position among the clip's filters (0 = first)")):
+    """Reorder a clip's filters (they run top to bottom)."""
+    from .ops import fx_filters
+
+    with edit(f"fx move {fx_id}") as tx:
+        fx_filters.move(tx.project, fx_id, index)
+    emit({"id": fx_id, "index": index}, f"{fx_id} -> position {index}")
+
+
+@fx_app.command("copy")
+def fx_copy(src: str = typer.Option(..., "--from", help="Clip whose filters to copy"),
+            to: Optional[list[str]] = typer.Option(None, help="Target clip (repeatable; default: all clips)")):
+    """Copy one clip's filters onto other clips (replacing their filters)."""
+    from .ops import fx_filters
+
+    with edit(f"fx copy {src}") as tx:
+        targets = [tx.project.clip(t) for t in to] if to else tx.project.clips
+        n = fx_filters.copy_to(tx.project, tx.project.clip(src), targets)
+    emit({"copied_to": n}, f"Copied {src}'s filters to {n} clip(s)")
 
 
 @sound_app.command("report")
