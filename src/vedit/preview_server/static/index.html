@@ -834,7 +834,7 @@ function renderRoot() {
       h("div", { class: "full hint" }, ST.project_dir)));
 
   const tip = h("p", { class: "hint", style: { marginTop: "14px" } }, "Select a clip, text or music block on the timeline to edit its properties here.");
-  return [project, renderPlanNotes(p), renderAudit(), tip];
+  return [project, renderPlanNotes(p), renderAudit(), tip].filter(Boolean);  // an empty section must not print "null"
 }
 
 function renderPlanNotes(p) {
