@@ -137,6 +137,14 @@ def mount(app: FastAPI, host, bad) -> None:
     async def add_uploads(files: list[UploadFile] = File(...)) -> dict:
         return await _save_uploads(files, lambda p, n: footage.add(p, n, move=True))
 
+    @app.post("/api/uploads/classify")
+    def classify_uploads(body: dict) -> dict:
+        """AI suggests, per upload, whether it is footage (pictures) or sound (audio only)."""
+        try:
+            return {"roles": footage.classify([str(u) for u in body.get("ids") or []], body.get("quality") or "balanced")}
+        except VeditError as e:
+            raise bad(e)
+
     @app.get("/api/uploads/{uid}/thumb.jpg")
     def upload_thumb(uid: str):
         try:

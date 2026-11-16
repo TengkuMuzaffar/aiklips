@@ -68,7 +68,7 @@ music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | m
 undo [--steps N] | redo | history | checkout <step>
 preview [--open] | frame --at T[,T2,...] | sheet | export [out.mp4] [--scale 1] | serve
 ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
-gen run --ref ID [--ref ID2] -f <footage/music/image>... [--count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
+gen run --ref ID [--ref ID2] -f <footage/music/image>... [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
 
 **References / Generate:**

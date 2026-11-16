@@ -1095,6 +1095,7 @@ def ref_remove(ref_id: int):
 def gen_run(
     ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
     footage: list[str] = typer.Option(..., "--footage", "-f", help="Your video / music / image file (repeatable)"),
+    sound: Optional[list[str]] = typer.Option(None, "--sound", "-s", help="Audio or video used ONLY for its sound (repeatable; the videos take turns)"),
     count: int = typer.Option(3, help="How many different videos (1-10)"),
     about: str = typer.Option("", help="What the video is about"),
     hook: str = typer.Option("", help="Hook line (empty: AI writes one per video)"),
@@ -1114,7 +1115,8 @@ def gen_run(
 
     jobs.AUTOSTART = False
     ups = [foot.add(Path(f))["id"] for f in footage]
-    spec = BatchSpec(refs=ref, lead=lead, footage=ups, count=count, axes=vary or list(AXES), quality=quality, review=review,
+    snd = [foot.add(Path(s))["id"] for s in sound or []]
+    spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review,
                      brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
     est = batch.estimate(spec)
     if not STATE["json"]:

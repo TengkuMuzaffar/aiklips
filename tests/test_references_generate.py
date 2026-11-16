@@ -67,6 +67,9 @@ def fake_ai(monkeypatch):
             ops.append({"op": "text", "text": hook, "start": 0, "end": 1.5})
             ops.append({"op": "transition", "type": "fade", "into": 1, "duration": 0.3})
             return {"title": hook, "ops": ops}
+        if task == "classify":
+            ids = re.findall(r"^(m\d+): '([^']*)'", prompt, re.M)
+            return {"files": [{"id": i, "role": "sound" if "sound" in n else "footage", "reason": "fake"} for i, n in ids]}
         if task == "critic":
             return {"ok": False, "issues": ["hook too low"], "fixes": [{"layer": "t1", "y": "20%"}]}
         raise AssertionError(task)
@@ -231,6 +234,49 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
     assert not vdir.exists()
 
 
+def test_video_used_only_for_its_sound(beat_ref, test_clip, fake_ai, tmp_path):
+    """The Sound step: a video's audio becomes the music track (beats measured), its pictures are never cut in."""
+    from vedit.generate import batch, footage
+    from vedit.generate.spec import BatchSpec
+    from vedit.project import load
+    from vedit.references import store
+
+    snd = tmp_path / "trending sound.mp4"
+    _ff("-i", str(beat_ref), "-vf", "hue=s=0", "-c:a", "copy", str(snd))  # different hash from the reference
+    r = store.add(beat_ref)
+    clip, sv = footage.add(test_clip)["id"], footage.add(snd)["id"]
+
+    roles = footage.classify([clip, sv])
+    assert roles[sv] == {"role": "sound", "reason": "fake", "by": "ai"} and roles[clip]["role"] == "footage"
+    n = fake_ai.count("classify")
+    footage.classify([clip, sv])
+    assert fake_ai.count("classify") == n  # cached per file
+
+    m = footage.sound_meta(sv)
+    assert m["kind"] == "audio" and m["from_video"] and m["bpm"] == pytest.approx(120, abs=2)
+    with pytest.raises(Exception):
+        batch.validate(BatchSpec(refs=[r["id"]], footage=[clip], sound=[sv] * 11))
+
+    # two sounds, three videos: they take turns (m1, m2, m1)
+    song2 = tmp_path / "song2.wav"
+    _ff("-f", "lavfi", "-i", "aevalsrc='0.8*sin(2*PI*440*t)*exp(-40*mod(t,0.6))':s=44100:d=12", str(song2))
+    s2 = footage.add(song2)["id"]
+    spec = BatchSpec(refs=[r["id"]], footage=[clip], sound=[sv, s2], count=3, review=False, axes=["hook"], brief={"length_s": 5})
+    b = batch.create(spec)
+    jobs.drain()
+    b = batch.get(b["id"])
+    assert b["status"] == "done", b
+    used = []
+    for v in b["variations"]:
+        p = load(Path(batch._var(v["id"])["dir"]))
+        assert len(p.music) == 1
+        music_src = p.sources[p.music[0].source]
+        assert not music_src.has_video
+        assert all(p.sources[c.source].path != music_src.path for c in p.clips)
+        used.append(Path(music_src.path).parent.name)
+    assert used == [sv, s2, sv]
+
+
 @needs_ffmpeg
 def test_home_api_references_uploads_and_batches(beat_ref, test_clip, fake_ai):
     from fastapi.testclient import TestClient
@@ -252,6 +298,8 @@ def test_home_api_references_uploads_and_batches(beat_ref, test_clip, fake_ai):
 
     with test_clip.open("rb") as f:
         up = c.post("/api/uploads", files=[("files", ("clip.mp4", f, "video/mp4"))]).json()["added"][0]
+    roles = c.post("/api/uploads/classify", json={"ids": [up["id"]]}).json()["roles"]
+    assert roles[up["id"]]["role"] == "footage"
     body = {"refs": [rid], "footage": [up["id"]], "count": 1, "review": False, "brief": {"length_s": 5}}
     assert c.post("/api/batches/estimate", json=body).json()["calls"] >= 2
     bad = c.post("/api/batches", json={**body, "footage": []})

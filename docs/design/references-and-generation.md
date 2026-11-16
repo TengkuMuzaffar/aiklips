@@ -55,20 +55,21 @@ The tabs sit in the existing `home.html` header. The `+ New project` button stay
 - Clicking a variation opens its preview, and **Open in editor** opens the normal 4-pane editor.
 - **Keep** and **Discard** on each variation. Kept or discarded is a signal we can feed back later (§10, P5).
 
-### 3.3 Generation wizard (5 steps)
+### 3.3 Generation wizard (6 steps)
 
 ```
-1 References ─► 2 Footage ─► 3 Brief ─► 4 Variations ─► 5 Review & generate
+1 References ─► 2 Footage ─► 3 Sound ─► 4 Brief ─► 5 Variations ─► 6 Review & generate
 ```
 
 1. **References.** A checkbox grid of `Ready` references. Ticking two or more shows the merged traits live ("Pacing: fast, from A + B"). There's an optional "lead reference" radio button to break ties.
-2. **Footage and assets.** Pick raw clips, product images, logo and music. Music comes only from the user's own files (see §9, copyright). This step is required, because generation needs material to work with.
-3. **Brief.** Goal (promo / tutorial / story), hook line or "let AI write it", CTA, target length, format (9:16 by default), and language.
-4. **Variations.**
+2. **Footage.** Raw clips, product images and a logo: the pictures that get cut in (videos keep their own audio). Required, because generation needs material to work with. Audio files dropped here go to Sound.
+3. **Sound (optional).** Up to 10 music tracks or sounds; each generated video uses one, and the videos take turns (`planner.assign_sounds` stores the file id as `axes.sound`, so regenerating keeps it). A sound is an audio file, or a video used *only for its audio* (e.g. a trending sound saved as a video; its pictures never appear). Beats are measured from it like any song. Each video with sound is sorted by `footage.classify()`: code measures the audio (tempo, silence) and the AI looks at a contact sheet and says `footage` or `sound` (cached per file in `meta.json`). The wizard moves a file the AI calls a sound into this step unless the user already chose; the user can always switch it back. Sound comes only from the user's own files (see §9, copyright). In `BatchSpec` these are `sound: [upload ids]` with file ids `m1…`.
+4. **Brief.** Goal (promo / tutorial / story), hook line or "let AI write it", CTA, target length, format (9:16 by default), and language.
+5. **Variations.**
    - Count: 1–10 (slider).
    - What may change between them (checkboxes, all on by default): hook, clip order, pacing, caption style, text animation, transitions, music section.
    - A live estimate of time and AI usage ("≈ 12 AI calls, ~6 min").
-5. **Review and generate.** A summary, then Generate. This creates a batch and goes straight to the Generate tab with live progress.
+6. **Review and generate.** A summary, then Generate. This creates a batch and goes straight to the Generate tab with live progress.
 
 ## 4. System architecture
 
@@ -305,6 +306,8 @@ DELETE /api/references/{id}
 GET    /api/references/{id}/sheet/{n}.jpg
 POST   /api/references/merge               {ids, lead} → merged DNA (wizard live preview, no LLM)
 
+POST   /api/uploads                        footage / sound files → measured upload metas
+POST   /api/uploads/classify               {ids} → {id: {role: footage|sound, reason, by: ai|rule}}
 POST   /api/batches/estimate               wizard payload → {calls, minutes}
 POST   /api/batches                        wizard payload → batch id
 GET    /api/batches  /  GET /api/batches/{id}

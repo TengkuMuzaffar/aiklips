@@ -6,6 +6,10 @@ Files: ~/.claude-cut/uploads/<id>/   (id = first 16 hex chars of the content has
     index.json   video segments (cuts, long takes split into ≤3.5 s pieces)
     notes.json   AI descriptions per segment (cached, so a file is only described once)
     sheet.jpg    one labelled frame per segment
+
+Each upload is used in a batch either as FOOTAGE (pictures; a video keeps its own audio) or as
+SOUND (only its audio, e.g. a trending sound saved as a video). classify() suggests the role:
+code measures the audio, the AI looks at a contact sheet and judges.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from ..ai import prompts
 from ..project import VeditError
 from ..references import analysis
 from ..references.store import file_hash
-from .spec import FootageNotes
+from .spec import FootageNotes, MediaRoles
 
 VIDEO = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 AUDIO = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
@@ -182,9 +186,14 @@ def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: 
     return usage
 
 
-def shot_log(files: list[tuple[str, str]]) -> dict:
-    """What the planner sees: {fid: {name, kind, duration, segments:[{id, from, to, description, quality}]}}."""
+def shot_log(files: list[tuple[str, str]], sound: list[tuple[str, str]] = ()) -> dict:
+    """What the planner sees: {fid: {name, kind, duration, segments:[{id, from, to, description, quality}]}}.
+    `sound` files appear as kind 'audio' whatever they are on disk."""
     out = {}
+    for fid, uid in sound:
+        meta = sound_meta(uid)
+        out[fid] = {"name": meta["name"], "kind": "audio", "duration": meta.get("duration"), "bpm": meta.get("bpm"),
+                    "beats": len(meta.get("beats") or []), **({"taken_from": "video"} if meta["from_video"] else {})}
     for fid, uid in files:
         meta = meta_full(uid)
         entry = {"name": meta["name"], "kind": meta["kind"], "duration": meta.get("duration")}
@@ -200,4 +209,80 @@ def shot_log(files: list[tuple[str, str]]) -> dict:
         else:
             entry["size"] = f"{meta.get('width')}x{meta.get('height')}"
         out[fid] = entry
+    return out
+
+
+# ---- sound -------------------------------------------------------------------------------------
+
+def _audio_stats(uid: str) -> dict:
+    """Beats / tempo / loudness of the file's audio, measured once and cached in meta.json."""
+    d = _dir(uid)
+    meta = meta_full(uid)
+    if "beats" not in meta and meta["kind"] == "video" and meta.get("has_audio"):
+        a = analysis.analyze_audio(Path(meta["path"]), min(float(meta["duration"]), 600)) or {}
+        meta.update(bpm=a.get("bpm"), beats=a.get("beats", []), rms=a.get("rms", []),
+                    silence_ratio=a.get("silence_ratio"), level_db=a.get("level_db"))
+        (d / "meta.json").write_text(json.dumps(meta))
+    return meta
+
+
+def sound_meta(uid: str) -> dict:
+    """The upload seen as a sound track: kind 'audio' (even for a video), with beats for timing."""
+    meta = meta_full(uid)
+    if meta["kind"] == "image":
+        raise VeditError(f"{meta['name']} is an image and has no sound")
+    if meta["kind"] == "video" and not meta.get("has_audio"):
+        raise VeditError(f"{meta['name']} has no sound to use")
+    meta = _audio_stats(uid)
+    return {**meta, "kind": "audio", "from_video": meta["kind"] == "video"}
+
+
+def _role_sheet(uid: str) -> Path:
+    meta = meta_full(uid)
+    dest = _dir(uid) / "roles.jpg"
+    if not dest.exists():
+        media.contact_sheet(Path(meta["path"]), float(meta["duration"]), dest, count=8, cols=4, width=200)
+    return dest
+
+
+def classify(uids: list[str], quality: str = "balanced") -> dict[str, dict]:
+    """{upload id: {role: footage|sound, reason, by: ai|rule}}. The AI is asked only about videos with
+    sound (the only real question); its answer is cached per file, so each file costs one look at most."""
+    out: dict[str, dict] = {}
+    ask: list[str] = []
+    for uid in dict.fromkeys(uids):
+        meta = meta_full(uid)
+        if meta.get("role_hint"):
+            out[uid] = meta["role_hint"]
+        elif meta["kind"] == "image":
+            out[uid] = {"role": "footage", "reason": "image", "by": "rule"}
+        elif meta["kind"] == "audio":
+            out[uid] = {"role": "sound", "reason": "audio file", "by": "rule"}
+        elif not meta.get("has_audio"):
+            out[uid] = {"role": "footage", "reason": "video without sound", "by": "rule"}
+        else:
+            ask.append(uid)
+    for i in range(0, len(ask), ai.MAX_IMAGES):
+        chunk = ask[i: i + ai.MAX_IMAGES]
+        rows = []
+        for n, uid in enumerate(chunk):
+            m = _audio_stats(uid)
+            rows.append(f"m{n + 1}: {m['name']!r}, {float(m['duration']):.1f}s, cuts: {len(segments(uid))} segments, "
+                        f"audio: bpm={m.get('bpm')}, beats={len(m.get('beats') or [])}, silence_ratio={m.get('silence_ratio')}, "
+                        f"level_db={m.get('level_db')}")
+        try:
+            res, _ = ai.call("classify", "Files (contact sheet i belongs to file mi):\n" + "\n".join(rows), MediaRoles,
+                             system=prompts.CLASSIFY, images=[_role_sheet(u) for u in chunk], quality=quality)
+            by_id = {r.id.strip(): r for r in res.files}
+        except ai.AIError:
+            by_id = {}
+        for n, uid in enumerate(chunk):
+            r = by_id.get(f"m{n + 1}")
+            if r is None:  # no AI answer: guess, but don't cache so the AI can look next time
+                out[uid] = {"role": "footage", "reason": "guess (AI unavailable)", "by": "rule"}
+                continue
+            out[uid] = {"role": r.role, "reason": r.reason[:140], "by": "ai"}
+            meta = meta_full(uid)
+            meta["role_hint"] = out[uid]
+            (_dir(uid) / "meta.json").write_text(json.dumps(meta))
     return out

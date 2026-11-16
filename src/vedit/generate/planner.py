@@ -46,6 +46,16 @@ def assign_axes(count: int, enabled: list[str], seed: str) -> list[dict[str, str
     return out
 
 
+def assign_sounds(axes: list[dict[str, str]], log: dict) -> None:
+    """With several sounds, the variations take turns: video 1 gets the first, video 2 the second, ...
+    Stored on each variation's axes as 'sound' (a file id), so a regenerate keeps its sound."""
+    sounds = [fid for fid, f in log.items() if f["kind"] == "audio"]
+    sounds.sort(key=lambda fid: (not fid.startswith("m"), fid))  # Sound-step files first, then legacy music in footage
+    for i, a in enumerate(axes):
+        if sounds:
+            a["sound"] = sounds[i % len(sounds)]
+
+
 def _style_brief(dna: StyleDNA) -> dict:
     d = dna.model_dump(exclude={"confidence", "version"})
     return d
@@ -102,7 +112,8 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
         trans = {"default": "none", "accents": [], "frequency": "never"}
     else:
         trans = {"default": "none", "accents": list(dna.transitions.accents) or ["zoomin", "hblur"], "frequency": "rare"}
-    music = next((fid for fid, f in log.items() if f["kind"] == "audio"), None)
+    music = axes.get("sound") if log.get(axes.get("sound") or "", {}).get("kind") == "audio" else None
+    music = music or next((fid for fid, f in log.items() if f["kind"] == "audio"), None)
     talking = any(s.get("talking") for f in log.values() if f["kind"] == "video" for s in f["segments"])
     want_caps = captions_available and (dna.captions.present or talking) and any(f.get("has_audio") for f in log.values() if f["kind"] == "video")
     music_offset = 0.0
@@ -144,7 +155,7 @@ def plan_edit(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dict
         f"- About {d['clip_count']} clips of ~{d['avg_shot_s']}s each, total ≈ {d['length_s']}s. Order: {d['order']}\n"
         f"- Hook text '{c.hook_text}' from 0s to ~{d['hook_duration_s']}s; CTA text near the end if there is one.\n"
         + (f"- Images you may overlay: {', '.join(images)}\n" if images else "")
-        + ("- Add a music op with the given file and offset.\n" if d["music"] else "")
+        + (f"- Add a music op with file {d['music']['file']} and the given offset (other sound files belong to sibling videos).\n" if d["music"] else "")
         + ("- Add one captions op.\n" if d["captions"] else "- Do not add captions.\n")
         + (f"\nIt must look different from sibling variations: {'; '.join(avoid)}\n" if avoid else "")
     )
@@ -200,7 +211,7 @@ def fingerprint(plan: EditPlan, axes: dict) -> list:
     trans = sorted({o.type or "" for o in plan.ops if o.op == "transition"})
     music = next((round((o.offset or 0) / 5) for o in plan.ops if o.op == "music"), None)
     caps = next((o.type for o in plan.ops if o.op == "captions"), None)
-    return [axes.get("hook"), str(first), (text or "").lower().strip(), str(trans), music, caps, len(clips)]
+    return [axes.get("hook"), axes.get("sound"), str(first), (text or "").lower().strip(), str(trans), music, caps, len(clips)]
 
 
 def similarity(a: list, b: list) -> float:

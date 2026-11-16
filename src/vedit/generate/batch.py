@@ -125,6 +125,15 @@ def _files(spec: BatchSpec) -> list[tuple[str, str]]:
     return [(f"f{i + 1}", uid) for i, uid in enumerate(spec.footage)]
 
 
+def _sound(spec: BatchSpec) -> list[tuple[str, str]]:
+    """Files used only for their audio (fids m1, m2...): the wizard's Sound step."""
+    return [(f"m{i + 1}", uid) for i, uid in enumerate(spec.sound)]
+
+
+def _metas(spec: BatchSpec) -> dict[str, dict]:
+    return {**{fid: footage.meta_full(u) for fid, u in _files(spec)}, **{fid: footage.sound_meta(u) for fid, u in _sound(spec)}}
+
+
 # ---- create / estimate ---------------------------------------------------------------------
 
 def validate(spec: BatchSpec) -> None:
@@ -133,8 +142,10 @@ def validate(spec: BatchSpec) -> None:
     kinds = [footage.get(u)["kind"] for u in spec.footage]
     if "video" not in kinds:
         raise VeditError("Add at least one video clip of your own footage")
-    if kinds.count("audio") > 1:
-        raise VeditError("Pick at most one music track")
+    for u in spec.sound:
+        footage.sound_meta(u)  # raises for images / silent videos
+    if kinds.count("audio") + len(spec.sound) > 10:
+        raise VeditError("Pick at most 10 sounds / music tracks")
     unknown = [a for a in spec.axes if a not in AXES]
     if unknown:
         raise VeditError(f"Unknown variation axes: {', '.join(unknown)}")
@@ -201,9 +212,10 @@ def _prepare(job: jobs.Job) -> dict:
     job.check()
     u = footage.describe(files, spec.quality, lambda s: _set("batches", bid, progress=s))
     _add_usage(bid, "footage", u if u.get("calls") else None)
-    log = footage.shot_log(files)
+    log = footage.shot_log(files, _sound(spec))
     job.check()
     axes = planner.assign_axes(spec.count, spec.axes, seed=bid)
+    planner.assign_sounds(axes, log)
     _set("batches", bid, progress=f"AI is planning {spec.count} variation(s)")
     creatives, usage = planner.creative(spec, dna, log, axes)
     _add_usage(bid, "planner", usage)
@@ -236,8 +248,7 @@ def _context(v: dict) -> tuple[dict, BatchSpec, StyleDNA, list, dict, dict]:
     spec = BatchSpec.model_validate_json(b["spec"])
     dna = StyleDNA.model_validate_json(b["dna"]) if b["dna"] else refs.merged(spec.refs, spec.lead)
     files = _files(spec)
-    metas = {fid: footage.meta_full(u) for fid, u in files}
-    return b, spec, dna, files, footage.shot_log(files), metas
+    return b, spec, dna, files, footage.shot_log(files, _sound(spec)), _metas(spec)
 
 
 def run_variation(vid: str, job: jobs.Job | None = None) -> dict:

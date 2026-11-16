@@ -171,6 +171,8 @@ button.on-keep { border-color: var(--accent); color: var(--accent); }
 .file .fn { flex: 1; min-width: 0; }
 .file .fn b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
 .file .fn small { color: var(--muted); }
+.file .role { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 5px; background: #1d5a50; color: #c8f3ea; }
+.file .role.wait { background: var(--line2); color: var(--muted); }
 .dropzone { border: 2px dashed var(--line2); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); }
 .count { display: flex; align-items: center; gap: 16px; }
 .count input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -206,6 +208,7 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <button class="primary" id="b-gen-new" data-for="generate" title="Start the generation wizard">＋ New generation</button>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
+  <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
 </header>
 <main id="view-projects">
   <div class="top">
@@ -705,7 +708,7 @@ function renderBatches() {
   const list = $("#gen-list"); list.innerHTML = "";
   if (!BATCHES.length) {
     list.append(h("div", { class: "empty" }, h("h2", {}, "Generate your first batch"),
-      h("p", {}, "1. Pick reference videos  ·  2. Add your footage  ·  3. Choose how many different videos you want"),
+      h("p", {}, "1. Pick reference videos  ·  2. Add your footage and sound  ·  3. Choose how many different videos you want"),
       h("button", { class: "primary", onclick: openWizard, title: "Start the wizard" }, "＋ New generation")));
     return;
   }
@@ -739,7 +742,7 @@ function varCard(b, v) {
   if (v.has_poster) thumb.append(h("img", { src: `/api/variations/${v.id}/poster.jpg?v=${Math.round(v.updated_at)}`, alt: "" }));
   if (v.status === "done") { thumb.append(h("div", { class: "play" }, "▶")); thumb.onclick = () => play(v); }
   else thumb.append(h("div", { class: "wait" }, busy ? [spinner(), v.progress || "Queued"] : v.status === "failed" ? "Failed" : "Cancelled"));
-  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && !["order", "music_section"].includes(k)).map(([, x]) => x.replace(/_/g, " "));
+  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && !["order", "music_section", "sound"].includes(k)).map(([, x]) => x.replace(/_/g, " "));
   const body = h("div", { class: "vbody" },
     h("div", { class: "hook" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
     v.angle ? h("div", { class: "angle" }, v.angle) : null,
@@ -768,10 +771,11 @@ function play(v) {
 $("#b-gen-new").onclick = () => openWizard();
 
 // ============================================================ generate: wizard
-const STEPS = ["References", "Footage", "Brief", "Variations", "Review"];
+const STEPS = ["References", "Footage", "Sound", "Brief", "Variations", "Review"];
 let W = null;
 function newWizard() {
-  return { step: 0, refs: new Set(), lead: null, footage: [], uploading: 0, est: null,
+  // footage: used for pictures · sound: used only for its audio (the videos take turns) · roles: AI's footage/sound call per upload
+  return { step: 0, refs: new Set(), lead: null, footage: [], sound: [], roles: {}, sorting: new Set(), manual: new Set(), uploading: 0, est: null,
     brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "" },
     count: 3, axes: null, quality: "balanced", review: true };
 }
@@ -787,11 +791,12 @@ async function openWizard() {
   show("#dlg-wiz");
 }
 const payload = () => ({ refs: [...W.refs], lead: W.refs.size > 1 ? W.lead : null, footage: W.footage.map((f) => f.id),
-  brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review });
+  sound: W.sound.map((f) => f.id), brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review });
 function stepOk(i) {
   if (i === 0) return W.refs.size > 0;
-  if (i === 1) return W.footage.some((f) => f.kind === "video") && W.footage.filter((f) => f.kind === "audio").length <= 1 && !W.uploading;
-  if (i === 2) return W.brief.length_s >= 5 && W.brief.length_s <= 90;
+  if (i === 1) return W.footage.some((f) => f.kind === "video") && !W.uploading;
+  if (i === 2) return W.sound.length <= 10 && !W.uploading;
+  if (i === 3) return W.brief.length_s >= 5 && W.brief.length_s <= 90;
   return W.count >= 1;
 }
 function renderWiz() {
@@ -799,7 +804,7 @@ function renderWiz() {
   body.append(h("h2", {}, "New generation"),
     h("div", { class: "steps" }, STEPS.map((s, i) => h("div", { class: "stp" + (i === W.step ? " on" : i < W.step ? " done" : "") }, `${i + 1}. ${s}`))));
   const content = h("div", {});
-  [wizRefs, wizFootage, wizBrief, wizVariations, wizReview][W.step](content);
+  [wizRefs, wizFootage, wizSound, wizBrief, wizVariations, wizReview][W.step](content);
   body.append(content);
   const last = W.step === STEPS.length - 1;
   const next = h("button", { class: "primary", disabled: stepOk(W.step) ? null : "", title: last ? "Start generating" : "Next step",
@@ -836,39 +841,104 @@ function wizRefs(el) {
       if (d.pending) merged.append(h("div", { class: "meta", style: { padding: "6px 8px" } }, `${d.pending} more still being studied.`));
     });
 }
-async function uploadFootage(files) {
+const canSound = (f) => f.kind === "audio" || (f.kind === "video" && f.has_audio);
+function placeAs(f, role, why) {
+  // Put an upload in Footage or Sound
+  W.footage = W.footage.filter((x) => x.id !== f.id);
+  W.sound = W.sound.filter((x) => x.id !== f.id);
+  if (role === "sound") W.sound.push(f);
+  else if (f.kind !== "audio") W.footage.push(f);
+  if (why) toast(why);
+}
+async function sortWithAI(files) {
+  // Ask the AI whether each video with sound is footage or "just a sound"; move it unless the user already chose
+  const ask = files.filter((f) => f.kind === "video" && f.has_audio && !W.roles[f.id]);
+  if (!ask.length) return;
+  ask.forEach((f) => W.sorting.add(f.id)); renderWizIfOpen();
+  const r = await fetch("/api/uploads/classify", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ask.map((f) => f.id), quality: W.quality }) }).catch(() => null);
+  const d = r && r.ok ? await r.json().catch(() => ({})) : {};
+  ask.forEach((f) => W.sorting.delete(f.id));
+  for (const f of ask) {
+    const role = (d.roles || {})[f.id];
+    if (!role) continue;
+    W.roles[f.id] = role;
+    const here = W.sound.some((x) => x.id === f.id) ? "sound" : "footage";
+    if (role.by === "ai" && role.role !== here && !W.manual.has(f.id))
+      placeAs(f, role.role, `AI moved “${f.name}” to ${role.role === "sound" ? "Sound" : "Footage"}: ${role.reason}`);
+  }
+  renderWizIfOpen();
+}
+function renderWizIfOpen() { if (W && $("#dlg-wiz").style.display === "flex") renderWiz(); }
+async function uploadFootage(files, target = "footage") {
   const fd = new FormData(); [...files].forEach((f) => fd.append("files", f));
   W.uploading++; renderWiz();
   const r = await fetch("/api/uploads", { method: "POST", body: fd });
   const d = await r.json().catch(() => ({}));
   W.uploading--;
+  let added = [];
   if (!r.ok) toast(d.detail || "Upload failed", true);
   else {
-    for (const f of d.added) if (!W.footage.some((x) => x.id === f.id)) W.footage.push(f);
+    added = d.added.filter((f) => !W.footage.some((x) => x.id === f.id) && !W.sound.some((x) => x.id === f.id));
+    for (const f of added) {
+      if (target === "sound") {
+        if (!canSound(f)) { toast(`“${f.name}” has no sound to use`, true); continue; }
+        W.manual.add(f.id); placeAs(f, "sound");
+      } else placeAs(f, f.kind === "audio" ? "sound" : "footage", f.kind === "audio" ? `“${f.name}” is audio, so it went to Sound` : null);
+    }
     if (d.errors.length) toast(d.errors.join("; "), true);
   }
-  if ($("#dlg-wiz").style.display === "flex") renderWiz();
+  renderWizIfOpen();
+  sortWithAI(added);
 }
 $("#foot-file").onchange = (e) => { uploadFootage(e.target.files); e.target.value = ""; };
+$("#snd-file").onchange = (e) => { uploadFootage(e.target.files, "sound"); e.target.value = ""; };
+function soundFor(i) {
+  // Which generated videos use sound #i (they take turns)
+  const n = W.sound.length, out = [];
+  for (let v = i; v < W.count; v += n) out.push(v + 1);
+  return out.length ? ` · used by video ${out.join(", ")}` : " · not used (more sounds than videos)";
+}
+function fileRow(f, where, i) {
+  const meta = f.kind === "video" ? `video · ${dur(f.duration)} · ${f.width}×${f.height}${where === "sound" ? " · only its sound is used" : ""}`
+    : f.kind === "audio" ? `sound · ${dur(f.duration)}${f.bpm ? ` · ${f.bpm} BPM` : ""}` : `image · ${f.width}×${f.height}`;
+  const turn = where === "sound" && W.sound.length > 1 ? soundFor(i) : "";
+  const role = W.roles[f.id];
+  const tag = W.sorting.has(f.id) ? h("span", { class: "role wait" }, "AI is sorting…")
+    : role && role.by === "ai" ? h("span", { class: "role", title: role.reason }, `AI: ${role.role}`) : null;
+  const other = where === "sound" ? "footage" : "sound";
+  const swap = f.kind === "video" && (other === "footage" || f.has_audio)
+    ? h("button", { class: "mini", title: other === "sound" ? "Use only this video's sound (as the music track)" : "Use this video's pictures instead",
+        onclick: () => { W.manual.add(f.id); placeAs(f, other); renderWiz(); } }, other === "sound" ? "Use as sound" : "Use as footage") : null;
+  return h("div", { class: "file" },
+    f.kind === "audio" ? h("div", { class: "ic" }, "🎵") : h("img", { src: `/api/uploads/${f.id}/thumb.jpg`, alt: "" }),
+    h("div", { class: "fn" }, h("b", {}, f.name), h("small", {}, meta, turn, tag)),
+    swap,
+    h("button", { class: "ghost mini", title: "Remove", onclick: () => { W.footage = W.footage.filter((x) => x !== f); W.sound = W.sound.filter((x) => x !== f); renderWiz(); } }, "✕"));
+}
 function wizFootage(el) {
-  el.append(h("p", {}, "Your own material. Videos are required; add one music track and images (logo, product shots) if you like. Only these files are used: never the reference's footage or music."));
-  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos, a music track or images here, or ",
+  el.append(h("p", {}, "Your own material: the pictures that get cut into the video. Videos are required; add images (logo, product shots) if you like. Videos keep their own audio. The AI checks each video: one that is really just a sound (a song over a still image, a trending sound) moves to the Sound step."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos or images here, or ",
     h("button", { class: "mini", onclick: () => $("#foot-file").click(), title: "Choose files" }, "choose files")]);
-  dropTarget(zone, uploadFootage);
+  dropTarget(zone, (files) => uploadFootage(files, "footage"));
   el.append(zone);
-  const icon = { video: "🎬", audio: "🎵", image: "🖼" };
-  const list = h("div", { class: "files" });
-  for (const f of W.footage) {
-    const meta = f.kind === "video" ? `video · ${dur(f.duration)} · ${f.width}×${f.height}` : f.kind === "audio" ? `music · ${dur(f.duration)}${f.bpm ? ` · ${f.bpm} BPM` : ""}` : `image · ${f.width}×${f.height}`;
-    list.append(h("div", { class: "file" },
-      f.kind === "audio" ? h("div", { class: "ic" }, icon.audio) : h("img", { src: `/api/uploads/${f.id}/thumb.jpg`, alt: "" }),
-      h("div", { class: "fn" }, h("b", {}, f.name), h("small", {}, meta)),
-      h("button", { class: "ghost mini", title: "Remove", onclick: () => { W.footage = W.footage.filter((x) => x !== f); renderWiz(); } }, "✕")));
-  }
-  el.append(list);
-  const audio = W.footage.filter((f) => f.kind === "audio").length;
-  if (audio > 1) el.append(h("div", { class: "note" }, "Use only one music track."));
+  el.append(h("div", { class: "files" }, W.footage.map((f) => fileRow(f, "footage"))));
   if (W.footage.length && !W.footage.some((f) => f.kind === "video")) el.append(h("div", { class: "note" }, "Add at least one video."));
+}
+function wizSound(el) {
+  el.append(h("p", {}, "Optional: music tracks or sounds. Drop audio files, or videos and only their sound is used (their pictures never appear). Each video gets one sound; with several, the videos take turns (video 1 gets the first, video 2 the second…). Cuts snap to the beat when the reference style does."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop songs, sounds or videos here, or ",
+    h("button", { class: "mini", onclick: () => $("#snd-file").click(), title: "Choose files" }, "choose files")]);
+  dropTarget(zone, (files) => uploadFootage(files, "sound"));
+  el.append(zone);
+  el.append(h("div", { class: "files" }, W.sound.map((f, i) => fileRow(f, "sound", i))));
+  if (W.sound.length > 10) el.append(h("div", { class: "note" }, "Use at most 10 sounds."));
+  else if (W.sound.length > W.count && W.count) el.append(h("div", { class: "meta", style: { marginTop: "8px" } }, `You're making ${W.count} video(s), so only the first ${W.count} sound(s) will be used. You can raise the count in Variations.`));
+  const fromFootage = W.footage.filter((f) => f.kind === "video" && f.has_audio);
+  if (!W.sound.length && fromFootage.length)
+    el.append(h("div", { class: "meta", style: { marginTop: "10px" } }, "No sound picked: the videos keep their own audio. Or use a footage video's sound: ",
+      ...fromFootage.slice(0, 4).map((f) => h("button", { class: "mini", style: { marginLeft: "6px" }, title: "Use this video only for its sound",
+        onclick: () => { W.manual.add(f.id); placeAs(f, "sound"); renderWiz(); } }, f.name))));
 }
 function field(label, input) { return h("div", {}, h("label", {}, label), input); }
 function wizBrief(el) {
@@ -929,7 +999,8 @@ function wizReview(el) {
   const est = h("div", { class: "estimate" }, "Estimating…");
   el.append(h("dl", { class: "review-list" }, [
     ["Style of", names.join(", ")],
-    ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "audio") ? ", 1 music track" : ", no music") + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
+    ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
+    ["Sound", W.sound.length ? W.sound.map((x) => x.name + (x.kind === "video" ? " (from video)" : "")).join(", ") + (W.sound.length > 1 ? " · the videos take turns" : "") : "none (videos keep their own audio)"],
     ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"],
     ["Length / format", `${b.length_s}s · ${(FORMATS.find((x) => x.id === b.format) || {}).label}`],
     ["Videos", `${W.count}, varying: ${OPTS.axes.filter((a) => W.axes.has(a.id)).map((a) => a.label.toLowerCase()).join(", ") || "nothing"}`],

@@ -56,7 +56,7 @@ class RateLimited(AIError):
 
 # ---- routing ----------------------------------------------------------------------------
 
-TIERS = {"study": "vision", "footage": "vision", "critic": "vision", "planner": "planner", "editor": "editor"}
+TIERS = {"study": "vision", "footage": "vision", "classify": "vision", "critic": "vision", "planner": "planner", "editor": "editor"}
 QUALITY = {
     "best": {"vision": "anthropic/claude-opus-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-opus-5-5"},
     "balanced": {"vision": "anthropic/claude-sonnet-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-sonnet-5-5"},

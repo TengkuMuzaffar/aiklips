@@ -31,6 +31,15 @@ action), a quality score 1-5 (5 = sharp, well lit, striking, a strong opening sh
 happening), whether there is a person talking to camera, and 1-3 tags (e.g. product, face, b-roll, text, wide,
 close-up). Be factual and brief. Return only JSON."""
 
+CLASSIFY = """You sort a user's uploaded videos for a short-form edit. Each video is used EITHER as footage
+(its pictures are cut into the edit; it may keep its own audio) OR as sound (only its audio is used, as the
+music / sound track; its pictures are never shown). Each contact sheet shows one file.
+Choose "sound" when the pictures are not worth showing but the audio is the point: a still image, lyric or
+album screen, black or static frames, a screen recording of a song or trending sound, a meme sound clip.
+Choose "footage" for real camera material, product shots, people talking, b-roll, even if it has music.
+Use the audio numbers: a steady tempo with little silence suggests music. Give a one-line reason.
+Return one entry per file id. Return only JSON."""
+
 PLANNER = """You are a creative director planning several variations of one short-form video. All variations
 must feel like the same reference style (Style DNA), but a viewer must see clearly different videos.
 
