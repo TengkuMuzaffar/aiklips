@@ -322,9 +322,13 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         music_labels.append(ml)
     if music_labels:
         ins = "".join(f"[{x}]" for x in [acur, *music_labels])
-        g.add(f"{ins}amix=inputs={len(music_labels) + 1}:duration=first:normalize=0:dropout_transition=0,atrim=duration={_f(total)}[aout]")
+        g.add(f"{ins}amix=inputs={len(music_labels) + 1}:duration=first:normalize=0:dropout_transition=0,atrim=duration={_f(total)}[amix]")
     else:
-        g.add(f"[{acur}]anull[aout]")
+        g.add(f"[{acur}]anull[amix]")
+    if canvas.loudness is not None:  # one consistent level on every phone, and no clipping
+        g.add(f"[amix]loudnorm=I={_f(canvas.loudness)}:TP=-1.5:LRA=11,aresample=48000,atrim=duration={_f(total)}[aout]")
+    else:
+        g.add("[amix]anull[aout]")
 
     # write the filter graph to a file (keeps the command short on Windows)
     tmpdir = state_dir(pdir) / "tmp"

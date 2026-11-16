@@ -17,6 +17,7 @@ from ..ops.animate import PRESETS
 from ..ops.captions import CAPTION_STYLES
 from ..ops.color import LOOKS as COLOR_LOOKS
 from ..ops.fonts import FONTS
+from ..ops.moves import MOVE_NAMES
 from ..project import TRANSITIONS
 
 IN_PRESETS = tuple(k for k, v in PRESETS.items() if v[0] == "in")
@@ -32,6 +33,7 @@ CaptionStyle = Literal[tuple(CAPTION_STYLES)]  # type: ignore[valid-type]
 HookPattern = Literal[HOOK_PATTERNS]  # type: ignore[valid-type]
 FontKey = Literal[tuple(FONTS)]  # type: ignore[valid-type]
 ColorLook = Literal[tuple(COLOR_LOOKS)]  # type: ignore[valid-type]
+MoveName = Literal[MOVE_NAMES]  # type: ignore[valid-type]
 
 
 class _M(BaseModel):
@@ -112,6 +114,13 @@ class ColorDNA(_M):
     measured: SkipJsonSchema[dict[str, float]] = Field(default_factory=dict)  # filled by apply_measured(), not the model
 
 
+class SignatureMove(_M):
+    move: MoveName = Field(description="The library move closest to what the reference does")
+    at: float | None = Field(None, description="Timeline seconds where you saw it in the reference, if you can tell")
+    note: str = Field("", description="What exactly the reference does, in a few words")
+    confirmed: SkipJsonSchema[bool] = False  # set by confirm_moves() when the measurements back it up
+
+
 class StyleDNA(_M):
     version: int = 1
     summary: str = Field("", description="One sentence a video editor would use to describe this style")
@@ -126,6 +135,7 @@ class StyleDNA(_M):
     sound: SoundDNA = Field(default_factory=SoundDNA)
     color_feel: str = Field("", description="One phrase on the colour grade, e.g. 'warm faded film', 'clean bright daylight'")
     color: ColorDNA = Field(default_factory=ColorDNA)
+    signature_moves: list[SignatureMove] = Field(default_factory=list, description="0-4 memorable moves the reference uses")
     confidence: dict[str, float] = Field(default_factory=dict, description="0..1 per area: hook, text, captions, motion, transitions, sound")
     notes: str = ""
     tags: list[str] = Field(default_factory=list, description="3-6 short tags, e.g. fast-cut, beat-sync, bold-captions")
@@ -148,10 +158,43 @@ def apply_measured(dna: StyleDNA, m: dict) -> StyleDNA:
         dna.sound.music = dna.sound.voiceover = False
     if m.get("color"):
         dna.color.measured = {k: float(v) for k, v in m["color"].items()}
+    confirm_moves(dna, m)
     dna.confidence["pacing"] = 1.0
     if audio:
         dna.confidence["tempo"] = float(audio.get("tempo_confidence") or 0)
     return dna
+
+
+def confirm_moves(dna: StyleDNA, m: dict) -> None:
+    """Mark the moves the measurements back up. Unconfirmable moves are kept, just not marked."""
+    cuts = m.get("cuts") or []
+    flashes = (m.get("motion") or {}).get("flashes") or []
+    energy = m.get("motion_energy") or []
+    fps = float((m.get("motion") or {}).get("fps") or 10)
+    mean = (sum(energy) / len(energy)) if energy else 0.0
+
+    def near(ts, t, tol):
+        return any(abs(x - t) <= tol for x in ts)
+
+    def window(t, half):
+        a, b = max(0, int((t - half) * fps)), min(len(energy), int((t + half) * fps) + 1)
+        return energy[a:b]
+
+    for sm in dna.signature_moves:
+        t = sm.at
+        if sm.move == "flash_cut":
+            sm.confirmed = bool(flashes) and (t is None or near(flashes, t, 0.6))
+        elif sm.move == "speed_ramp":
+            sm.confirmed = bool(dna.pacing.speed_ramps)
+        elif sm.move == "whip" and t is not None and energy:
+            sm.confirmed = near(cuts, t, 0.6) and max(window(t, 0.3) or [0]) > 2.5 * mean
+        elif sm.move == "punch_in" and t is not None and energy:
+            sm.confirmed = not near(cuts, t, 0.2) and max(window(t, 0.15) or [0]) > 3 * mean
+        elif sm.move == "freeze_title" and t is not None and energy:
+            w = window(t + 0.4, 0.4)
+            sm.confirmed = bool(w) and max(w) < 0.2 * mean
+        else:
+            sm.confirmed = False
 
 
 def from_metrics(m: dict) -> StyleDNA:
@@ -304,6 +347,8 @@ def card(dna: StyleDNA) -> list[dict]:
                                         f"{round((d.sound.beat_sync_score or 0) * 100)}% of cuts on the beat" if d.sound.beat_sync_score is not None else "",
                                         "voice-over" if d.sound.voiceover else "", f"{d.sound.music_energy}-energy music" if d.sound.music else "no music",
                                         "SFX on text" if d.sound.sfx_on_text else "", "ducking" if d.sound.ducking else ""] if x)),
+        ("Moves", ", ".join(f"{x.move.replace('_', ' ')}" + (f" @{x.at:g}s" if x.at is not None else "") + (" ✓" if x.confirmed else "")
+                            for x in d.signature_moves) or "—"),
         ("Colour", ", ".join(x for x in [
             f"{d.color.look} look" + (f" at {d.color.intensity:g}" if d.color.look != "natural" else ""),
             d.color_feel,

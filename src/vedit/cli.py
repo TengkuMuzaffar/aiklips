@@ -36,10 +36,12 @@ music_app = typer.Typer(help="Background music")
 mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
+sound_app = typer.Typer(help="Footage sound vs music: what each clip's audio is (speech / background / silent), and sensible defaults")
+fx_app = typer.Typer(help="Signature moves: punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, zoom-out reveal")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app), ("color", color_app)]:
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -950,6 +952,147 @@ def focus_clear(clip: Optional[str] = None):
 
 # ---- music ------------------------------------------------------------------------------
 
+# ---- audit & justification ------------------------------------------------------------
+
+@app.command("audit")
+def audit_cmd(render: bool = typer.Option(True, help="Render the preview to measure audio loudness (cached if unchanged)"),
+              ai_review: bool = typer.Option(False, "--ai", help="Also run the independent AI reviewer on the rendered frames (one vision call)"),
+              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy")):
+    """Check the edit before calling it done: hook, readability, safe zones, overlaps, fonts, colour, pacing,
+    footage reuse, loudness and stated reasons. Fix every must-fix finding."""
+    from .audit import audit
+
+    d = pdir()
+    if ai_review:
+        from .review import full_audit
+
+        r = full_audit(d, use_ai=True, quality=quality)
+    else:
+        r = audit(load(d), d, render=render)
+    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + [
+        f"Score {r['score']}/100 · {'PASSED' if r['passed'] else 'NOT PASSED'} · "
+             f"{r['counts']['must-fix']} must-fix, {r['counts']['should-fix']} should-fix, {r['counts']['note']} notes"]
+    for f in r["findings"]:
+        at = f" @{f['at']:g}s" if f["at"] is not None else ""
+        lines.append(f"  [{f['severity']}] {f['category']}{at}: {f['message']}" + (f"\n      fix: {f['fix']}" if f["fix"] else ""))
+    emit(r, "\n".join(lines))
+
+
+@fx_app.command("list")
+def fx_list():
+    """The signature move library."""
+    from .ops import moves
+
+    rows = moves.catalog()
+    emit({"moves": rows}, "\n".join(f"  {r['name']:<16} [{r['needs']}]  {r['about']}" for r in rows))
+
+
+@fx_app.command("apply")
+def fx_apply(name: str, clip: Optional[str] = typer.Option(None, help="Clip the move applies to (clip moves)"),
+             at: Optional[float] = typer.Option(None, help="Timeline seconds (moment moves)"),
+             text: Optional[str] = typer.Option(None, help="Word / line for freeze_title and keyword_pop")):
+    """Apply one signature move as one undoable step."""
+    from .ops import moves
+
+    with edit(f"move {name}") as tx:
+        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text)
+    emit({"move": name, "done": msg}, msg)
+
+
+@sound_app.command("report")
+def sound_report():
+    """Each clip's own sound (level, speech score, volume) and the sound findings of the audit."""
+    from . import sound
+
+    d = pdir()
+    p = load(d)
+    rows, findings = sound.report(p, d), sound.check_sound(p, d)
+    lines = [f"  {r['clip']} @{r['at']:g}s: " + (f"{'speech' if r['speech'] else 'no speech'}, {r['db']} dB (speech score {r['voice']}), volume {r['volume']:g}"
+                                               if r["db"] is not None else "no audio") + (f" [{r['mode']}]" if r["mode"] else "") for r in rows]
+    lines += [f"  [{f['severity']}] {f['message']}" + (f"  fix: {f['fix']}" if f["fix"] else "") for f in findings]
+    emit({"clips": rows, "findings": findings}, "\n".join(lines) or "No clips")
+
+
+@sound_app.command("auto")
+def sound_auto():
+    """Keep speech, mute background-only footage under the music, duck the music under speech."""
+    from . import sound
+
+    d = pdir()
+    with edit("sound auto") as tx:
+        changes = sound.auto(tx.project, d)
+        if not changes:
+            tx.cancelled = True
+    emit({"changes": changes}, "\n".join(changes) or "Nothing to change")
+
+
+@app.command("audit-settings")
+def audit_settings_cmd(threshold: Optional[int] = typer.Option(None, help="Pass mark 0-100: edits below it go back to the editor"),
+                       max_rounds: Optional[int] = typer.Option(None, help="Max revision rounds (0-8) before the user decides")):
+    """Show or change when an edit is good enough (used by generation and the desktop editor's auditor)."""
+    from .review import save_settings, settings
+
+    cur = save_settings(threshold, max_rounds) if threshold is not None or max_rounds is not None else settings()
+    emit(cur, f"Pass mark {cur['threshold']}/100, at most {cur['max_rounds']} revision round(s)")
+
+
+@app.command("taste")
+def taste_cmd(clear: bool = typer.Option(False, help="Forget everything learned from Keep / Discard")):
+    """What generation has learned from the videos you kept and discarded."""
+    from .generate import taste
+
+    if clear:
+        taste.clear()
+        return emit({"cleared": True}, "Taste memory cleared")
+    rows = taste.load()
+    emit({"rows": rows[-40:], "prompt": taste.examples()}, taste.examples() or "Nothing learned yet: keep or discard some generated videos.")
+
+
+@app.command("ai-models")
+def ai_models_cmd(vision: Optional[str] = None, planner: Optional[str] = None, editor: Optional[str] = None,
+                  auditor: Optional[str] = typer.Option(None, help="Model for the independent reviewer (default: the editor's)"),
+                  clear: bool = typer.Option(False, help="Remove all overrides")):
+    """Show or override which model each AI task tier uses ('<provider>/<model>', see Manage models)."""
+    from .ai import client as ai
+
+    cur = {} if clear else ai.settings()
+    for k, v in dict(vision=vision, planner=planner, editor=editor, auditor=auditor).items():
+        if v is not None:
+            cur[k] = v
+    if clear or any(v is not None for v in (vision, planner, editor, auditor)):
+        cur = ai.save_settings(cur)
+    roles = ai.roles()
+    emit({"overrides": cur, "effective": {r["tier"]: r["effective"] for r in roles}, "roles": roles},
+         "\n".join(f"  {r['label']:<18} ({r['tier']:<7}) {r['effective']}" + ("  (your default)" if r["saved"] else "  (quality default)")
+                   + f"\n      {r['about']}" for r in roles))
+
+
+@app.command("why")
+def why_cmd(
+    item: str = typer.Argument(..., help="Clip id (c3) or layer id (t1)"),
+    reason: str = typer.Argument(..., help="Why it is here: what it shows and what it does for the viewer (max ~15 words)"),
+    role: Optional[str] = typer.Option(None, help="hook | problem | setup | demo | proof | benefit | payoff | cta | other"),
+    beat: Optional[str] = typer.Option(None, help="Beat id from the edit's beat sheet (b1, b2...)"),
+):
+    """Record why a clip or overlay is in the edit (shown in the inspector, checked by the audit)."""
+    from .project import ROLES, ClipMeta
+
+    if role is not None and role not in ROLES:
+        raise VeditError(f"role must be one of {', '.join(ROLES)}")
+    reason = reason.strip()
+    if not reason:
+        raise VeditError("Give a reason")
+    with edit(f"why {item}") as tx:
+        p = tx.project
+        if any(c.id == item for c in p.clips):
+            c = p.clip(item)
+            c.meta = (c.meta or ClipMeta()).model_copy(update={k: v for k, v in dict(why=reason[:200], role=role, beat=beat).items()
+                                                                if v is not None})
+        else:
+            p.layer(item).why = reason[:200]
+    emit({"item": item, "why": reason, "role": role, "beat": beat}, f"{item}: {reason}")
+
+
 # ---- colour -------------------------------------------------------------------------
 
 def _clip_list(clip: Optional[list[str]]) -> Optional[list[str]]:
@@ -1330,6 +1473,18 @@ def ref_remove(ref_id: int):
     emit({"removed": ref_id}, f"Removed reference #{ref_id}")
 
 
+def _role_models(items: list[str] | None) -> dict[str, str]:
+    alias = {"watcher": "vision", "vision": "vision", "director": "planner", "planner": "planner", "creative": "planner",
+             "editor": "editor", "auditor": "auditor", "reviewer": "auditor"}
+    out = {}
+    for it in items or []:
+        role, sep, key = it.partition("=")
+        if not sep or role.strip().lower() not in alias:
+            raise VeditError(f"--model takes role=<provider>/<model> with role one of watcher, director, editor, auditor (got {it!r})")
+        out[alias[role.strip().lower()]] = key.strip()
+    return out
+
+
 @gen_app.command("run")
 def gen_run(
     ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
@@ -1343,8 +1498,12 @@ def gen_run(
     fmt: str = typer.Option("reels", "--format", help="reels | portrait45 | square | landscape"),
     language: str = typer.Option("en"),
     quality: str = typer.Option("balanced", help="best | balanced | economy"),
-    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section, color_look, font"),
-    review: bool = typer.Option(True, help="AI reviews each result once"),
+    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section, color_look, font, structure"),
+    review: bool = typer.Option(True, help="AI auditor reviews each result and fixes what it finds (up to 2 rounds)"),
+    explore: bool = typer.Option(True, help="Write 3 concepts per video and keep the best (+1 call per video, +1 per batch)"),
+    threshold: Optional[int] = typer.Option(None, help="Audit pass mark; below it the editor revises (default: audit-settings)"),
+    max_rounds: Optional[int] = typer.Option(None, help="Max editor revisions per video (default: audit-settings)"),
+    model: Optional[list[str]] = typer.Option(None, "--model", help="Model for a role in this generation: watcher|vision, director|planner, editor, auditor = '<provider>/<model>', e.g. --model auditor=anthropic/claude-opus-5-5 (repeatable)"),
     lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
 ):
     """Generate COUNT videos from your footage in the style of the references (waits until done)."""
@@ -1355,7 +1514,8 @@ def gen_run(
     jobs.AUTOSTART = False
     ups = [foot.add(Path(f))["id"] for f in footage]
     snd = [foot.add(Path(s))["id"] for s in sound or []]
-    spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review,
+    spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review, explore=explore,
+                     audit_threshold=threshold, audit_rounds=max_rounds, models=_role_models(model),
                      brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
     est = batch.estimate(spec)
     if not STATE["json"]:
@@ -1365,6 +1525,24 @@ def gen_run(
     b = batch.get(b["id"])
     emit({"batch": b}, f"Batch {b['id']}: {b['status']}" + (f" ({b['error']})" if b["error"] else "") + "\n" + "\n".join(
         f"  v{v['idx']} {v['status']:<7} “{v['hook_text']}”  {v['output'] or v['error'] or ''}" for v in b["variations"]))
+
+
+@gen_app.command("improve")
+def gen_improve(variation: str = typer.Argument(..., help="Variation id, e.g. b20261116-185100-ab12-v01 (see `gen list`)"),
+                rounds: Optional[int] = typer.Option(None, help="At most this many more revisions (default: audit-settings)"),
+                wait: bool = typer.Option(True, help="Wait for it to finish")):
+    """Keep improving one generated video: the editor revises its best version from the last review until it passes."""
+    from . import jobs
+    from .generate import batch
+
+    v = batch.improve(variation, rounds)
+    if wait:
+        jobs.drain()
+        bid = batch._var(variation)["batch_id"]
+        v = next(x for x in batch.get(bid)["variations"] if x["id"] == variation)
+    a = v.get("audit") or {}
+    emit({"variation": v}, f"{variation}: {v['status']}" + (f" · audit {a.get('score')}/100 (pass {a.get('threshold')})"
+                                                           + (" · passed" if a.get("reached") else " · still below") if a else ""))
 
 
 @gen_app.command("list")

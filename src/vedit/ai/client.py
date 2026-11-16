@@ -27,6 +27,7 @@ import os
 import random
 import re
 import threading
+from contextlib import contextmanager
 import time
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -56,12 +57,19 @@ class RateLimited(AIError):
 
 # ---- routing ----------------------------------------------------------------------------
 
-TIERS = {"study": "vision", "footage": "vision", "classify": "vision", "critic": "vision", "planner": "planner", "editor": "editor"}
+TIERS = {"study": "vision", "footage": "vision", "classify": "vision", "planner": "planner", "editor": "editor",
+         "auditor": "auditor", "concepts": "planner", "rank": "planner"}
 QUALITY = {
-    "best": {"vision": "anthropic/claude-opus-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-opus-5-5"},
-    "balanced": {"vision": "anthropic/claude-sonnet-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-sonnet-5-5"},
-    "economy": {"vision": "anthropic/claude-sonnet-5-5", "planner": "anthropic/claude-sonnet-5-5", "editor": "anthropic/claude-haiku-5-5"},
+    # the auditor defaults to the editor's model (set a stronger one with `vedit ai-models --auditor ...`);
+    # it must see images, so economy keeps it on a vision-capable model
+    "best": {"vision": "anthropic/claude-opus-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-opus-5-5",
+             "auditor": "anthropic/claude-opus-5-5"},
+    "balanced": {"vision": "anthropic/claude-sonnet-5-5", "planner": "anthropic/claude-opus-5-5", "editor": "anthropic/claude-sonnet-5-5",
+                 "auditor": "anthropic/claude-sonnet-5-5"},
+    "economy": {"vision": "anthropic/claude-sonnet-5-5", "planner": "anthropic/claude-sonnet-5-5", "editor": "anthropic/claude-haiku-5-5",
+                "auditor": "anthropic/claude-haiku-5-5"},
 }
+TIER_NAMES = ("vision", "planner", "editor", "auditor")
 MAX_IMAGES = 4
 IMAGE_MAX_PX = 1568
 _SEM = threading.BoundedSemaphore(2)
@@ -84,20 +92,83 @@ def save_settings(data: dict) -> dict:
     from ..editor import models as registry
 
     clean = {}
-    for tier in ("vision", "planner", "editor"):
+    for tier in TIER_NAMES:
         v = str(data.get(tier) or "").strip()
         if v:
             registry.resolve(v)  # raises RegistryError for unknown models
             clean[tier] = registry.normalize_key(v)
+    clean = check_models(clean)
     settings_path().write_text(json.dumps(clean, indent=2))
     return clean
 
 
+# Who does what, in words a user can choose by. `vision` roles look at frames, so they need a vision model.
+ROLES = [
+    {"tier": "vision", "label": "Watcher", "vision": True,
+     "about": "Studies your reference videos and logs your footage shot by shot"},
+    {"tier": "planner", "label": "Creative director", "vision": False,
+     "about": "Writes the angles and hooks, explores concepts and picks the strongest"},
+    {"tier": "editor", "label": "Editor", "vision": False,
+     "about": "Builds each edit, and revises it from the auditor's review"},
+    {"tier": "auditor", "label": "Auditor", "vision": True,
+     "about": "Watches each rendered video and scores it; below the pass mark it goes back to the editor"},
+]
+
+_local = threading.local()
+
+
+@contextmanager
+def use_models(models: dict[str, str] | None):
+    """Per-job model choices ({tier: "<provider>/<model>"}), e.g. the ones picked for one generation.
+    Thread-local, so two batches running side by side don't see each other's choices."""
+    prev = getattr(_local, "models", None)
+    _local.models = {k: v for k, v in (models or {}).items() if v}
+    try:
+        yield
+    finally:
+        _local.models = prev
+
+
 def model_for(task: str, quality: str = "balanced") -> str:
+    """Precedence: VEDIT_AI_MODEL (tests/CI) > this job's choice > the user's saved default > the quality tier."""
     tier = TIERS.get(task, "editor")
     if os.environ.get("VEDIT_AI_MODEL"):
         return os.environ["VEDIT_AI_MODEL"]
-    return settings().get(tier) or QUALITY.get(quality, QUALITY["balanced"])[tier]
+    chosen = (getattr(_local, "models", None) or {}).get(tier)
+    return chosen or settings().get(tier) or QUALITY.get(quality, QUALITY["balanced"])[tier]
+
+
+def roles(quality: str = "balanced") -> list[dict]:
+    """Each role with the model it will use and why (default / saved / tier)."""
+    saved = settings()
+    out = []
+    for r in ROLES:
+        t = r["tier"]
+        tier_default = QUALITY.get(quality, QUALITY["balanced"])[t]
+        out.append({**r, "tier_default": tier_default, "saved": saved.get(t), "effective": saved.get(t) or tier_default})
+    return out
+
+
+def check_models(models: dict[str, str]) -> dict[str, str]:
+    """Validate {tier: model key}: known tier, known model, and a vision model where the role looks at frames."""
+    from ..editor import models as registry
+
+    vision_tiers = {r["tier"] for r in ROLES if r["vision"]}
+    clean = {}
+    for tier, k in (models or {}).items():
+        if not k:
+            continue
+        if tier not in TIER_NAMES:
+            raise AIError(f"Unknown role '{tier}'. Roles: {', '.join(TIER_NAMES)}")
+        try:
+            _p, m = registry.resolve(k)
+        except registry.RegistryError as e:
+            raise AIError(str(e)) from None
+        if tier in vision_tiers and m.get("vision") is False:
+            label = next(r["label"] for r in ROLES if r["tier"] == tier)
+            raise AIError(f"The {label} looks at video frames, so it needs a model with vision; {k} has none.")
+        clean[tier] = registry.normalize_key(k)
+    return clean
 
 
 def set_backend(fn: Callable[..., dict] | None) -> None:

@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS variations_batch ON variations(batch_id, idx);
 """
 
 TERMINAL = {"done", "failed", "cancelled"}
-DEFAULT_SECONDS = {"study": 45, "footage": 40, "planner": 60, "editor": 45, "critic": 25}
+DEFAULT_SECONDS = {"study": 45, "footage": 40, "planner": 60, "editor": 45, "auditor": 35, "concepts": 40, "rank": 30}
 
 
 def _db():
@@ -149,6 +149,10 @@ def validate(spec: BatchSpec) -> None:
     unknown = [a for a in spec.axes if a not in AXES]
     if unknown:
         raise VeditError(f"Unknown variation axes: {', '.join(unknown)}")
+    try:
+        spec.models = ai.check_models(spec.models)
+    except ai.AIError as e:
+        raise VeditError(str(e)) from None
 
 
 def estimate(spec: BatchSpec) -> dict:
@@ -164,11 +168,19 @@ def estimate(spec: BatchSpec) -> dict:
             undescribed += 1
     foot = math.ceil(undescribed / ai.MAX_IMAGES)
     n = spec.count
-    calls = {"study": study, "footage": foot, "planner": 1, "editor": n, "critic": n if spec.review else 0}
+    # typical: one revision per video (worst case: the round cap). editor = first plan + revisions
+    calls = {"study": study, "footage": foot, "planner": 1, "editor": 2 * n if spec.review else n,
+             "auditor": 2 * n if spec.review else 0}
+    if spec.explore:
+        calls.update(concepts=n, rank=1)
     ai_seconds = sum(calls[k] * secs.get(k, 40) for k in calls)
-    render_seconds = n * (spec.brief.length_s * 0.9 + 6) * (2 if spec.review else 1)
+    render_seconds = n * (spec.brief.length_s * 0.9 + 6) * (3 if spec.review else 2)
     total = ai_seconds / 2 + render_seconds  # two AI calls at a time, one render at a time
+    from .. import review
+
+    rounds = spec.audit_rounds if spec.audit_rounds is not None else review.settings()["max_rounds"]
     return {"calls": sum(calls.values()), "breakdown": calls, "minutes": max(1, round(total / 60)),
+            "max_calls": sum(calls.values()) + (n * 2 * max(0, rounds - 1) if spec.review else 0),
             "note": "Uses your AI subscription. If you hit its limit, the batch pauses and resumes by itself."}
 
 
@@ -192,6 +204,12 @@ def create(spec: BatchSpec) -> dict:
 @jobs.handler("batch_prepare")
 def _prepare(job: jobs.Job) -> dict:
     bid = job.target.split(":", 1)[1]
+    spec = BatchSpec.model_validate_json(_batch(bid)["spec"])
+    with ai.use_models(spec.models):  # the models picked for this generation
+        return _prepare_inner(job, bid)
+
+
+def _prepare_inner(job: jobs.Job, bid: str) -> dict:
     b = _batch(bid)
     spec = BatchSpec.model_validate_json(b["spec"])
     waiting = []
@@ -220,6 +238,10 @@ def _prepare(job: jobs.Job) -> dict:
     creatives, usage = planner.creative(spec, dna, log, axes)
     _add_usage(bid, "planner", usage)
     job.check()
+    if spec.explore:
+        _set("batches", bid, progress=f"AI is exploring concepts for {spec.count} variation(s)")
+        creatives = planner.explore(spec, dna, log, creatives, axes, usage_cb=lambda k, u: _add_usage(bid, k, u))
+        job.check()
     now = time.time()
     with closing(_db()) as con, con:
         con.execute("DELETE FROM variations WHERE batch_id = ?", (bid,))
@@ -280,35 +302,96 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
     plan, notes = timing.resolve(plan, metas, spec.brief.length_s)
     _set("variations", vid, plan=plan.model_dump_json(), fingerprint=json.dumps(fp))
 
-    step("building", "Building the edit")
+    # build -> audit -> (editor revises from the review -> rebuild -> audit)* until the score clears the pass mark.
+    # Every attempt is its own folder; the best one becomes the variation. Code checks always run; the AI
+    # reviewer and revisions only with review on.
+    from .. import review
+
+    bid = v["batch_id"]
     pdir = Path(v["dir"])
-    if pdir.exists() and pdir.parent.parent == batches_root():
-        _unregister(pdir)
-        shutil.rmtree(pdir)
+    cfg = review.settings()
+    threshold = spec.audit_threshold if spec.audit_threshold is not None else cfg["threshold"]
+    max_rounds = (spec.audit_rounds if spec.audit_rounds is not None else cfg["max_rounds"]) if spec.review else 0
     name = f"{b['name'].split(' · ')[0]} v{v['idx']} – {plan.title or c.angle}"[:80]
-    report = executor.execute(plan, pdir, metas, name, spec.brief.format)
-    report["timing"] = notes
+    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
 
-    if spec.review:
-        step("rendering", "Rendering a preview")
-        from ..render.runner import render_preview
+    def build(pl: EditPlan, where: Path) -> dict:
+        if where.exists() and where.parent.parent == batches_root():
+            _unregister(where)
+            shutil.rmtree(where)
+        return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
 
-        with jobs.render_lock:
-            res = render_preview(load(pdir), pdir, progress=False)
-        sheet = pdir / ".vedit" / "review-sheet.jpg"
-        p = load(pdir)
-        media.contact_sheet(Path(res["output"]), p.duration, sheet, 12, 4, 270)
-        step("reviewing", "AI is reviewing the result")
-        layers = [{"id": l.id, "type": l.type, "text": l.text or (" ".join(w.text for w in l.words[:10]) if l.words else l.image),
-                   "start": l.start, "end": l.end, "x": l.x, "y": l.y, "size": l.style.size} for l in p.layers]
-        try:
-            rev, u = planner.review(sheet, layers, dna, spec.quality)
-            _add_usage(v["batch_id"], "critic", u)
-            report["review"] = {"ok": rev.ok, "issues": rev.issues, "fixed": executor.apply_fixes(pdir, rev.fixes) if not rev.ok else []}
-        except ai.RateLimited:
-            raise
-        except ai.AIError as e:
-            report["review"] = {"ok": None, "issues": [f"review skipped: {e}"], "fixed": []}
+    best, rounds = _loop(vid, step, build, spec, dna, log, c, axes, d, metas, pdir, threshold, max_rounds, usage_cb,
+                         first=(plan, notes))
+    _finish(vid, step, pdir, best, rounds, threshold)
+    return {}
+
+
+def _loop(vid, step, build, spec, dna, log, c, axes, d, metas, pdir: Path, threshold: int, max_rounds: int, usage_cb,
+          first: tuple | None = None, start: dict | None = None) -> tuple[dict, list]:
+    """Build -> audit -> (editor revises THE BEST VERSION SO FAR, knowing what earlier attempts scored) -> ...
+    until the score clears the pass mark, `max_rounds` revisions are spent, or 2 revisions in a row don't beat the
+    best. `first` = (plan, notes) for a new video; `start` = an existing best version to keep improving."""
+    from .. import review
+
+    rounds = list((start or {}).get("rounds") or [])
+    base = len(rounds)
+    best = start["best"] if start else None
+    stale = 0
+    todo = (first[0], first[1]) if first else None
+    for k in range(max_rounds + (1 if first else 0)):
+        r = base + k
+        if todo is None:  # revise the best version, with the attempt history
+            step("planning", f"Editor is revising: audit {best['review']['score']} < {threshold}"
+                 + (f", {best['review']['counts']['must-fix']} must-fix" if (best["review"].get("counts") or {}).get("must-fix") else ""))
+            plan, u = planner.revise_plan(spec, dna, log, c, axes, d, best["plan"], best["review"], threshold,
+                                          attempts=rounds, best_round=best["round"])
+            usage_cb("editor", u)
+            todo = timing.resolve(plan, metas, spec.brief.length_s)
+        cur_plan, cur_notes = todo
+        todo = None
+        where = pdir if r == 0 else pdir.with_name(f"{pdir.name}.r{r}")
+        step("building", "Building the edit" if r == 0 else f"Rebuilding the revised edit (round {r})")
+        rep_exec = build(cur_plan, where)
+        rep_exec["timing"] = cur_notes
+        step("reviewing", "Auditing the edit" if r == 0 else f"Re-auditing (round {r})")
+        rev = review.full_audit(where, use_ai=spec.review, quality=spec.quality,
+                                fid_of=review.fid_map(load(where), metas), usage_cb=usage_cb)
+        rounds.append(review.brief(rev) | {"round": r})
+        if best is None or rev["score"] > best["review"]["score"]:
+            if best is not None and best["dir"] != where and best["dir"] != pdir and best["dir"].exists():
+                shutil.rmtree(best["dir"])  # the old best is beaten
+            best, stale = {"review": rev, "dir": where, "plan": cur_plan, "exec": rep_exec, "round": r}, 0
+        else:
+            stale += 1
+            if where != pdir and where.exists():
+                shutil.rmtree(where)  # worse than the best: drop it now
+        if review.good_enough(rev, threshold) or stale >= review.PLATEAU:
+            break
+    return best, rounds
+
+
+def _finish(vid: str, step, pdir: Path, best: dict, rounds: list, threshold: int) -> None:
+    """The best attempt becomes the variation's project; record the audit; export."""
+    from .. import review
+
+    if best["dir"] != pdir:
+        if pdir.exists():
+            shutil.rmtree(pdir)
+        shutil.move(str(best["dir"]), str(pdir))
+        best["dir"] = pdir
+    for stale_dir in pdir.parent.glob(f"{pdir.name}.r*"):
+        shutil.rmtree(stale_dir, ignore_errors=True)
+    plan, rev, report = best["plan"], best["review"], best["exec"]
+    _set("variations", vid, plan=plan.model_dump_json())
+    report["audit"] = {k: rev.get(k) for k in ("score", "passed", "counts", "scores", "summary")} | {
+        "threshold": threshold, "reached": review.good_enough(rev, threshold), "rounds": rounds,
+        "kept_round": best["round"], "head": history.head(pdir),
+        "findings": [{k: f.get(k) for k in ("id", "severity", "category", "at", "message", "fix")} for f in rev.get("findings", [])][:30]}
+    report["review"] = {"ok": report["audit"]["reached"], "revisions": len(rounds) - 1,
+                        "issues": [f["message"] for f in rev.get("findings", []) if f["severity"] != "note"][:10]}
 
     step("exporting", "Exporting the video")
     from ..render.runner import render
@@ -322,13 +405,104 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
     except VeditError:
         pass
     _set("variations", vid, status="done", progress=None, output=str(dest), report=json.dumps(report))
+    _update_batch(_var(vid)["batch_id"])
+
+
+
+
+# ---- keep improving one finished video ------------------------------------------------------------
+
+def improve(vid: str, rounds: int | None = None) -> dict:
+    """Queue more editor revisions for one finished video, starting from its best version and its last review."""
+    from .. import review
+
+    v = _var(vid)
+    if v["status"] != "done":
+        raise VeditError("Only a finished video can be improved")
+    rep = json.loads(v["report"] or "{}")
+    if not v["plan"] or not rep.get("audit"):
+        raise VeditError("This video has no audit to improve from; regenerate it instead")
+    pdir = Path(v["dir"])
+    head = rep["audit"].get("head")
+    if head is not None and (pdir / PROJECT_FILE).exists():
+        # compare content, not step numbers: format upgrades and no-op syncs don't count as hand edits
+        if not history.same_as(pdir, head):
+            raise VeditError("This video was edited by hand since it was generated. Open it in the editor and ask the AI "
+                             "there: it audits every change and keeps going until the pass mark.")
+    n = int(rounds if rounds is not None else review.settings()["max_rounds"]) or 1
+    n = max(1, min(review.MAX_ROUNDS_CAP, n))
+    _set("variations", vid, status="queued", progress=f"Waiting to improve ({n} more round{'s' if n > 1 else ''})", error=None)
+    jobs.enqueue("variation_improve", f"improve:{vid}:{n}")
     _update_batch(v["batch_id"])
+    return _public_var(_var(vid))
+
+
+def run_improve(vid: str, rounds: int, job: jobs.Job | None = None) -> dict:
+    from .. import review
+
+    v = _var(vid)
+    b, spec, dna, files, log, metas = _context(v)
+
+    def step(status: str, text: str) -> None:
+        _set("variations", vid, status=status, progress=text, error=None)
+        if job:
+            job.check()
+
+    axes = json.loads(v["axes"])
+    c = Creative.model_validate_json(v["creative"])
+    d = planner.directives(dna, spec.brief, axes, log, executor.captions_available())
+    rep = json.loads(v["report"])
+    audit = rep["audit"]
+    pdir = Path(v["dir"])
+    bid = v["batch_id"]
+    threshold = spec.audit_threshold if spec.audit_threshold is not None else review.settings()["threshold"]
+    name = load(pdir).name
+    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
+
+    def build(pl: EditPlan, where: Path) -> dict:
+        if where.exists() and where.parent.parent == batches_root():
+            shutil.rmtree(where)
+        return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
+
+    exec_report = {k: x for k, x in rep.items() if k not in ("audit", "review")}
+    start = {"rounds": audit.get("rounds") or [], "best": {
+        "review": {k: audit.get(k) for k in ("score", "passed", "counts", "scores", "summary")} | {"findings": audit.get("findings", [])},
+        "dir": pdir, "plan": EditPlan.model_validate_json(v["plan"]), "exec": exec_report,
+        "round": audit.get("kept_round", 0)}}
+    with ai.use_models(spec.models):
+        best, all_rounds = _loop(vid, step, build, spec, dna, log, c, axes, d, metas, pdir, threshold, rounds, usage_cb,
+                                 start=start)
+    _finish(vid, step, pdir, best, all_rounds, threshold)
     return {}
+
+
+@jobs.handler("variation_improve")
+def _improve_job(job: jobs.Job) -> dict:
+    _kind, vid, n = job.target.split(":")
+    return run_improve(vid, int(n), job)
+
+
+@jobs.on_fail("variation_improve")
+def _improve_failed(job: jobs.Job, msg: str) -> None:
+    vid = job.target.split(":")[1]
+    # the video is still there (the best version never moved); just report why improving stopped
+    _set("variations", vid, status="done", progress=None, error=f"Improving stopped: {msg[:400]}")
+    _update_batch(_var(vid)["batch_id"])
+
+
+@jobs.on_wait("variation_improve")
+def _improve_wait(job: jobs.Job, wait: float) -> None:
+    _set("variations", job.target.split(":")[1], progress=f"Waiting for AI quota (~{int(wait // 60) or 1} min)")
 
 
 @jobs.handler("variation")
 def _variation_job(job: jobs.Job) -> dict:
-    return run_variation(job.target.split(":", 1)[1], job)
+    vid = job.target.split(":", 1)[1]
+    spec = BatchSpec.model_validate_json(_batch(_var(vid)["batch_id"])["spec"])
+    with ai.use_models(spec.models):  # the models picked for this generation
+        return run_variation(vid, job)
 
 
 @jobs.on_fail("variation")
@@ -368,8 +542,15 @@ def _public_var(v: dict) -> dict:
         "id": v["id"], "idx": v["idx"], "status": v["status"], "progress": v["progress"] or (job or {}).get("note") if v["status"] == "queued" else v["progress"],
         "error": v["error"], "verdict": v["verdict"], "axes": json.loads(v["axes"]), "angle": c.get("angle"),
         "hook_text": c.get("hook_text"), "cta_text": c.get("cta_text"), "title": (plan or {}).get("title"),
+        "concept": c.get("concept"), "concept_reason": c.get("concept_reason"), "rationale": (plan or {}).get("rationale"),
         "output": v["output"], "has_poster": (pdir / ".vedit" / "poster.jpg").exists(), "project_id": row["id"] if row and not row["hidden"] else None,
         "review": (rep or {}).get("review"), "skipped": (rep or {}).get("skipped", []), "updated_at": v["updated_at"],
+        "audit": None if not (rep or {}).get("audit") else {k: rep["audit"].get(k) for k in ("score", "passed", "counts", "summary", "scores",
+                                                                                              "threshold", "reached", "rounds")}
+                 | {"top": [f for f in rep["audit"].get("findings", []) if f["severity"] != "note"][:5]},
+        "attention": bool(v["status"] == "done" and (rep or {}).get("audit")
+                          and not rep["audit"].get("reached", rep["audit"].get("passed"))),
+        "plan_problems": (rep or {}).get("plan_problems", []),
     }
 
 
@@ -390,6 +571,7 @@ def get(bid: str) -> dict:
     return {"id": bid, "name": b["name"], "status": b["status"], "progress": progress, "error": b["error"],
             "created_at": b["created_at"], "count": spec["count"], "brief": spec["brief"], "refs": names,
             "usage": json.loads(b["usage"] or "{}"), "variations": vs,
+            "models": {r["tier"]: (spec.get("models") or {}).get(r["tier"]) or r["effective"] for r in ai.roles(spec.get("quality", "balanced"))},
             "done": sum(1 for v in vs if v["status"] == "done")}
 
 
@@ -420,13 +602,29 @@ def project_for(vid: str) -> dict:
     return library.get(library.register(pdir))
 
 
+def _remember(vid: str, verdict: str) -> None:
+    """Taste memory: what the user kept or discarded steers future plans."""
+    from . import taste
+
+    v = _var(vid)
+    if v["verdict"] == verdict:
+        return
+    try:
+        taste.record(verdict, json.loads(v["creative"]), json.loads(v["plan"]) if v["plan"] else None,
+                     json.loads(v["axes"]), json.loads(v["report"]) if v["report"] else None)
+    except (OSError, ValueError):
+        pass
+
+
 def keep(vid: str) -> dict:
     row = project_for(vid)
+    _remember(vid, "keep")
     _set("variations", vid, verdict="keep")
     return row
 
 
 def discard(vid: str) -> None:
+    _remember(vid, "discard")
     v = _var(vid)
     _set("variations", vid, verdict="discard")
     row = library.find_by_path(Path(v["dir"]))

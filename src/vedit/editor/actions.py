@@ -67,6 +67,23 @@ def _clip_set(p: Project, a: dict) -> str:
     return f"{c.id}: " + (", ".join(changed) or "no change")
 
 
+@op("clip_why")
+def _clip_why(p: Project, a: dict) -> str:
+    from ..project import ROLES, ClipMeta
+
+    c = p.clip(a["clip"])
+    upd = {}
+    if "why" in a:
+        upd["why"] = (a.get("why") or "").strip()[:200] or None
+    if "role" in a:
+        role = a.get("role") or None
+        if role is not None and role not in ROLES:
+            raise VeditError(f"role must be one of {', '.join(ROLES)}")
+        upd["role"] = role
+    c.meta = (c.meta or ClipMeta()).model_copy(update=upd)
+    return f"{c.id}: why"
+
+
 # ---- colour (clip inspector) ------------------------------------------------------------
 
 def _color_targets(p: Project, a: dict) -> list[str] | None:

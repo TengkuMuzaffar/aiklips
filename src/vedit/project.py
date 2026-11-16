@@ -33,6 +33,7 @@ class Canvas(_Model):
     height: int = 1920
     fps: float = 30
     background: str = "#000000"
+    loudness: float | None = -14.0  # final mix normalised to this LUFS (social apps play at about -14); None = off
 
 
 class Source(_Model):
@@ -102,6 +103,36 @@ class Grade(_Model):
     matched_to: str | None = None  # informational: "clips", "c2", "ref 3"
 
 
+ROLES = ("hook", "problem", "setup", "demo", "proof", "benefit", "payoff", "cta", "other")
+
+
+class ClipMeta(_Model):
+    """Why a clip is in the edit. Written by the generator or `vedit why`; read by the auditor."""
+
+    why: str | None = None
+    role: str | None = None  # one of ROLES
+    beat: str | None = None  # beat id in Project.notes.beats
+    segment: str | None = None  # footage-log segment id it came from (generation)
+    quality: int | None = None  # that segment's logged quality 1-5
+    audio: str | None = None  # voice (keep, music ducks) | ambient (keep, lower) | mute (music carries it)
+
+
+class Beat(_Model):
+    id: str
+    role: str = "other"
+    purpose: str = ""
+
+
+class EditNotes(_Model):
+    """The edit's intent: what it is for and how it is structured."""
+
+    rationale: str = ""
+    brief: str = ""
+    beats: list[Beat] = Field(default_factory=list)
+    target_shot_s: float | None = None  # pacing the edit aims for (from the reference)
+    style: str = ""  # one-line summary of the target style (Style DNA), for reviewers
+
+
 class Clip(_Model):
     id: str
     source: str
@@ -117,6 +148,7 @@ class Clip(_Model):
     effects: list[Effect] = Field(default_factory=list)
     transition: Transition | None = None  # transition *into* this clip from the previous one
     grade: Grade | None = None  # colour correction + look (`vedit color ...`)
+    meta: ClipMeta | None = None  # why this clip is here (`vedit why`)
 
     @property
     def duration(self) -> float:
@@ -188,6 +220,7 @@ class Layer(_Model):
     width: int | None = None  # image width in canvas px
     words: list[Word] = Field(default_factory=list)
     words_per_group: int = 3
+    why: str | None = None  # why this overlay is here (generation / `vedit why`)
 
 
 class MusicTrack(_Model):
@@ -210,6 +243,7 @@ class Project(_Model):
     clips: list[Clip] = Field(default_factory=list)
     layers: list[Layer] = Field(default_factory=list)
     music: list[MusicTrack] = Field(default_factory=list)
+    notes: EditNotes | None = None
 
     # ---- timeline helpers -------------------------------------------------
     @property

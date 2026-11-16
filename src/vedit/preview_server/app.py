@@ -345,6 +345,53 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
 
         return await asyncio.to_thread(claude_setup.install)
 
+    # ---- which model does which job (generation + the auditor) ------------------------------
+    @app.get("/api/ai/roles")
+    def api_ai_roles(quality: str = "balanced") -> dict:
+        from ..ai import client as ai
+        from ..editor import models as registry
+
+        pub = registry.public()
+        ready = {pv["id"]: pv["ready"] for pv in pub["providers"]}
+        models = [{"key": m["key"], "label": m.get("label") or m["id"], "vision": m.get("vision"),
+                   "provider": next((pv["name"] for pv in pub["providers"] if pv["id"] == m["provider"]), m["provider"]),
+                   "ready": ready.get(m["provider"], False)} for m in pub["models"]]
+        return {"roles": ai.roles(quality), "models": models}
+
+    @app.post("/api/ai/roles")
+    def api_ai_roles_save(body: dict) -> dict:
+        """Save defaults: {tier: model key, or "" to go back to the quality tier}."""
+        from ..ai import client as ai
+
+        cur = ai.settings()
+        for tier, k in (body or {}).items():
+            if tier in ai.TIER_NAMES:
+                if k:
+                    cur[tier] = k
+                else:
+                    cur.pop(tier, None)
+        try:
+            ai.save_settings(cur)
+        except (ai.AIError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        return {"roles": ai.roles(str((body or {}).get("_quality") or "balanced"))}
+
+    # ---- audit settings (pass mark + revision cap; shared by generation and the chat editor) ----
+    @app.get("/api/audit/settings")
+    def api_audit_settings() -> dict:
+        from ..review import settings
+
+        return settings()
+
+    @app.post("/api/audit/settings")
+    def api_audit_settings_save(body: dict) -> dict:
+        from ..review import save_settings
+
+        try:
+            return save_settings(body.get("threshold"), body.get("max_rounds"))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, str(e))
+
     # ---- typography (bundled fonts + text looks, for the inspector) -----------------------
     @app.get("/api/typography")
     def api_typography() -> dict:
@@ -382,6 +429,20 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
     def _hist(fn, *a):
         try:
             return fn(host.need(), *a)
+        except VeditError as e:
+            raise bad(e)
+
+    @app.post("/api/audit")
+    async def api_audit(body: dict | None = None) -> dict:
+        from ..audit import audit
+
+        d = host.need()
+        try:
+            if (body or {}).get("ai"):
+                from ..review import full_audit
+
+                return await asyncio.to_thread(full_audit, d, True)
+            return await asyncio.to_thread(audit, load(d), d, True)
         except VeditError as e:
             raise bad(e)
 
@@ -499,6 +560,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
                     asyncio.create_task(session.open_chat(str(msg.get("id", ""))))
                 elif kind == "delete_chat":
                     asyncio.create_task(session.delete_chat(str(msg.get("id", ""))))
+                elif kind == "auto_audit":
+                    await session.set_auto_audit(bool(msg.get("on")))
         except WebSocketDisconnect:
             session.sockets.discard(ws)
 
