@@ -18,7 +18,9 @@ import random
 
 from ..ai import client as ai
 from ..ai import prompts
+from ..ops import fonts
 from ..ops.animate import PRESETS
+from ..ops.color import LOOKS as COLOR_LOOKS
 from ..references.dna import StyleDNA
 from .spec import AXES, Brief, BatchSpec, Creative, CreativePlan, EditPlan, Op, Review
 
@@ -102,9 +104,29 @@ def creative(spec: BatchSpec, dna: StyleDNA, log: dict, axes: list[dict]) -> tup
 
 # ---- per-variation directives ------------------------------------------------------------
 
+def _font(dna: StyleDNA, axes: dict[str, str]) -> tuple[str, str]:
+    """(title font, accent font). The axis picks a feel; 'reference' uses the studied font."""
+    axis = axes.get("font", "reference")
+    if axis == "reference":
+        main = dna.text.font if dna.text.font in fonts.FONTS else fonts.for_feel(dna.text.font_feel)
+    else:
+        main = fonts.for_feel(axis)
+    feel = fonts.FONTS[main][2]
+    accent = "dm-serif-italic" if feel != "serif" else "poppins-black"  # one contrasting font for a single emphasis line
+    return main, accent
+
+
+def _grade(dna: StyleDNA, axes: dict[str, str]) -> dict:
+    axis = axes.get("color_look", "reference")
+    look = dna.color.look if axis == "reference" else axis
+    return {"look": look if look in COLOR_LOOKS else "natural", "intensity": dna.color.intensity if axis == "reference" else 0.8,
+            "target": dict(dna.color.measured) if dna.color.measured.get("luma") is not None else None,
+            "strength": 0.7}
+
+
 def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, captions_available: bool) -> dict:
     avg = max(0.4, min(6.0, dna.pacing.avg_shot_s * PACE[axes["pacing"]]))
-    text_in = list(dna.text.animation_in) if axes["text_animation"] == "reference" else [axes["text_animation"]]
+    text_in = list(dna.text.animation_in) if axes.get("text_animation", "reference") == "reference" else [axes["text_animation"]]
     text_out = list(dna.text.animation_out)
     if axes["transitions"] == "reference":
         trans = {"default": dna.transitions.default, "accents": list(dna.transitions.accents), "frequency": dna.transitions.frequency}
@@ -120,6 +142,7 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
     if music:
         mdur = float(log[music].get("duration") or 0)
         music_offset = round(max(0.0, (mdur - brief.length_s) * MUSIC_AT[axes["music_section"]]), 2)
+    font, accent = _font(dna, axes)
     return {
         "length_s": brief.length_s,
         "avg_shot_s": round(avg, 2),
@@ -129,7 +152,9 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
         "hook_duration_s": dna.hook.duration_s,
         "text": {"y": dna.text.position_y, "size": TEXT_SIZE[dna.text.size], "color": dna.text.color, "uppercase": dna.text.uppercase,
                  "stroke": dna.text.stroke, "bg": (dna.text.bg_color or "#000000B0") if dna.text.bg_box else None,
-                 "presets": [p for p in text_in + text_out if p in PRESETS], "on_beat": dna.text.on_beat},
+                 "presets": [p for p in text_in + text_out if p in PRESETS], "on_beat": dna.text.on_beat,
+                 "font": font, "accent_font": accent, "letter_spacing": dna.text.letter_spacing},
+        "grade": _grade(dna, axes),
         "captions": None if not want_caps else {
             "style": dna.captions.style if axes["caption_style"] == "reference" else axes["caption_style"],
             "words": dna.captions.words_at_once, "y": dna.captions.y},
@@ -169,8 +194,15 @@ def enforce(plan: EditPlan, d: dict, c: Creative) -> EditPlan:
     if not any(o.op == "text" for o in ops) and c.hook_text:
         ops.append(Op(op="text", text=c.hook_text, start=0.0, end=d["hook_duration_s"]))
     t = d["text"]
+    accent_used = False
     for o in ops:
         if o.op == "text":
+            # one title font for the whole edit, plus at most one line in the accent font
+            if o.font == t.get("accent_font") and not accent_used and o.font:
+                accent_used = True
+            else:
+                o.font = t.get("font")
+            o.letter_spacing = t.get("letter_spacing") or None
             o.size = o.size or t["size"]
             o.color = o.color or t["color"]
             o.uppercase = t["uppercase"] if o.uppercase is None else o.uppercase
@@ -192,6 +224,7 @@ def enforce(plan: EditPlan, d: dict, c: Creative) -> EditPlan:
         ops.append(Op(op="captions", type=d["captions"]["style"], words=d["captions"]["words"], y=d["captions"]["y"]))
     plan.ops = ops
     plan.beat_sync = d["beat_sync"]
+    plan.grade = d.get("grade")
     plan.title = plan.title or c.angle[:60]
     return plan
 

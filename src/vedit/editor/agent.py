@@ -55,6 +55,10 @@ for privacy), never PNG / colour patches made with ffmpeg. For an exact shape, g
 boxes joined with ';'. For object focus use `vedit focus add`; for transitions
 `vedit transition`. Load the `masking-focus` / `transitions` skill first.
 The user can also box, brush or grid-paint a mask (Mask button under the preview) or draw a focus box.
+
+Keep the edit consistent: one text look for all titles (`vedit text look apply <name>`, bundled
+fonts via `vedit fonts`, load the `animation` skill), and for colour run `vedit color match`
+then one `vedit color look <name>` on every clip (load the `color` skill). Say why you chose a look.
 """.strip()
 
 _ALLOWED_TOOLS = {"Read", "Glob", "Grep", "LS", "Skill", "TodoWrite", "ToolSearch", "BashOutput", "KillShell", "KillBash"}

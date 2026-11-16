@@ -91,6 +91,14 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .fields label { color: var(--muted); font-size: 12px; }
 .fields .full { grid-column: 1 / 3; }
 .fields .pair { display: flex; gap: 6px; align-items: center; }
+.fields .sec { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line2); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.font-pick { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.font-pick select { width: 100%; }
+.font-pick .pair select { flex: 1; min-width: 0; }
+.font-preview { background: var(--pane3); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 10px; font-size: 22px;
+  line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.font-pick .hint { font-size: 11px; line-height: 1.35; }
 .fields .pair > * { flex: 1; min-width: 0; }
 .fields .pair > input[type=color], .fields .pair > .hint { flex: none; }
 .fields input:not([type=checkbox]):not([type=color]), .fields select, .fields textarea { width: 100%; }
@@ -729,6 +737,53 @@ function colorIn(value, commit) {
 function selectIn(value, options, commit) {
   return h("select", { onchange: (e) => commit(e.target.value) }, options.map(([v, l]) => h("option", { value: v, selected: v === value }, l)));
 }
+// ---- typography: bundled fonts + text looks (from /api/typography) ----
+let TYPO = null;
+const FONT_FACES = {};
+const FEEL_LABEL = { condensed: "Condensed", bold_sans: "Bold sans", clean: "Clean", serif: "Serif", handwritten: "Handwritten",
+  rounded: "Rounded", display: "Display", retro: "Retro", mono: "Mono" };
+fetch("/api/typography").then((r) => r.json()).then((t) => { TYPO = t; if (SEL) renderInspector(); }).catch(() => {});
+function fontFace(key) {  // load a bundled font into the page so the preview line draws in it
+  if (!key || !TYPO?.fonts.some((f) => f.key === key)) return null;
+  if (!FONT_FACES[key]) {
+    FONT_FACES[key] = new FontFace(`vfont-${key}`, `url(/api/fonts/${encodeURIComponent(key)})`);
+    FONT_FACES[key].load().then((f) => { document.fonts.add(f); }).catch(() => {});
+  }
+  return `vfont-${key}`;
+}
+function fontIn(value, commit, sample) {
+  if (!TYPO) return textIn(value ?? "", commit, { placeholder: "default" });
+  const known = TYPO.fonts.some((f) => f.key === value);
+  const def = TYPO.fonts.find((f) => f.key === TYPO.default);
+  const sel = h("select", { title: "Bundled fonts look the same on every computer" },
+    h("option", { value: "", selected: !value }, `Default (${def ? def.family : "Poppins Black"})`),
+    TYPO.feels.map((feel) => h("optgroup", { label: FEEL_LABEL[feel] || feel },
+      TYPO.fonts.filter((f) => f.feel === feel).map((f) => h("option", { value: f.key, selected: f.key === value, title: f.use }, f.family)))),
+    value && !known ? h("option", { value, selected: true }, `Custom: ${value}`) : null,
+    h("option", { value: "__other" }, "Other font… (name or .ttf path)"));
+  sel.onchange = (e) => {
+    if (e.target.value !== "__other") return commit(e.target.value);
+    const v = prompt("Font name or .ttf/.otf path (installed fonts work too):", value && !known ? value : "");
+    if (v && v.trim()) commit(v.trim()); else renderInspector();
+  };
+  const key = value || TYPO.default;
+  const fam = fontFace(key);
+  const info = TYPO.fonts.find((f) => f.key === key);
+  const preview = h("div", { class: "font-preview", title: info?.use || "",
+    style: { fontFamily: fam ? `"${fam}", sans-serif` : value || "inherit" } }, (sample || "").trim().slice(0, 40) || "Stop scrolling 50%");
+  return h("div", { class: "font-pick" }, sel, preview, info ? h("span", { class: "hint" }, info.use) : null);
+}
+function lookIn(l) {
+  const cur = l.style.look || "";
+  const sel = h("select", { title: "A look sets font, colours, outline/glow and animation together" },
+    h("option", { value: "", selected: !cur }, cur ? "" : "— choose a look —"),
+    TYPO.looks.map((k) => h("option", { value: k.name, selected: k.name === cur, title: k.about }, `${k.name}${k.saved ? " ★" : ""} · ${k.font}`)));
+  sel.onchange = (e) => e.target.value && op("text_look", { layer: l.id, name: e.target.value });
+  const all = h("button", { class: "ghost", title: "Give every text layer this look, so all titles match",
+    disabled: !cur, onclick: () => cur && op("text_look", { name: cur, all: true }) }, "Use on all text");
+  const about = TYPO.looks.find((k) => k.name === cur)?.about;
+  return h("div", { class: "font-pick" }, h("div", { class: "pair" }, sel, all), about ? h("span", { class: "hint" }, about) : null);
+}
 function rangeIn(value, min, max, step, commit) {
   const out = h("span", { class: "hint" }, Number(value).toFixed(2));
   const r = h("input", { type: "range", min, max, step, value, oninput: (e) => (out.textContent = Number(e.target.value).toFixed(2)), onchange: (e) => commit(e.target.value) });
@@ -809,6 +864,7 @@ function renderClip(c) {
       field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
       field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }))),
       field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }))),
+      ...colorFields(c),
       idx > 0 ? field("Transition in", h("div", { class: "pair" },
         selectIn(c.transition?.type || "none", TRANSITION_OPTS, (v) => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 })),
         numIn(c.transition?.duration ?? 0.5, (v) => c.transition && op("transition_set", { clip: c.id, type: c.transition.type, duration: v }), 0.05, { min: 0.05, max: 3, title: "Seconds", disabled: !c.transition }))) : null,
@@ -824,6 +880,39 @@ function renderClip(c) {
       h("button", { class: "danger", onclick: () => op("remove_clip", { clip: c.id }) }, "Delete clip"),
       idx > 0 && c.transition ? h("button", { onclick: () => op("transition_set", { type: c.transition.type, duration: c.transition.duration }) }, icon("transition"), "Use this transition on all cuts") : null,
       h("button", { onclick: () => askAbout(`clip ${c.id}`) }, "Ask AI about this…")),
+  ];
+}
+function colorFields(c) {
+  const g = c.grade || {};
+  const look = g.look || "natural";
+  const intensity = g.intensity ?? 1;
+  const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
+  const adj = (key) => (v) => op("color_set", { clip: c.id, [key]: v });
+  const looks = TYPO?.color_looks || [{ name: "natural", about: "" }];
+  const about = looks.find((l) => l.name === look)?.about;
+  const matchAll = h("button", { title: "Measure every clip and pull them toward their average, so the edit looks like one shoot",
+    onclick: (e) => { busy(e.currentTarget, "Matching…"); op("color_match", {}); } }, "Match all clips");
+  const matchHero = h("button", { class: "ghost", title: "Match every other clip to this one",
+    onclick: (e) => { busy(e.currentTarget, "Matching…"); op("color_match", { hero: c.id }); } }, "Match to this");
+  return [
+    h("label", { class: "full sec" }, "Colour"),
+    field("Look", h("div", { class: "font-pick" },
+      h("div", { class: "pair" },
+        selectIn(look, looks.map((l) => [l.name, l.name.replace(/-/g, " ")]), (v) => op("color_look", { clip: c.id, name: v, intensity })),
+        h("button", { class: "ghost", title: "Give every clip this look and strength, so the grade is consistent",
+          onclick: () => op("color_look", { all: true, name: look, intensity }) }, "Use on all clips")),
+      about ? h("span", { class: "hint" }, about) : null)),
+    look !== "natural" ? field("Look strength", rangeIn(intensity, 0, 1, 0.05, (v) => op("color_look", { clip: c.id, name: look, intensity: v }))) : null,
+    field("Match", h("div", { class: "font-pick" }, h("div", { class: "pair" }, matchAll, matchHero),
+      h("span", { class: "hint" }, g.matched_to ? `Matched to ${g.matched_to === "clips" ? "the clip average" : g.matched_to}` : "Not matched yet"))),
+    field("Brightness", rangeIn(g.brightness ?? 0, -0.3, 0.3, 0.01, adj("brightness"))),
+    field("Contrast", rangeIn(g.contrast ?? 1, 0.5, 1.6, 0.01, adj("contrast"))),
+    field("Saturation", rangeIn(g.saturation ?? 1, 0, 2, 0.01, adj("saturation"))),
+    field("Warmth", rangeIn(g.temperature ?? 0, -1, 1, 0.01, adj("temperature"))),
+    field("Tint", rangeIn(g.tint ?? 0, -1, 1, 0.01, adj("tint"))),
+    c.grade ? field("", h("div", { class: "pair" },
+      h("button", { class: "ghost", onclick: () => op("color_clear", { clip: c.id }) }, "Reset this clip"),
+      h("button", { class: "ghost", onclick: () => op("color_clear", { all: true }) }, "Reset all clips"))) : null,
   ];
 }
 const TRANSITION_OPTS = [["none", "None (cut)"], ["fade", "Crossfade"], ["fadeblack", "Dip to black"], ["fadewhite", "Flash (white)"],
@@ -846,12 +935,20 @@ function renderLayer(l) {
   const styleFields = l.type === "image" ? [
     field("Width", numIn(l.width ?? "", (v) => set({ width: v }), 10, { placeholder: "original" })),
   ] : [
+    l.type === "text" && TYPO ? field("Look", lookIn(l)) : null,
+    field("Font", fontIn(s.font, st("font"), s.uppercase ? (l.text || "").toUpperCase() : l.text)),
     field("Font size", numIn(s.size, st("size"), 2)),
-    field("Font", textIn(s.font ?? "", st("font"), { placeholder: "default (e.g. Impact)" })),
+    field("Letter spacing", numIn(s.letter_spacing ?? 0, st("letter_spacing"), 1, { min: -10, max: 40, title: "Extra px between letters" })),
     field("Colour", h("div", { class: "pair" }, colorIn(s.color, st("color")), h("span", { class: "hint" }, "highlight"), colorIn(s.highlight_color, st("highlight_color")))),
     field("Outline", h("div", { class: "pair" }, colorIn(s.stroke_color, st("stroke_color")), numIn(s.stroke_width, st("stroke_width"), 1, { min: 0, max: 30 }))),
     field("Box", h("div", { class: "pair" }, colorIn(s.bg_color || "#000000", st("bg_color")),
       h("button", { class: "ghost", onclick: () => st("bg_color")(s.bg_color ? "" : "#000000B0") }, s.bg_color ? "Remove box" : "Add box"))),
+    field("Glow", h("div", { class: "pair" }, colorIn(s.glow_color || "#FF2BD6", st("glow_color")),
+      h("button", { class: "ghost", onclick: () => st("glow_color")(s.glow_color ? "" : "#FF2BD6") }, s.glow_color ? "Remove glow" : "Add glow"))),
+    field("Gradient", h("div", { class: "pair" },
+      colorIn(s.gradient?.[0] || "#FFE259", (v) => st("gradient")(`${v},${s.gradient?.[1] || "#FF4E50"}`)),
+      colorIn(s.gradient?.[1] || "#FF4E50", (v) => st("gradient")(`${s.gradient?.[0] || "#FFE259"},${v}`)),
+      h("button", { class: "ghost", onclick: () => st("gradient")(s.gradient ? "" : "#FFE259,#FF4E50") }, s.gradient ? "Off" : "On"))),
     field("Uppercase", h("input", { type: "checkbox", checked: s.uppercase, onchange: (e) => st("uppercase")(e.target.checked) })),
     field("Max width", numIn(s.max_width, st("max_width"), 10)),
   ];

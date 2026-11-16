@@ -219,6 +219,9 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
     vdir = Path(batch._var(v["id"])["dir"])
     p = load(vdir)
     assert p.music and p.layers[0].y == "20%"          # music added, AI review fix applied
+    assert p.clips and all(c.grade and c.grade.matched_to == "reference" for c in p.clips)  # graded to the reference's colour
+    from vedit.ops.fonts import FONTS
+    assert {l.style.font for l in p.layers if l.type == "text"} <= set(FONTS)  # titles use a bundled font
     assert 3.5 <= p.duration <= 6.5
     assert len(history.log(vdir)) > 4                    # one undoable step per operation
     assert fake_ai.count("planner") == 1 and fake_ai.count("editor") == 2

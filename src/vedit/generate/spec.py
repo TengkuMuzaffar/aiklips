@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..library import FORMATS
 
@@ -16,10 +17,13 @@ AXES: dict[str, list[str]] = {
     "text_animation": ["reference", "pop_in", "slide_in", "typewriter", "drop_in", "zoom_in", "punch"],
     "transitions": ["reference", "none", "accent"],
     "music_section": ["start", "middle", "late"],
+    "color_look": ["reference", "clean-bright", "warm-film", "teal-orange", "moody", "vibrant"],
+    "font": ["reference", "condensed", "bold_sans", "serif", "rounded", "handwritten"],
 }
 AXIS_LABELS = {
     "hook": "Hook", "order": "Clip order", "pacing": "Pacing", "caption_style": "Caption style",
     "text_animation": "Text animation", "transitions": "Transitions", "music_section": "Music section",
+    "color_look": "Colour look", "font": "Font",
 }
 
 
@@ -81,6 +85,8 @@ class Op(_M):
     color: str | None = None
     uppercase: bool | None = None
     bg: str | None = None
+    font: str | None = None
+    letter_spacing: float | None = None
     width: int | None = None
     presets: list[str] = Field(default_factory=list)
     into: int | None = None
@@ -97,7 +103,8 @@ class EditPlan(_M):
     title: str = Field("", description="Short name for this variation")
     beat_sync: bool = Field(False, description="Snap cuts to the music's beats")
     ops: list[Op]
-    rationale: str = ""
+    rationale: str = Field("", description="1-3 sentences: why this opening shot and this order")
+    grade: SkipJsonSchema[dict | None] = None  # set by enforce(), never asked of the model
 
 
 class Fix(_M):

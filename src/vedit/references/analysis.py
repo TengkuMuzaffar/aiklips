@@ -73,6 +73,17 @@ def motion(path: Path, fps: int = 10, size: int = 64) -> dict:
     }
 
 
+def color_profile(path: Path, duration: float | None = None, samples: int = 12) -> dict | None:
+    """Measured colour of the whole video (ops.color stats): the target for `color match --ref`."""
+    from ..ops import color
+
+    dur = duration or media.probe(path)["duration"]
+    try:
+        return color.stats(path, 0.0, dur, samples=samples)
+    except VeditError:
+        return None
+
+
 # ---- sound ----------------------------------------------------------------------------------
 
 def load_audio(path: Path, start: float = 0.0, duration: float | None = None) -> np.ndarray | None:
@@ -308,6 +319,8 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
     sync = near_beat_ratio(cuts, beats)
     period = 60.0 / audio["bpm"] if audio and audio.get("bpm") else None
     chance = round(min(1.0, 2 * 0.08 / period), 3) if period else None
+    say("Measuring colour")
+    col = color_profile(path, dur)
     say("Making contact sheets")
     sheets = make_sheets(path, dur, pace["shots"], out_dir)
     text = None
@@ -328,6 +341,7 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         "motion_energy": mot.get("energy", []), "audio": audio,
         "cuts_on_beat": sync, "cuts_on_beat_chance": chance, "first_cut_s": cuts[0] if cuts else None,
         "flashes_on_beat": near_beat_ratio(mot.get("flashes", []), beats), "sheets": sheets, "transcript": text,
+        "color": col,
     }
     (out_dir / "metrics.json").write_text(json.dumps(metrics))
     return metrics
@@ -348,4 +362,5 @@ def summary_for_ai(m: dict) -> dict:
         "cuts_on_beat": m.get("cuts_on_beat"), "cuts_on_beat_if_random": m.get("cuts_on_beat_chance"),
         "flashes_on_beat": m.get("flashes_on_beat"), "first_cut_s": m.get("first_cut_s"),
         "transcript": m.get("transcript"),
+        "color": m.get("color"),
     }

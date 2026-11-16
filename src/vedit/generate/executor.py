@@ -11,7 +11,7 @@ from pathlib import Path
 from .. import history, library
 from ..ops import animate as anim
 from ..ops import captions as caps
-from ..ops import cut
+from ..ops import color, cut, fonts
 from ..project import Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError, save, transition_name
 from .spec import EditPlan, Fix, Op
 
@@ -85,7 +85,22 @@ def execute(plan: EditPlan, pdir: Path, files: dict[str, dict], name: str, fmt: 
             report["applied"].append(_describe(o))
         except (VeditError, ValueError, KeyError) as e:
             report["skipped"].append(f"{_describe(o)}: {e}")
+    if plan.grade:
+        try:
+            report["applied"].append(grade(pdir, plan.grade))
+        except (VeditError, ValueError, KeyError) as e:
+            report["skipped"].append(f"colour grade: {e}")
     return report
+
+
+def grade(pdir: Path, g: dict) -> str:
+    """Match every clip to the reference's measured colour (or to each other), then apply the look."""
+    with history.transaction(pdir, f"AI: colour grade ({g.get('look') or 'natural'})") as tx:
+        p = tx.project
+        r = color.match_clips(p, pdir, target=g.get("target"), strength=float(g.get("strength", 0.7)),
+                              label="reference" if g.get("target") else None)
+        color.set_look(p, g.get("look") or "natural", float(g.get("intensity", 0.8)))
+    return f"colour: matched {len(r['clips'])} clips to {r['matched_to']}, look {g.get('look') or 'natural'}"
 
 
 def _apply(p: Project, pdir: Path, o: Op, sid: dict[str, str], files: dict[str, dict], clip_ids: list[str]) -> None:
@@ -97,7 +112,8 @@ def _apply(p: Project, pdir: Path, o: Op, sid: dict[str, str], files: dict[str, 
         clip_ids.append(c.id)
     elif o.op == "text":
         st = TextStyle(size=o.size or 88, color=o.color or "#FFFFFF", uppercase=bool(o.uppercase), bg_color=o.bg,
-                       stroke_width=0 if o.bg else 6)
+                       stroke_width=0 if o.bg else 6, font=o.font if o.font in fonts.FONTS else None,
+                       letter_spacing=o.letter_spacing or 0.0)
         p.layers.append(Layer(id=p.new_id("t"), type="text", text=(o.text or "").strip()[:200] or "…", start=o.start or 0.0, end=o.end,
                               x=o.x or "50%", y=o.y or "25%", style=st, presets=_presets(o.presets)))
     elif o.op == "image":

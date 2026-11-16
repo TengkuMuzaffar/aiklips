@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import media
+from ..ops import color
 from ..project import Clip, Project, VeditError, resolve_media, state_dir
 from .layers import ensure_layer, even, layer_span
 
@@ -235,6 +236,11 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         sp = g.label("sp")
         g.add(f"[{cur}]setpts=PTS/{_f(clip.speed)}[{sp}]")
         vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur + pre + post, hold_head, hold_tail)
+        grade = color.filter_chain(clip.grade, pdir) if src.has_video else None
+        if grade:  # at canvas size: cheaper than at source size, and the blurred fill gets the same grade
+            gl = g.label("grade")
+            g.add(f"[{vlab}]{grade},format=yuv420p[{gl}]")
+            vlab = gl
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:

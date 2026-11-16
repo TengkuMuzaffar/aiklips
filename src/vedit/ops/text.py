@@ -11,10 +11,12 @@ from pathlib import Path
 from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont
 
 from ..project import TextStyle, VeditError
+from . import fonts as font_lib
 
-REPO_FONTS = Path(__file__).resolve().parents[3] / "assets" / "fonts"
+REPO_FONTS = font_lib.FONT_DIR
 
 DEFAULT_FONTS = [
+    str(font_lib.FONT_DIR / font_lib.FONTS[font_lib.DEFAULT_FONT][0]),  # bundled, same look on every OS
     # macOS
     "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -46,6 +48,9 @@ def find_font(name: str | None) -> str | None:
         p = Path(name).expanduser()
         if p.exists():
             return str(p)
+        bundled = font_lib.path(name)
+        if bundled and bundled.exists():
+            return str(bundled)
         want = name.lower().replace(" ", "").replace("-", "")
         best = None
         for d in _font_dirs():
@@ -66,7 +71,8 @@ def find_font(name: str | None) -> str | None:
                     return out
             except FileNotFoundError:
                 pass
-        raise VeditError(f"Font '{name}' not found. Put a .ttf/.otf in assets/fonts/ or pass a full path.")
+        raise VeditError(f"Font '{name}' not found. Bundled fonts: {', '.join(font_lib.FONTS)} (`vedit fonts`). "
+                         "Or put a .ttf/.otf in assets/fonts/ or pass a full path.")
     for f in DEFAULT_FONTS:
         if Path(f).exists():
             return f
@@ -89,16 +95,21 @@ def rgba(color: str, alpha: int | None = None) -> tuple[int, int, int, int]:
     return (c[0], c[1], c[2], c[3] if alpha is None else alpha)
 
 
-def _layout(words_by_line: list[list[str]], font, max_w: float) -> list[list[tuple[int, str]]]:
+def _wlen(font, word: str, ls: float) -> float:
+    """Width of a word including letter spacing."""
+    return font.getlength(word) + ls * max(0, len(word) - 1)
+
+
+def _layout(words_by_line: list[list[str]], font, max_w: float, ls: float = 0.0) -> list[list[tuple[int, str]]]:
     """Wrap words into lines. Returns lines of (global_word_index, word)."""
-    space = font.getlength(" ")
+    space = font.getlength(" ") + ls
     lines: list[list[tuple[int, str]]] = []
     idx = 0
     for para in words_by_line:
         line: list[tuple[int, str]] = []
         w = 0.0
         for word in para:
-            ww = font.getlength(word)
+            ww = _wlen(font, word, ls)
             if line and w + space + ww > max_w:
                 lines.append(line)
                 line, w = [], 0.0
@@ -109,6 +120,21 @@ def _layout(words_by_line: list[list[str]], font, max_w: float) -> list[list[tup
     return lines
 
 
+def _gradient(colors: list[str], w: int, h: int, top: float, bottom: float) -> Image.Image:
+    """Vertical gradient through `colors`, spanning rows top..bottom (clamped outside)."""
+    cs = [rgba(c) for c in colors] or [(255, 255, 255, 255)]
+    if len(cs) == 1:
+        return Image.new("RGBA", (w, h), cs[0])
+    col = Image.new("RGBA", (1, h))
+    span = max(1.0, bottom - top)
+    for y in range(h):
+        p = min(1.0, max(0.0, (y - top) / span)) * (len(cs) - 1)
+        i = min(len(cs) - 2, int(p))
+        f = p - i
+        col.putpixel((0, y), tuple(round(cs[i][k] + (cs[i + 1][k] - cs[i][k]) * f) for k in range(4)))
+    return col.resize((w, h))
+
+
 def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int | None = None, reveal: float = 1.0) -> Image.Image:
     """Render text to a tight RGBA sprite. `highlight` = word index drawn in highlight colour."""
     if style.uppercase:
@@ -116,17 +142,19 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
     size = max(6, round(style.size * scale))
     font = load_font(style.font, size)
     stroke = round(style.stroke_width * scale) if style.stroke_width else 0
+    ls = style.letter_spacing * scale
     words = [ln.split() for ln in text.split("\n")]
-    lines = _layout(words, font, style.max_width * scale)
+    lines = _layout(words, font, style.max_width * scale, ls)
     ascent, descent = font.getmetrics()
     line_h = (ascent + descent) * style.line_spacing
-    space = font.getlength(" ")
-    widths = [sum(font.getlength(w) for _, w in ln) + space * max(0, len(ln) - 1) for ln in lines]
+    space = font.getlength(" ") + ls
+    widths = [sum(_wlen(font, w, ls) for _, w in ln) + space * max(0, len(ln) - 1) for ln in lines]
     block_w = max(widths) if widths else 1
     block_h = line_h * len(lines) - (line_h - (ascent + descent))
     pad_bg = round(style.bg_padding * scale) if style.bg_color else 0
     shadow_off = round(5 * scale) if style.shadow else 0
-    pad = stroke + pad_bg + shadow_off * 2 + 2
+    glow = round(style.glow_size * scale) if style.glow_color else 0
+    pad = stroke + max(pad_bg, glow * 2) + shadow_off * 2 + 2
     W, H = int(block_w + 2 * pad) + 1, int(block_h + 2 * pad) + 1
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
@@ -139,7 +167,15 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
     total_chars = sum(len(w) for ln in lines for _, w in ln)
     budget = round(total_chars * reveal)
 
-    def draw_words(draw: ImageDraw.ImageDraw, shadow: bool) -> None:
+    def put(draw: ImageDraw.ImageDraw, xy: tuple[float, float], s: str, **kw) -> None:
+        if not ls:
+            draw.text(xy, s, font=font, **kw)
+            return
+        for i, ch in enumerate(s):  # keep kerning: offset each letter by the width of the text before it
+            draw.text((xy[0] + font.getlength(s[:i]) + i * ls, xy[1]), ch, font=font, **kw)
+
+    def draw_words(draw: ImageDraw.ImageDraw, mode: str) -> None:
+        """mode: shadow | glow | fill | mask (fill-only alpha of the non-highlighted words, for gradients)."""
         left = budget
         for li, ln in enumerate(lines):
             if style.align == "center":
@@ -152,22 +188,40 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
             for wi, word in ln:
                 shown = word[: max(0, left)]
                 left -= len(word)
+                hi = highlight is not None and wi == highlight
                 if shown:
-                    if shadow:
-                        draw.text((x + shadow_off, y + shadow_off), shown, font=font, fill=(0, 0, 0, 150),
-                                  stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+                    if mode == "shadow":
+                        put(draw, (x + shadow_off, y + shadow_off), shown, fill=(0, 0, 0, 150),
+                            stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+                    elif mode == "glow":
+                        put(draw, (x, y), shown, fill=rgba(style.glow_color), stroke_width=stroke + glow // 3,
+                            stroke_fill=rgba(style.glow_color))
+                    elif mode == "mask":
+                        if not hi:
+                            put(draw, (x, y), shown, fill=255)
                     else:
-                        color = style.highlight_color if highlight is not None and wi == highlight else style.color
-                        draw.text((x, y), shown, font=font, fill=rgba(color), stroke_width=stroke,
-                                  stroke_fill=rgba(style.stroke_color) if stroke else None)
-                x += font.getlength(word) + space
+                        color = style.highlight_color if hi else style.color
+                        put(draw, (x, y), shown, fill=rgba(color), stroke_width=stroke,
+                            stroke_fill=rgba(style.stroke_color) if stroke else None)
+                x += _wlen(font, word, ls) + space
 
+    if style.glow_color:
+        gl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw_words(ImageDraw.Draw(gl), "glow")
+        gl = gl.filter(ImageFilter.GaussianBlur(max(1, glow)))
+        img = Image.alpha_composite(Image.alpha_composite(img, gl), gl)  # twice: a glow should read at phone size
     if style.shadow:
         sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        draw_words(ImageDraw.Draw(sh), shadow=True)
+        draw_words(ImageDraw.Draw(sh), "shadow")
         sh = sh.filter(ImageFilter.GaussianBlur(max(1, 3 * scale)))
         img = Image.alpha_composite(img, sh)
-    draw_words(ImageDraw.Draw(img), shadow=False)
+    draw_words(ImageDraw.Draw(img), "fill")
+    if style.gradient:
+        mask = Image.new("L", (W, H), 0)
+        draw_words(ImageDraw.Draw(mask), "mask")
+        box = mask.getbbox()  # span the letters themselves, not the line box, so both colours fully show
+        if box:
+            img.paste(_gradient(style.gradient, W, H, box[1], box[3] - 1), (0, 0), mask)
     return img
 
 

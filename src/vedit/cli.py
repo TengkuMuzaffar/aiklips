@@ -35,10 +35,13 @@ face_app = typer.Typer(help="Face mesh / AR effects (needs: uv sync --extra ai)"
 music_app = typer.Typer(help="Background music")
 mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
+color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
+look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app)]:
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app)]:
     app.add_typer(sub, name=name)
+text_app.add_typer(look_app, name="look")
 
 STATE: dict[str, Any] = {"json": False, "project": None}
 
@@ -382,26 +385,46 @@ def _presets(names: list[str] | None) -> list[Preset]:
     return out
 
 
+def _gradient(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    cols = [c.strip() for c in value.split(",") if c.strip()]
+    return cols or []
+
+
 @text_app.command("add")
 def text_add(
     text: str,
     start: float = 0.0, end: Optional[float] = None,
     x: str = "50%", y: str = "30%",
-    size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
+    look: Optional[str] = typer.Option(None, help="Text look (font, colours, animation): `vedit text look list`"),
+    size: Optional[int] = None, color: Optional[str] = None,
+    font: Optional[str] = typer.Option(None, help="Bundled font key (`vedit fonts`), a font name, or a .ttf path"),
     stroke: Optional[str] = typer.Option(None, help="Outline colour"), stroke_width: Optional[int] = None,
     bg: Optional[str] = typer.Option(None, help="Background box colour, e.g. '#000000B0'"),
     max_width: Optional[int] = None, uppercase: Optional[bool] = None,
-    preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 ..."),
+    letter_spacing: Optional[float] = typer.Option(None, help="Extra px between letters (negative = tighter)"),
+    glow: Optional[str] = typer.Option(None, help="Glow colour behind the letters, e.g. '#FF2BD6'"),
+    gradient: Optional[str] = typer.Option(None, help="Fill gradient top->bottom, e.g. '#FFE600,#FF6A00'"),
+    preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 .. (overrides the look's)"),
 ):
     """Add a text overlay (titles, hooks, CTAs)."""
-    with edit(f"add text '{text[:30]}'") as tx:
+    from .ops import text_looks
+
+    kw = dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width, bg_color=bg, max_width=max_width,
+              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient))
+    with edit(f"add text '{text[:30]}'" + (f" ({look})" if look else "")) as tx:
         p = tx.project
-        layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y,
-                      style=_style_from(TextStyle(), size=size, color=color, font=font, stroke_color=stroke,
-                                        stroke_width=stroke_width, bg_color=bg, max_width=max_width, uppercase=uppercase),
-                      presets=_presets(preset))
+        layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y)
+        if look:
+            text_looks.apply(layer, look)
+            layer.style = text_looks.style_for(look, **kw)
+        else:
+            layer.style = _style_from(TextStyle(), **kw)
+        if preset:
+            layer.presets = _presets(preset)
         p.layers.append(layer)
-    emit({"layer": layer.id}, f"Added text layer {layer.id}")
+    emit({"layer": layer.id, "look": look}, f"Added text layer {layer.id}" + (f" with look {look}" if look else ""))
 
 
 @text_app.command("edit")
@@ -410,6 +433,9 @@ def text_edit(
     size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
     stroke: Optional[str] = None, stroke_width: Optional[int] = None, bg: Optional[str] = None,
     max_width: Optional[int] = None, uppercase: Optional[bool] = None, highlight: Optional[str] = None,
+    letter_spacing: Optional[float] = None,
+    glow: Optional[str] = typer.Option(None, help="Glow colour, or 'none' to remove"),
+    gradient: Optional[str] = typer.Option(None, help="'#top,#bottom' colours, or 'none' to remove"),
 ):
     """Change the text or style of a text/captions layer."""
     with edit(f"edit text {layer_id}") as tx:
@@ -417,8 +443,102 @@ def text_edit(
         if text is not None:
             l.text = text
         l.style = _style_from(l.style, size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
-                              bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight)
+                              bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight,
+                              letter_spacing=letter_spacing,
+                              glow_color=None if glow in (None, "none") else glow,
+                              gradient=None if gradient in (None, "none") else _gradient(gradient))
+        if glow == "none":
+            l.style.glow_color = None
+        if gradient == "none":
+            l.style.gradient = None
+        if font is not None:
+            from .ops.text import find_font
+            find_font(font)  # fail now with the list of fonts, not at render time
     emit({"layer": layer_id}, f"Updated {layer_id}")
+
+
+@look_app.command("list")
+def look_list():
+    """Built-in and saved text looks."""
+    from .ops import text_looks
+
+    rows = text_looks.catalog()
+    emit({"looks": rows}, "\n".join(f"  {r['name']:<16} {r['font']:<16} {'+'.join(r['animation']):<28} {r['about']}"
+                                    + ("  [saved]" if r["saved"] else "") for r in rows))
+
+
+@look_app.command("apply")
+def look_apply(
+    name: str,
+    layer: Optional[list[str]] = typer.Option(None, "--layer", "-l", help="Layer id, repeatable (default: every text layer)"),
+    captions: bool = typer.Option(False, help="Also restyle captions layers (keeps their size)"),
+    animation: bool = typer.Option(True, help="Also replace the layers' animation with the look's"),
+):
+    """Give layers one look, so every title in the edit matches."""
+    from .ops import text_looks
+
+    text_looks.get(name)
+    with edit(f"text look {name}") as tx:
+        p = tx.project
+        targets = [p.layer(i) for i in layer] if layer else [l for l in p.layers if l.type == "text" or (captions and l.type == "captions")]
+        if not targets:
+            raise VeditError("No text layers to restyle")
+        for l in targets:
+            if l.type not in ("text", "captions"):
+                raise VeditError(f"Layer {l.id} is {l.type}, not text")
+            text_looks.apply(l, name, animation=animation)
+    emit({"layers": [l.id for l in targets], "look": name}, f"Look {name} on {', '.join(l.id for l in targets)}")
+
+
+@look_app.command("save")
+def look_save(name: str, from_: str = typer.Option(..., "--from", help="Layer to copy the look from"),
+              about: str = typer.Option("", help="When to use it (shown in `text look list`)")):
+    """Save a layer's style + animation as a reusable look (stored in ~/.claude-cut, works in every project)."""
+    from .ops import text_looks
+
+    look = text_looks.save(name, load(pdir()).layer(from_), about)
+    emit({"look": name, "saved": look}, f"Saved look {name} from {from_}")
+
+
+@look_app.command("delete")
+def look_delete(name: str):
+    """Delete a saved look."""
+    from .ops import text_looks
+
+    text_looks.delete(name)
+    emit({"deleted": name}, f"Deleted look {name}")
+
+
+@app.command()
+def fonts(feel: Optional[str] = typer.Option(None, help="Only this feel: condensed, bold_sans, clean, serif, handwritten, rounded, display, retro, mono"),
+          sheet: bool = typer.Option(False, help="Render a sample sheet image (Read it to see the fonts)")):
+    """Bundled fonts with their feel and when to use them."""
+    from .ops import fonts as font_lib
+
+    rows = [r for r in font_lib.catalog() if not feel or r["feel"] == font_lib.feel_of(feel)]
+    data: dict = {"fonts": rows}
+    if sheet:
+        data["sheet"] = str(_font_sheet(rows))
+    emit(data, "\n".join(f"  {r['key']:<18} {r['feel']:<12} {r['use']}" for r in rows) + (f"\nSheet: {data['sheet']}" if sheet else ""))
+
+
+def _font_sheet(rows: list[dict]) -> Path:
+    from PIL import Image, ImageDraw
+
+    from . import library
+    from .ops.text import load_font
+
+    W, row_h = 1400, 140
+    img = Image.new("RGB", (W, row_h * len(rows) + 20), "#15171c")
+    d = ImageDraw.Draw(img)
+    label = load_font("poppins", 22)
+    for i, r in enumerate(rows):
+        y = 10 + i * row_h
+        d.text((20, y + 8), f"{r['key']}  ·  {r['feel']}", font=label, fill="#5eead4")
+        d.text((20, y + 42), "Stop scrolling: 50% OFF", font=load_font(r["key"], 56), fill="#ffffff")
+    out = library.home_dir() / "fonts-sheet.png"
+    img.save(out)
+    return out
 
 
 @image_app.command("add")
@@ -830,6 +950,125 @@ def focus_clear(clip: Optional[str] = None):
 
 # ---- music ------------------------------------------------------------------------------
 
+# ---- colour -------------------------------------------------------------------------
+
+def _clip_list(clip: Optional[list[str]]) -> Optional[list[str]]:
+    return list(clip) if clip else None
+
+
+@color_app.command("looks")
+def color_looks():
+    """Named colour looks."""
+    from .ops import color
+
+    emit({"looks": {k: v["about"] for k, v in color.LOOKS.items()}},
+         "\n".join(f"  {k:<14} {v['about']}" for k, v in color.LOOKS.items()))
+
+
+@color_app.command("stats")
+def color_stats():
+    """Measured colour of every clip, and how consistent the edit is (spread: lower = more uniform)."""
+    from .ops import color
+
+    d = pdir()
+    p = load(d)
+    r = color.consistency(p, d)
+    r["grades"] = {c.id: color.describe(c.grade) for c in p.clips}
+    human = "\n".join(f"  {cid}: luma {s['luma']:.2f}  sat {s['sat']:.2f}  warmth {s['warmth']:+.3f}  tint {s['tint']:+.3f}  | {r['grades'][cid]}"
+                      for cid, s in r.get("per_clip", {}).items())
+    emit(r, human + f"\nSpread: {r.get('spread_before', 0)} measured -> {r.get('spread_after', 0)} after grading")
+
+
+@color_app.command("match")
+def color_match(
+    to: Optional[str] = typer.Option(None, "--to", help="Hero clip id: match every other clip to this one"),
+    ref: Optional[int] = typer.Option(None, "--ref", help="Reference id (`vedit ref list`): match to that video's colour"),
+    video: Optional[str] = typer.Option(None, "--video", help="Any video file: match to its colour"),
+    strength: float = typer.Option(0.8, help="0..1, how far to move each clip toward the target"),
+    clip: Optional[list[str]] = typer.Option(None, help="Only these clips (repeatable)"),
+):
+    """Make clips look like one shoot. Default target: the average of all clips."""
+    from .ops import color
+
+    target, label = None, None
+    if ref is not None:
+        from .references import store
+
+        target = store.color_of(ref)
+        if not target:
+            raise VeditError(f"Could not measure the colour of reference {ref}")
+        label = f"ref {ref}"
+    elif video:
+        path = Path(video).expanduser()
+        if not path.exists():
+            raise VeditError(f"Video not found: {path}")
+        target = color.stats(path, 0.0, media.probe(path)["duration"], samples=12)
+        label = path.name
+    d = pdir()
+    with edit("colour match" + (f" to {label or to}" if (label or to) else "")) as tx:
+        r = color.match_clips(tx.project, d, target=target, hero=to, strength=strength, clip_ids=_clip_list(clip), label=label)
+    after = color.consistency(load(d), d)
+    r.update({k: after.get(k) for k in ("spread_before", "spread_after")})
+    emit(r, f"Matched {len(r['clips'])} clips to {r['matched_to']}. Colour spread {r['spread_before']} -> {r['spread_after']}")
+
+
+@color_app.command("look")
+def color_look(name: str, intensity: float = typer.Option(1.0, help="0..1"),
+               clip: Optional[list[str]] = typer.Option(None, help="Only these clips (default: all, for a consistent grade)")):
+    """Apply a creative colour look on top of the correction. `natural` removes it."""
+    from .ops import color
+
+    with edit(f"colour look {name}") as tx:
+        ids = color.set_look(tx.project, name, intensity, _clip_list(clip))
+    emit({"clips": ids, "look": name, "intensity": intensity}, f"Look {name} on {len(ids)} clip(s)")
+
+
+@color_app.command("set")
+def color_set(
+    clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)"),
+    brightness: Optional[float] = typer.Option(None, help="-0.3..0.3"), contrast: Optional[float] = typer.Option(None, help="0.5..1.6"),
+    saturation: Optional[float] = typer.Option(None, help="0 (B&W)..2"), temperature: Optional[float] = typer.Option(None, help="-1 cool..1 warm"),
+    tint: Optional[float] = typer.Option(None, help="-1 green..1 magenta"),
+):
+    """Set correction values by hand (replaces what `match` measured for those values)."""
+    from .project import Grade
+
+    vals = {k: v for k, v in dict(brightness=brightness, contrast=contrast, saturation=saturation, temperature=temperature, tint=tint).items() if v is not None}
+    if not vals:
+        raise VeditError("Give at least one of --brightness --contrast --saturation --temperature --tint")
+    with edit("colour set " + " ".join(f"{k}={v}" for k, v in vals.items())) as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = (c.grade or Grade()).model_copy(update=vals)
+    emit({"clips": [c.id for c in targets], **vals}, f"Colour set on {len(targets)} clip(s)")
+
+
+@color_app.command("lut")
+def color_lut(file: str, clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)")):
+    """Apply a .cube LUT (e.g. a camera's log-to-rec709 LUT, or a purchased film look)."""
+    from .project import Grade
+
+    path = Path(file).expanduser()
+    if path.suffix.lower() != ".cube" or not path.exists():
+        raise VeditError(f"Need an existing .cube file, got {file}")
+    d = pdir()
+    with edit(f"colour LUT {path.name}") as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = (c.grade or Grade()).model_copy(update={"lut": store_media_path(d, path)})
+    emit({"clips": [c.id for c in targets], "lut": str(path)}, f"LUT {path.name} on {len(targets)} clip(s)")
+
+
+@color_app.command("clear")
+def color_clear(clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)")):
+    """Remove grading (correction, look and LUT)."""
+    with edit("colour clear") as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = None
+    emit({"clips": [c.id for c in targets]}, f"Cleared colour on {len(targets)} clip(s)")
+
+
 @music_app.command("add")
 def music_add(file: str, volume: float = 0.2, start: float = 0.0, offset: float = typer.Option(0.0, help="Start position inside the song"),
               duck: bool = typer.Option(True, help="Lower music automatically while someone talks"),
@@ -1104,7 +1343,7 @@ def gen_run(
     fmt: str = typer.Option("reels", "--format", help="reels | portrait45 | square | landscape"),
     language: str = typer.Option("en"),
     quality: str = typer.Option("balanced", help="best | balanced | economy"),
-    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section"),
+    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section, color_look, font"),
     review: bool = typer.Option(True, help="AI reviews each result once"),
     lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
 ):
