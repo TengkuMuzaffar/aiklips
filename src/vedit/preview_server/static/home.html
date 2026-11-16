@@ -31,7 +31,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .top { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .top h1 { font-size: 22px; margin: 0; font-weight: 650; }
 .top .count { color: var(--faint); font-size: 14px; }
-#search { width: 220px; }
+#search, #ref-search { width: 220px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
 .card { background: var(--pane); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; cursor: pointer; position: relative; transition: border-color .12s, transform .12s; }
@@ -86,7 +86,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .lede { color: var(--muted); margin: -12px 0 22px; max-width: 760px; }
 
 /* ---- references ---- */
-.thumb.tall { height: 260px; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--pane3); color: var(--muted); border: 1px solid var(--line2); }
 .chip.on { background: #0f2a26; color: var(--accent); border-color: #1d5a50; }
@@ -96,11 +95,17 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 @keyframes sp { to { transform: rotate(360deg); } }
 .drop { border: 2px dashed var(--line2); border-radius: 14px; padding: 34px 20px; text-align: center; color: var(--muted); }
 .drop.over, .dropzone.over { border-color: var(--accent); background: #0f2a2622; }
-.summary { color: var(--muted); font-size: 12px; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .dialog.wide { width: min(1040px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
-.refgrid { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
-.refgrid video { width: 100%; max-height: 520px; background: #000; border-radius: 10px; }
+.refgrid { display: grid; grid-template-columns: 360px 1fr; gap: 28px; align-items: start; }
+.refgrid > .refside { position: sticky; top: 132px; }
+.refgrid video { width: 100%; max-height: calc(100vh - 300px); background: #000; border-radius: 10px; display: block; }
+.refbar { position: sticky; top: 56px; z-index: 4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--bg); padding: 12px 0; margin: -12px 0 18px; border-bottom: 1px solid var(--line); }
+.refbar .crumb { color: var(--muted); }
+.refbar .crumb:hover { color: var(--text); }
+.refbar input.title { flex: 1; min-width: 160px; font-size: 18px; font-weight: 600; background: transparent; border-color: transparent; }
+.refbar input.title:hover { border-color: var(--line2); }
+.refbar input.title:focus { border-color: var(--accent); background: var(--bg); }
 .traits { width: 100%; border-collapse: collapse; font-size: 13px; }
 .traits td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
 .traits td:first-child { color: var(--muted); width: 120px; white-space: nowrap; }
@@ -181,9 +186,9 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
 .review-list dt { color: var(--muted); }
 .review-list dd { margin: 0; }
 .vplayer { width: 100%; max-height: 72vh; background: #000; border-radius: 10px; display: block; }
-@media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } .form-grid, .checks { grid-template-columns: 1fr; } .tabs { margin-left: 4px; } .tab { padding: 0 8px; } .hide-sm { display: none; } header { padding: 0 12px; gap: 6px; } .logo { white-space: nowrap; } main { padding: 20px 16px 48px; } }
+@media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } .refgrid > .refside { position: static; } .refgrid video { max-height: 60vh; } .form-grid, .checks { grid-template-columns: 1fr; } .tabs { margin-left: 4px; } .tab { padding: 0 8px; } .hide-sm { display: none; } header { padding: 0 12px; gap: 6px; } .logo { white-space: nowrap; } main { padding: 20px 16px 48px; } }
 @media (max-width: 560px) { .logo { display: none; } .tabs { margin-left: 0; } header button.primary { font-size: 0; padding: 6px 12px; } header button.primary::first-letter { font-size: 18px; } .vgrid { grid-template-columns: repeat(2, 1fr); } .steps .stp { font-size: 0; } .steps .stp.on { font-size: 12px; white-space: nowrap; } }
-@media (max-width: 560px) { #search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { #search, #ref-search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
@@ -213,9 +218,17 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <div class="foot" id="foot"></div>
 </main>
 <main id="view-references" hidden>
-  <div class="top"><h1>References</h1><span class="count" id="ref-count"></span></div>
+  <div id="ref-index">
+  <div class="top">
+    <h1>References</h1><span class="count" id="ref-count"></span>
+    <div class="spacer"></div>
+    <input id="ref-search" type="search" placeholder="Search references  ( / )">
+    <select id="ref-sort"><option value="recent">Recently updated</option><option value="name">Name</option><option value="created">Newest</option></select>
+  </div>
   <p class="lede">Videos whose style you like. The AI studies each one: pacing and cuts, the hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat). It learns the pattern and never copies their footage or music.</p>
   <div id="ref-list"></div>
+  </div>
+  <div id="ref-detail" hidden></div>
 </main>
 <main id="view-generate" hidden>
   <div class="top"><h1>Generate</h1></div>
@@ -248,7 +261,6 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="danger" id="c-ok" title="Delete permanently">Delete</button></div>
 </div></div>
 
-<div class="veil" id="dlg-ref"><div class="dialog wide" id="ref-body"></div></div>
 <div class="veil" id="dlg-wiz"><div class="dialog wide" id="wiz-body"></div></div>
 <div class="veil" id="dlg-play"><div class="dialog wide" id="play-body"></div></div>
 
@@ -365,6 +377,10 @@ function showMenu(e, p) {
     item("Copy folder path", "Copy the project folder location", () => navigator.clipboard?.writeText(p.path).then(() => toast("Path copied"))), h("hr"));
   m.append(item("Remove from list", "Hide from this list; files stay on disk", () => removeProject(p, false)));
   if (!p.missing) m.append(item("Delete project…", "Delete the project folder (asks first)", () => removeProject(p, true), "red"));
+  placeMenu(e);
+}
+function placeMenu(e) {
+  const m = $("#menu");
   m.style.display = "block";
   const r = e.target.getBoundingClientRect();
   m.style.left = `${Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)}px`;
@@ -438,10 +454,12 @@ const spinner = () => h("span", { class: "spin" });
 
 // ============================================================ tabs
 const TABS = ["projects", "references", "generate"];
-let TAB = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "projects";
+const [HASH_TAB, HASH_REF] = location.hash.slice(1).split("/");
+let TAB = TABS.includes(HASH_TAB) ? HASH_TAB : "projects";
 function setTab(t) {
   TAB = t;
   history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
+  if (REF_OPEN) closeRef(false);
   for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("header [data-for]").forEach((b) => (b.hidden = b.dataset.for !== t));
@@ -469,34 +487,70 @@ function refBadge(r) {
   const txt = r.progress || (r.job && r.job.note) || (r.status === "queued" ? "Queued" : "Studying…");
   return h("span", { class: "badge busy" }, spinner(), txt);
 }
+function deleteRef(r) {
+  confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => {
+    const ok = await call("DELETE", `/api/references/${r.id}`);
+    if (!ok) return;
+    toast("Reference deleted");
+    if (REF_OPEN === r.id) closeRef();
+    loadRefs();
+  });
+}
+function sortedRefs() {
+  const q = $("#ref-search").value.trim().toLowerCase();
+  const rs = REFS.filter((r) => !q || [r.name, r.summary, ...(r.auto_tags || []), ...(r.tags || [])].some((x) => x && x.toLowerCase().includes(q)));
+  const mode = $("#ref-sort").value;
+  if (mode === "recent") rs.sort((a, b) => b.updated_at - a.updated_at);
+  if (mode === "name") rs.sort((a, b) => a.name.localeCompare(b.name));
+  if (mode === "created") rs.sort((a, b) => b.created_at - a.created_at);
+  return rs;
+}
 function renderRefs() {
   const list = $("#ref-list"); list.innerHTML = "";
   $("#ref-count").textContent = REFS.length ? String(REFS.length) : "";
   if (!REFS.length) {
-    list.append(h("div", { class: "drop", id: "ref-drop" },
-      h("h2", { style: { color: "var(--text)", margin: "0 0 6px" } }, "Add videos you want to learn from"),
+    list.append(h("div", { class: "empty" },
+      h("h2", {}, "Add videos you want to learn from"),
       h("p", {}, "Drop TikToks, Reels or ads here (as video files). The AI studies each one in about a minute."),
       h("button", { class: "primary", onclick: () => $("#ref-file").click(), title: "Choose video files" }, "＋ Add videos")));
     return;
   }
   const grid = h("div", { class: "grid" });
   grid.append(h("div", { class: "card new", tabindex: 0, onclick: () => $("#ref-file").click(), onkeydown: (e) => e.key === "Enter" && $("#ref-file").click() },
-    h("div", { class: "plus" }, "＋"), h("div", {}, "Add videos"), h("small", { style: { color: "var(--faint)" } }, "or drop them here")));
-  for (const r of REFS) grid.append(refCard(r));
+    h("div", { class: "plus" }, "＋"), h("div", {}, "Add videos")));
+  for (const r of sortedRefs()) grid.append(refCard(r));
   list.append(grid);
+}
+function refMeta(r) {
+  const what = r.status === "failed" ? "Couldn't be studied" : refBusy(r) ? "Being studied" : (r.auto_tags || [])[0];
+  return [r.duration ? dur(r.duration) : null, what, `added ${ago(r.created_at)}`].filter(Boolean).join(" · ");
 }
 function refCard(r) {
   const url = `/api/references/${r.id}/thumb.jpg?v=${Math.round(r.updated_at)}`;
-  const thumb = h("div", { class: "thumb tall" }, h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
+  const thumb = h("div", { class: "thumb" }, h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
     h("img", { src: url, alt: "", onerror: (e) => e.target.remove() }));
   const b = refBadge(r); if (b) thumb.append(b);
   if (r.duration) thumb.append(h("span", { class: "fmt" }, dur(r.duration)));
-  const tags = [...(r.auto_tags || []), ...(r.tags || [])].slice(0, 5);
-  return h("div", { class: "card", tabindex: 0, title: r.summary || r.name, onclick: () => openRef(r.id), onkeydown: (e) => e.key === "Enter" && openRef(r.id) },
-    thumb, h("div", { class: "info" }, h("div", { class: "name" }, r.name),
-      h("div", { class: "summary" }, r.status === "failed" ? (r.error || "Could not be studied") : (r.summary || (refBusy(r) ? "Being studied…" : ""))),
-      tags.length ? h("div", { class: "chips" }, tags.map((t) => h("span", { class: "chip" }, t))) : null));
+  return h("div", { class: "card", tabindex: 0, title: r.status === "failed" ? (r.error || r.name) : (r.summary || r.name), onclick: () => openRef(r.id), onkeydown: (e) => e.key === "Enter" && openRef(r.id) },
+    thumb, h("div", { class: "info" }, h("div", { class: "name" }, r.name), h("div", { class: "meta" }, refMeta(r))),
+    h("button", { class: "ghost more", title: "More", onclick: (e) => { e.stopPropagation(); showRefMenu(e, r); } }, "⋯"));
 }
+function renameRef(r) {
+  ask("Rename reference", "Only the name changes; what the AI learned stays.", r.name, "Rename", async (v) => {
+    const res = await call("PATCH", `/api/references/${r.id}`, { name: v }); if (!res) return false; loadRefs();
+  });
+}
+function showRefMenu(e, r) {
+  const m = $("#menu"); m.innerHTML = "";
+  const item = (label, tip, fn, cls) => h("button", { class: cls || "", title: tip, onclick: () => { hideMenu(); fn(); } }, label);
+  m.append(item("Open", "See the style it learned", () => openRef(r.id)), item("Rename…", "Change the reference name", () => renameRef(r)));
+  if (r.status === "ready" || r.status === "failed") m.append(item("Re-study", "Measure and study again", async () => { await call("POST", `/api/references/${r.id}/restudy`); toast("Studying again…"); loadRefs(); }));
+  if (r.dna) m.append(item("Edit traits…", "Correct what the AI got wrong", () => openRef(r.id, true)));
+  m.append(h("hr"), item("Delete reference…", "Delete it and what the AI learned (asks first)", () => deleteRef(r), "red"));
+  placeMenu(e);
+}
+$("#ref-search").oninput = renderRefs;
+$("#ref-sort").onchange = renderRefs;
 async function uploadRefs(files) {
   files = [...files].filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(f.name));
   if (!files.length) return toast("Drop video files", true);
@@ -533,13 +587,31 @@ function timelineSvg(m) {
   return svg;
 }
 const confColor = (c) => (c == null ? "transparent" : c >= 0.7 ? "#5eead4" : c >= 0.4 ? "#fbbf24" : "#f87171");
+let REF_OPEN = null;
+function closeRef(updateHash = true) {
+  REF_OPEN = null; clearTimeout(openRef.t);
+  $("#ref-detail").hidden = true; $("#ref-detail").innerHTML = "";
+  $("#ref-index").hidden = false;
+  if (updateHash && TAB === "references") history.replaceState(null, "", "#references");
+}
 async function openRef(id, editing = false) {
-  const r = await (await fetch(`/api/references/${id}`)).json();
-  const body = $("#ref-body"); body.innerHTML = "";
+  const res = await fetch(`/api/references/${id}`);
+  if (!res.ok) { toast("Reference not found", true); return closeRef(); }
+  const r = await res.json();
+  const first = REF_OPEN !== id;
+  REF_OPEN = id;
+  history.replaceState(null, "", `#references/${id}`);
+  const body = $("#ref-detail");
   const m = r.metrics;
-  const nameIn = h("input", { type: "text", value: r.name, maxlength: 120, style: { fontSize: "18px", fontWeight: 600, width: "100%" }, title: "Rename" });
+  const nameIn = h("input", { type: "text", class: "title", value: r.name, maxlength: 120, title: "Click to rename", "aria-label": "Reference name" });
   nameIn.onchange = async () => { await call("PATCH", `/api/references/${id}`, { name: nameIn.value }); loadRefs(); };
-  const left = h("div", {}, h("video", { src: `/api/references/${id}/video`, controls: true, playsinline: true, muted: true, loop: true }));
+  const bar = h("div", { class: "refbar" },
+    h("button", { class: "ghost crumb", onclick: () => closeRef(), title: "Back to all references (Esc)" }, "← References"),
+    nameIn,
+    r.status === "ready" || r.status === "failed" ? h("button", { title: "Measure and study again", onclick: async () => { await call("POST", `/api/references/${id}/restudy`); toast("Studying again…"); loadRefs(); openRef(id); } }, "Re-study") : null,
+    r.dna && !editing ? h("button", { title: "Correct what the AI got wrong", onclick: () => openRef(id, true) }, "Edit traits") : null,
+    h("button", { class: "danger", title: "Delete this reference", onclick: () => deleteRef(r) }, "Delete"));
+  const left = h("div", { class: "refside" }, h("video", { src: `/api/references/${id}/video`, controls: true, playsinline: true, muted: true, loop: true }));
   if (m) {
     const a = m.audio || {};
     left.append(h("div", { class: "sect" }, "Measured"),
@@ -551,8 +623,8 @@ async function openRef(id, editing = false) {
         ["First cut", m.first_cut_s != null ? `${m.first_cut_s}s` : "no cuts"],
       ].map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", {}, v)))));
   }
-  const right = h("div", {}, nameIn);
-  if (r.summary) right.append(h("p", { style: { color: "var(--muted)", margin: "8px 0 0" } }, r.summary));
+  const right = h("div", {});
+  if (r.summary) right.append(h("p", { style: { color: "var(--muted)", margin: "0" } }, r.summary));
   if (r.status !== "ready") right.append(h("div", { class: r.status === "failed" ? "note err" : "note" }, r.status === "failed" ? (r.error || "Failed") : [spinner(), r.progress || "Waiting to be studied"]));
   else if (r.error) right.append(h("div", { class: "note" }, r.error));
   if (r.stale) right.append(h("div", { class: "note" }, "The study prompt has improved since this was studied. Re-study for better results."));
@@ -566,16 +638,13 @@ async function openRef(id, editing = false) {
   if (editing && r.dna) right.append(await traitForm(r));
   if (m && m.sheets && m.sheets.length && !editing)
     right.append(h("div", { class: "sect" }, "What the AI looked at"), h("div", { class: "sheets" }, m.sheets.map((_, i) => h("img", { src: `/api/references/${id}/sheet/${i + 1}.jpg`, alt: "" }))));
-  const acts = h("div", { class: "actions" },
-    h("button", { class: "danger", title: "Delete this reference", onclick: () => confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => { await call("DELETE", `/api/references/${id}`); hide("#dlg-ref"); loadRefs(); }) }, "Delete"),
-    h("div", { class: "spacer" }),
-    r.status === "ready" || r.status === "failed" ? h("button", { title: "Measure and study again", onclick: async () => { await call("POST", `/api/references/${id}/restudy`); toast("Studying again…"); loadRefs(); openRef(id); } }, "Re-study") : null,
-    r.dna && !editing ? h("button", { title: "Correct what the AI got wrong", onclick: () => openRef(id, true) }, "Edit traits") : null,
-    h("button", { class: "primary", "data-close": "", onclick: () => hide("#dlg-ref"), title: "Close" }, "Done"));
-  body.append(h("div", { class: "refgrid" }, left, right), acts);
-  show("#dlg-ref");
+  if (REF_OPEN !== id) return; // closed while loading
+  body.innerHTML = "";
+  body.append(bar, h("div", { class: "refgrid" }, left, right));
+  $("#ref-index").hidden = true; body.hidden = false;
+  if (first) window.scrollTo(0, 0);
   clearTimeout(openRef.t);
-  if (refBusy(r)) openRef.t = setTimeout(() => $("#dlg-ref").style.display === "flex" && openRef(id), 2500);
+  if (refBusy(r) && !editing) openRef.t = setTimeout(() => REF_OPEN === id && openRef(id), 2500);
 }
 function getPath(o, p) { return p.split(".").reduce((a, k) => (a == null ? a : a[k]), o); }
 async function traitForm(r) {
@@ -880,13 +949,16 @@ async function submitWiz() {
 // ============================================================ keys + start
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (e.key === "Escape" && !document.querySelector(".veil[style*=flex]") && REF_OPEN && !typing) { closeRef(); return; }
   if (e.key === "Escape") { document.querySelectorAll(".veil").forEach((v) => (v.style.display = "none")); hideMenu(); $("#play-body").innerHTML = ""; }
   if (typing || document.querySelector(".veil[style*=flex]")) return;
   if (e.key === "/" && TAB === "projects") { e.preventDefault(); $("#search").focus(); }
+  if (e.key === "/" && TAB === "references" && !REF_OPEN) { e.preventDefault(); $("#ref-search").focus(); }
   if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : openWizard(); }
   if (["1", "2", "3"].includes(e.key)) setTab(TABS[+e.key - 1]);
 });
 setTab(TAB);
+if (TAB === "references" && HASH_REF) openRef(HASH_REF);
 loadRefs();
 loadBatches();
 </script>

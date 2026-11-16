@@ -1772,7 +1772,8 @@ function paintMode(layer, vb) {
     for (const it of items()) {
       const ctx = ctxOf(it.keep);
       ctx.globalCompositeOperation = it.erase ? "destination-out" : "source-over";
-      ctx.fillStyle = ctx.strokeStyle = it.keep ? "rgba(251, 146, 60, 0.55)" : "rgba(94, 234, 212, 0.5)";
+      // destination-out removes by the source alpha, so erase with an opaque colour or it only half-erases
+      ctx.fillStyle = ctx.strokeStyle = it.erase ? "#000" : it.keep ? "rgba(251, 146, 60, 0.55)" : "rgba(94, 234, 212, 0.5)";
       if (it.rect) { ctx.fillRect(...it.rect); continue; }
       ctx.lineCap = ctx.lineJoin = "round"; ctx.lineWidth = it.r * 2;
       ctx.beginPath(); it.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));

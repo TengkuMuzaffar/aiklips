@@ -149,7 +149,7 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
                 track.render_remove(pdir, project, source_id, eff, out, log)
             return {"overlay": out}
         if mode in ("mask", "spotlight", "both"):
-            out = cdir / f"{eff.type}-{key}.mp4"
+            out = cdir / (f"mask-{_key(path, eff, track.MASK_VERSION)}.mp4" if eff.type == "mask" else f"{eff.type}-{key}.mp4")
             if not out.exists():
                 log(f"Computing {eff.type} for {source_id} (one-time)...")
                 track.render_mask(pdir, project, source_id, eff, out, log)
