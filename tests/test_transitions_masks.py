@@ -246,3 +246,22 @@ def test_remove_never_paints_over_or_samples_what_is_in_front():
     assert out[130, 150, 3] == 0  # the product stays on top
     inside = out[62:105, 105:195, :3].reshape(-1, 3).astype(float)
     assert np.abs(inside.mean(0) - [180, 120, 60]).max() < 8  # filled with cardboard, not grey product
+
+
+def test_paint_erase_survives_feather():
+    """Erased strokes must stay erased: the feather's grow step used to fill narrow erase strips back in."""
+    import cv2
+
+    from vedit.ops.track import region_mask
+
+    mw, mh = 1080, 1920
+    w = 20 / mw
+    p = {"box": [0.2, 0.2, 0.6, 0.3], "shape": "paint", "expand": 1.0, "feather": 0.04,
+         "paint": [{"rect": [0.2, 0.2, 0.6, 0.3]}, {"rect": [0.5 - w / 2, 0.2, w, 0.3], "erase": True}]}
+    m = region_mask(cv2, p, p["box"], mw, mh)
+    assert m[int(0.35 * mh), int(0.5 * mw)] == 0          # inside the erased strip
+    assert m[int(0.35 * mh), int(0.3 * mw)] == 255        # painted area untouched
+    # painting over an erased area again brings it back
+    p["paint"].append({"rect": [0.45, 0.2, 0.1, 0.3]})
+    m = region_mask(cv2, p, p["box"], mw, mh)
+    assert m[int(0.35 * mh), int(0.5 * mw)] == 255

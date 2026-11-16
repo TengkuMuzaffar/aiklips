@@ -30,7 +30,8 @@ from .effects import EFFECT_VERSION, Writer, cache_dir, model_path, proc_size, r
 TRACK_SIDE = 640  # tracking resolution (long side)
 MASK_SIDE = 960  # mask video resolution (long side); scaled up when compositing
 REMOVE_SIDE = 1280  # resolution of the reconstructed background for style "remove"
-REMOVE_VERSION = "remove-5"  # bump when the reconstruction changes (part of the cache key)
+REMOVE_VERSION = "remove-6"  # bump when the reconstruction changes (part of the cache key)
+MASK_VERSION = "mask-2"  # bump when region_mask changes (part of the cache key); 2 = erase strokes survive the feather
 DETECTOR_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite"
 STYLES = ("remove", "blur", "pixelate", "fill", "dim")
 
@@ -445,6 +446,7 @@ def region_mask(cv2, p: dict, box: list[float], mw: int, mh: int, eff_type: str 
     cx, cy = (bx + bw / 2) * mw, (by + bh / 2) * mh
     hw, hh = bw * mw * expand / 2, bh * mh * expand / 2
     m = np.zeros((mh, mw), np.uint8)
+    erased = None  # pixels the user erased: the feather must not grow back into them
     if shape == "paint" and p.get("paint"):
         # painted items live in source coords at the reference box; move/scale them with the tracked box
         r0 = [float(v) for v in p["box"]]
@@ -469,6 +471,20 @@ def region_mask(cv2, p: dict, box: list[float], mw: int, mh: int, eff_type: str 
                     cv2.polylines(m, [pts], False, val, rad * 2, cv2.LINE_AA)
                     for q in (pts[0], pts[-1]):  # round caps
                         cv2.circle(m, (int(q[0]), int(q[1])), rad, val, -1, cv2.LINE_AA)
+        if any(it.get("erase") for it in p["paint"]):
+            ref = np.zeros_like(m)  # the same items without erasing, to see which pixels erase strokes cleared
+            for it in p["paint"]:
+                if "rect" in it:
+                    x, y, w, h = it["rect"]
+                    (ax, ay), (bx2, by2) = tx(x, y), tx(x + w, y + h)
+                    cv2.rectangle(ref, (ax, ay), (bx2, by2), 255, -1)
+                else:
+                    pts = np.array([tx(x, y) for x, y in it["pts"]], np.int32)
+                    rad = max(1, int(round(float(it.get("r", 0.02)) * mw * (sx * sy) ** 0.5)))
+                    cv2.polylines(ref, [pts], False, 255, rad * 2, cv2.LINE_AA)
+                    for q in (pts[0], pts[-1]):
+                        cv2.circle(ref, (int(q[0]), int(q[1])), rad, 255, -1, cv2.LINE_AA)
+            erased = (ref > 128) & (m < 128)
     elif shape == "ellipse":
         cv2.ellipse(m, (int(cx), int(cy)), (max(1, int(hw)), max(1, int(hh))), 0, 0, 360, 255, -1, cv2.LINE_AA)
     else:
@@ -483,6 +499,10 @@ def region_mask(cv2, p: dict, box: list[float], mw: int, mh: int, eff_type: str 
         k = int(fpx / 2) * 2 + 1
         m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
         m = cv2.GaussianBlur(m, (0, 0), fpx / 2)
+    if erased is not None and erased.any():
+        # keep erased areas clear after the grow + blur (only a slight soft edge where the eraser ran)
+        soft = cv2.GaussianBlur(erased.astype(np.float32), (0, 0), 1.5)
+        m = (m.astype(np.float32) * np.clip(1.0 - soft * 1.5, 0.0, 1.0)).astype(np.uint8)
     return m
 
 
