@@ -224,13 +224,35 @@ def duplicate(pid: int) -> dict:
     return get(register(dest, name))
 
 
+def _rmtree_project(pdir: Path) -> None:
+    """Delete a project folder, first letting an in-flight preview render finish.
+
+    On Windows a file still open by ffmpeg can't be unlinked, so we wait on the
+    preview lock and retry briefly for handles that close a moment later.
+    """
+    from .render.runner import _file_lock
+
+    lock = pdir / STATE_DIR / "preview" / ".lock"
+    if lock.exists():
+        with _file_lock(lock):
+            pass
+    for attempt in range(20):
+        try:
+            shutil.rmtree(pdir)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
+
+
 def remove(pid: int, delete_files: bool = False) -> None:
     row = get(pid)
     pdir = Path(row["path"])
     if delete_files and pdir.exists():
         if not (pdir / PROJECT_FILE).exists():
             raise VeditError(f"Refusing to delete {pdir}: it doesn't look like a claude-cut project")
-        shutil.rmtree(pdir)
+        _rmtree_project(pdir)
     with closing(_db()) as con, con:
         if delete_files:
             con.execute("DELETE FROM projects WHERE id = ?", (pid,))

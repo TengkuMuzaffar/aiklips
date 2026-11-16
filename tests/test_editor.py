@@ -64,10 +64,11 @@ def test_cd_inside_repo_and_always_allow_candidates(tmp_path):
     from vedit.editor.agent import REPO_ROOT, bash_check
 
     roots = (REPO_ROOT, tmp_path)
-    assert bash_check(f"cd {REPO_ROOT} && uv run vedit --json info", roots) == (True, set())
-    assert bash_check(f"cd {tmp_path}/assets && uv run vedit info", roots)[0]
+    repo, tmp = REPO_ROOT.as_posix(), tmp_path.as_posix()  # bash eats unquoted Windows backslashes
+    assert bash_check(f"cd {repo} && uv run vedit --json info", roots) == (True, set())
+    assert bash_check(f"cd {tmp}/assets && uv run vedit info", roots)[0]
     # ffmpeg needs the user's OK, and can be "always allowed"; rm / sh never are offered
-    assert bash_check(f"cd {tmp_path} && ffmpeg -y -i a.mp4 b.png", roots) == (False, {"ffmpeg"})
+    assert bash_check(f"cd {tmp} && ffmpeg -y -i a.mp4 b.png", roots) == (False, {"ffmpeg"})
     assert bash_check("uv run vedit info | sh", roots) == (False, {"sh"})
     assert bash_check("uv run vedit info > out.txt", roots) == (False, None)
 
