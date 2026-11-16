@@ -1037,10 +1037,16 @@ def audit_settings_cmd(threshold: Optional[int] = typer.Option(None, help="Pass 
 
 
 @app.command("taste")
-def taste_cmd(clear: bool = typer.Option(False, help="Forget everything learned from Keep / Discard")):
-    """What generation has learned from the videos you kept and discarded."""
+def taste_cmd(clear: bool = typer.Option(False, help="Forget everything learned from Keep / Discard"),
+              clear_marks: bool = typer.Option(False, help="Forget what the auditor learned about your footage segments")):
+    """What generation has learned: from the videos you kept and discarded, and about your footage."""
     from .generate import taste
 
+    if clear_marks:
+        from .generate import footage
+
+        n = footage.clear_marks()
+        return emit({"cleared_marks": n}, f"Cleared reviewer marks on {n} footage file(s)")
     if clear:
         taste.clear()
         return emit({"cleared": True}, "Taste memory cleared")
@@ -1535,9 +1541,11 @@ def gen_improve(variation: str = typer.Argument(..., help="Variation id, e.g. b2
     from . import jobs
     from .generate import batch
 
+    if wait:
+        jobs.AUTOSTART = False  # run it here: a background thread would die with this process
     v = batch.improve(variation, rounds)
     if wait:
-        jobs.drain()
+        jobs.drain(timeout=3600, wait=True)
         bid = batch._var(variation)["batch_id"]
         v = next(x for x in batch.get(bid)["variations"] if x["id"] == variation)
     a = v.get("audit") or {}

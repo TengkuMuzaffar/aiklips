@@ -24,7 +24,7 @@ from ..ops.color import LOOKS as COLOR_LOOKS
 from ..references.dna import StyleDNA
 from ..ops import moves as moves_lib
 from . import taste
-from .spec import AXES, STRUCTURE_HINT, Brief, BatchSpec, ConceptSet, Creative, CreativePlan, EditPlan, Op, Ranking
+from .spec import AXES, STRUCTURE_HINT, Brief, BatchSpec, ConceptSet, Creative, CreativePlan, EditPlan, Op, PlanPatch, Ranking
 
 TEXT_SIZE = {"small": 56, "medium": 72, "large": 92, "huge": 118}
 PACE = {"reference": 1.0, "faster": 0.7, "slower": 1.45}
@@ -90,7 +90,11 @@ def _shot_line(s: dict) -> str:
             from ..generate.footage import _audio_text
 
             extra.append(_audio_text(m))
-    tail = f" [{', '.join(extra)}]" if extra else ""
+    if s.get("marks"):
+        from .footage import marks_text
+
+        extra.append(marks_text(s["marks"]))
+    tail = f" [{', '.join(x for x in extra if x)}]" if extra else ""
     return f"{s['id']} ({s['from']:.1f}-{s['to']:.1f}s, q{s.get('quality', 3)}): {s.get('description', '')}{tail}"
 
 
@@ -312,6 +316,146 @@ def revise_plan(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: di
                 "You may swap segments, reorder, retime, rewrite text, change clip audio modes, music offset/volume, "
                 "transitions and moves. Return the COMPLETE revised plan.")
     return _call_editor(prompt, spec, log, d, c)
+
+
+# ---- targeted revisions: a small patch for the top open issues, everything else locked --------------------
+
+MAX_PATCH_OPS = 6
+
+
+def plan_listing(plan: EditPlan) -> str:
+    """The plan as numbered lines the editor can point at: C1..Cn clips, T1..Tn titles."""
+    beats = {b.id: b for b in plan.beats}
+    lines = ["BEATS: " + " | ".join(f"{b.id} {b.role}: {b.purpose}" for b in plan.beats)] if plan.beats else []
+    clips = [o for o in plan.ops if o.op == "clip"]
+    for i, o in enumerate(clips, 1):
+        b = beats.get(o.beat or "")
+        lines.append(f"C{i}: {o.segment or o.file} {o.start}-{o.end}s" + (f" speed {o.speed}" if o.speed and o.speed != 1 else "")
+                     + f", beat {o.beat}" + (f" ({b.role})" if b else "") + f", audio {o.audio or '?'}" + f'  WHY: "{o.why or ""}"')
+    for i, o in enumerate([o for o in plan.ops if o.op == "text"], 1):
+        lines.append(f"T{i}: \"{o.text}\" {o.start}-{o.end}s at y {o.y}" + (f", size {o.size}" if o.size else "") + f'  WHY: "{o.why or ""}"')
+    for o in plan.ops:
+        if o.op == "music":
+            lines.append(f"MUSIC: {o.file} offset {o.offset}s, volume {o.volume}, ducked {o.duck}")
+        elif o.op == "move":
+            lines.append(f"MOVE: {o.type}" + (f" on C{o.into + 1}" if o.into is not None else f" at {o.start}s"))
+    return "\n".join(lines)
+
+
+def apply_patch(plan: EditPlan, patch: PlanPatch, log: dict) -> tuple[EditPlan, list[str]]:
+    """Apply a patch to a copy of the plan. Returns (new plan, problems). Unknown targets are problems, not crashes."""
+    new = plan.model_copy(deep=True)
+    segs = {s["id"]: (fid, s) for fid, f in log.items() if f.get("kind") == "video" for s in f.get("segments", [])}
+    problems: list[str] = []
+
+    def clips():
+        return [o for o in new.ops if o.op == "clip"]
+
+    def texts():
+        return [o for o in new.ops if o.op == "text"]
+
+    def pick(items, target, prefix):
+        t = (target or "").strip().upper()
+        if not t.startswith(prefix) or not t[1:].isdigit() or not 1 <= int(t[1:]) <= len(items):
+            raise ValueError(f"{target!r} is not one of {prefix}1..{prefix}{len(items)}")
+        return items[int(t[1:]) - 1]
+
+    def seg_range(o: Op, segment: str, start, end):
+        if segment not in segs:
+            raise ValueError(f"unknown segment {segment}")
+        fid, sg = segs[segment]
+        o.file, o.segment = fid, segment
+        o.start = start if start is not None and sg["from"] - 0.25 <= start < sg["to"] else sg["from"]
+        o.end = end if end is not None and o.start < end <= sg["to"] + 0.25 else sg["to"]
+
+    for x in patch.ops[:MAX_PATCH_OPS]:
+        try:
+            if x.op == "replace_clip":
+                o = pick(clips(), x.target, "C")
+                seg_range(o, x.segment or "", x.start, x.end)
+                o.why = x.why or o.why
+                o.audio = x.audio  # the new footage's own sound decides (audio_defaults) unless set here
+                o.beat = x.beat or o.beat
+            elif x.op == "trim_clip":
+                o = pick(clips(), x.target, "C")
+                o.start = x.start if x.start is not None else o.start
+                o.end = x.end if x.end is not None else o.end
+            elif x.op == "move_clip":
+                o = pick(clips(), x.target, "C")
+                cl = clips()
+                cl.remove(o)
+                cl.insert(max(0, min(len(cl), (x.to or 1) - 1)), o)
+                others = [y for y in new.ops if y.op != "clip"]
+                new.ops = cl + others
+            elif x.op == "remove_clip":
+                new.ops.remove(pick(clips(), x.target, "C"))
+            elif x.op == "insert_clip":
+                o = Op(op="clip", beat=x.beat, why=x.why, audio=x.audio)
+                seg_range(o, x.segment or "", x.start, x.end)
+                cl = clips()
+                at = cl.index(pick(cl, x.target, "C")) if x.target else len(cl)
+                cl.insert(at, o)
+                new.ops = cl + [y for y in new.ops if y.op != "clip"]
+            elif x.op == "set_audio":
+                pick(clips(), x.target, "C").audio = x.audio
+            elif x.op == "edit_text":
+                o = pick(texts(), x.target, "T")
+                for k in ("text", "start", "end", "y", "size"):
+                    if getattr(x, k) is not None:
+                        setattr(o, k, getattr(x, k))
+            elif x.op == "add_text":
+                new.ops.append(Op(op="text", text=x.text or "", start=x.start or 0.0, end=x.end, y=x.y, size=x.size, beat=x.beat, why=x.why))
+            elif x.op == "remove_text":
+                new.ops.remove(pick(texts(), x.target, "T"))
+            elif x.op == "set_music":
+                for o in new.ops:
+                    if o.op == "music":
+                        o.offset = x.offset if x.offset is not None else o.offset
+                        o.volume = x.volume if x.volume is not None else o.volume
+            elif x.op == "set_move":
+                new.ops = [o for o in new.ops if o.op != "move"]
+                if x.type and x.type != "none":
+                    new.ops.append(Op(op="move", type=x.type, into=(x.into - 1) if x.into else None, start=x.start, text=x.text))
+        except ValueError as e:
+            problems.append(f"{x.op} {x.target or ''}: {e}")
+    if len(patch.ops) > MAX_PATCH_OPS:
+        problems.append(f"only the first {MAX_PATCH_OPS} changes were used")
+    return new, problems
+
+
+def patch_plan(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dict, d: dict, plan: EditPlan,
+               issues: list[dict], review: dict, threshold: int, attempts: list[dict] | None = None) -> tuple[EditPlan | None, dict, dict]:
+    """Ask for a small patch that fixes the top open issues. Returns (patched plan or None, usage, info)."""
+    targets = issues[:3]
+    hist = ""
+    if attempts and len(attempts) > 1:
+        hist = "\nEARLIER ROUNDS: " + "; ".join(f"r{a.get('round')} {a.get('score')}" + (f" ({a['verdict']})" if a.get("verdict") else "")
+                                             + (f" fixed {', '.join(a['fixed'])}" if a.get("fixed") else "") for a in attempts)
+    prompt = (f"BRIEF:\n{spec.brief.model_dump_json(indent=1)}\nSTYLE: {dna.summary}\n"
+              f"\nFOOTAGE SEGMENTS (id, range in file, quality, description, reviewer marks):\n"
+              + "\n".join(_shot_line(sg) for f in log.values() if f.get("kind") == "video" for sg in f.get("segments", []))[:9000]
+              + f"\n\nTHE CURRENT EDIT (the best version so far, audit {review.get('score')}/100, pass mark {threshold}):\n{plan_listing(plan)}"
+              + hist
+              + "\n\nFIX THESE ISSUES THIS ROUND (and only these):\n"
+              + "\n".join(f"- {i['id']} [{i['severity']}] {i['category']}" + (f" @{i['at']}s" if i.get("at") is not None else "")
+                          + f": {i['message']}" + (f" -> {i['fix']}" if i.get("fix") else "") for i in targets)
+              + (f"\n(Other open issues, for context only: " + "; ".join(f"{i['id']} {i['message'][:80]}" for i in issues[3:8]) + ")" if len(issues) > 3 else "")
+              + "\n\nReturn a PATCH: the smallest set of changes (at most 6) that fixes those issues. Everything you don't "
+                "mention stays exactly as it is, so don't touch what already works. Prefer segments the reviewer marked good "
+                "for that role; never use a segment marked weak for that role.")
+    patch, usage = ai.call("editor", prompt, PlanPatch, system=prompts.PATCHER, quality=spec.quality)
+    if not patch.ops:
+        return None, usage, {"note": "empty patch"}
+    new, problems = apply_patch(plan, patch, log)
+    fill_ranges(new, log)
+    errors = [e for e in validate_plan(new, log) if e not in validate_plan(plan, log)]  # only problems this patch created
+    if errors or len(problems) == len(patch.ops):
+        return None, usage, {"note": "patch rejected", "problems": problems + errors}
+    new = enforce(new, d, c)
+    audio_defaults(new, log)
+    new.problems = problems
+    return new, usage, {"fixes": patch.fixes, "note": patch.note, "ops": [x.model_dump(exclude_none=True) for x in patch.ops[:MAX_PATCH_OPS]],
+                        "problems": problems}
 
 
 def _call_editor(prompt: str, spec: BatchSpec, log: dict, d: dict, c: Creative) -> tuple[EditPlan, dict]:
