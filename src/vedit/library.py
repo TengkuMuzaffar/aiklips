@@ -225,23 +225,17 @@ def duplicate(pid: int) -> dict:
 
 
 def _rmtree_project(pdir: Path) -> None:
-    """Delete a project folder, first letting an in-flight preview render finish.
+    """Delete a project folder.
 
-    On Windows a file still open by ffmpeg can't be unlinked, so we wait on the
-    preview lock and retry briefly for handles that close a moment later.
+    On Windows a file still open by a background preview render (ffmpeg) can't be
+    unlinked, so retry for a while until the render finishes and releases it.
     """
-    from .render.runner import _file_lock
-
-    lock = pdir / STATE_DIR / "preview" / ".lock"
-    if lock.exists():
-        with _file_lock(lock):
-            pass
-    for attempt in range(20):
+    for attempt in range(60):
         try:
             shutil.rmtree(pdir)
             return
         except PermissionError:
-            if attempt == 19:
+            if attempt == 59:
                 raise
             time.sleep(0.25)
 
