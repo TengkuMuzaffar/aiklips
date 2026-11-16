@@ -345,6 +345,25 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
 
         return await asyncio.to_thread(claude_setup.install)
 
+    # ---- typography (bundled fonts + text looks, for the inspector) -----------------------
+    @app.get("/api/typography")
+    def api_typography() -> dict:
+        from ..ops import fonts, text_looks
+
+        from ..ops import color
+
+        return {"fonts": fonts.catalog(), "feels": list(fonts.FEELS), "default": fonts.DEFAULT_FONT, "looks": text_looks.catalog(),
+                "color_looks": [{"name": k, "about": v["about"]} for k, v in color.LOOKS.items()]}
+
+    @app.get("/api/fonts/{key}")
+    def api_font_file(key: str):
+        from ..ops import fonts
+
+        if key not in fonts.FONTS:  # only bundled fonts, by key: no paths from the client
+            raise HTTPException(404, "Unknown font")
+        return FileResponse(fonts.FONT_DIR / fonts.FONTS[key][0], media_type="font/ttf",
+                            headers={"Cache-Control": "max-age=86400"})
+
     # ---- editor (open project) ---------------------------------------------------------
     @app.get("/api/state")
     def api_state() -> dict:

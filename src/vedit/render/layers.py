@@ -19,7 +19,7 @@ from ..ops.animate import ease
 from ..ops.text import find_font, render_image, render_text
 from ..project import Layer, Project, VeditError, resolve_media, state_dir
 
-RENDER_VERSION = "2"
+RENDER_VERSION = "3"
 
 
 def even(v: float) -> int:

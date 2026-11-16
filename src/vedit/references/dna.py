@@ -11,9 +11,12 @@ from collections import Counter
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..ops.animate import PRESETS
 from ..ops.captions import CAPTION_STYLES
+from ..ops.color import LOOKS as COLOR_LOOKS
+from ..ops.fonts import FONTS
 from ..project import TRANSITIONS
 
 IN_PRESETS = tuple(k for k, v in PRESETS.items() if v[0] == "in")
@@ -27,6 +30,8 @@ LoopPreset = Literal[LOOP_PRESETS]  # type: ignore[valid-type]
 TransitionName = Literal[TRANSITIONS]  # type: ignore[valid-type]
 CaptionStyle = Literal[tuple(CAPTION_STYLES)]  # type: ignore[valid-type]
 HookPattern = Literal[HOOK_PATTERNS]  # type: ignore[valid-type]
+FontKey = Literal[tuple(FONTS)]  # type: ignore[valid-type]
+ColorLook = Literal[tuple(COLOR_LOOKS)]  # type: ignore[valid-type]
 
 
 class _M(BaseModel):
@@ -58,6 +63,8 @@ class TextDNA(_M):
     bg_box: bool = False
     bg_color: str | None = None
     font_feel: str = Field("bold sans", description="e.g. bold sans, condensed, serif, handwritten, rounded")
+    font: FontKey | None = Field(None, description="The bundled font closest to the titles' typography")
+    letter_spacing: float = Field(0.0, description="Extra px between letters: 0 normal, 6-16 for wide-tracked cinematic caps")
     animation_in: list[InPreset] = Field(default_factory=lambda: ["pop_in"])
     animation_out: list[OutPreset] = Field(default_factory=lambda: ["fade_out"])
     loop: list[LoopPreset] = Field(default_factory=list)
@@ -99,6 +106,12 @@ class SoundDNA(_M):
     ducking: bool = False
 
 
+class ColorDNA(_M):
+    look: ColorLook = Field("natural", description="The colour look closest to the reference's grade")
+    intensity: float = Field(0.8, ge=0, le=1, description="How strong that look is in the reference")
+    measured: SkipJsonSchema[dict[str, float]] = Field(default_factory=dict)  # filled by apply_measured(), not the model
+
+
 class StyleDNA(_M):
     version: int = 1
     summary: str = Field("", description="One sentence a video editor would use to describe this style")
@@ -111,7 +124,8 @@ class StyleDNA(_M):
     motion: MotionDNA = Field(default_factory=MotionDNA)
     transitions: TransitionsDNA = Field(default_factory=TransitionsDNA)
     sound: SoundDNA = Field(default_factory=SoundDNA)
-    color_feel: str = ""
+    color_feel: str = Field("", description="One phrase on the colour grade, e.g. 'warm faded film', 'clean bright daylight'")
+    color: ColorDNA = Field(default_factory=ColorDNA)
     confidence: dict[str, float] = Field(default_factory=dict, description="0..1 per area: hook, text, captions, motion, transitions, sound")
     notes: str = ""
     tags: list[str] = Field(default_factory=list, description="3-6 short tags, e.g. fast-cut, beat-sync, bold-captions")
@@ -132,6 +146,8 @@ def apply_measured(dna: StyleDNA, m: dict) -> StyleDNA:
     dna.sound.cut_on_beat = bool(score is not None and len(m.get("cuts") or []) >= 4 and score >= max(0.6, chance + 0.25))
     if not m.get("has_audio"):
         dna.sound.music = dna.sound.voiceover = False
+    if m.get("color"):
+        dna.color.measured = {k: float(v) for k, v in m["color"].items()}
     dna.confidence["pacing"] = 1.0
     if audio:
         dna.confidence["tempo"] = float(audio.get("tempo_confidence") or 0)
@@ -235,6 +251,7 @@ EDITABLE: list[tuple[str, str, Any]] = [
     ("text.size", "Title size", ["small", "medium", "large", "huge"]),
     ("text.color", "Title colour", "color"),
     ("text.uppercase", "Uppercase titles", bool),
+    ("text.font", "Title font", list(FONTS)),
     ("text.bg_box", "Title on a box", bool),
     ("text.animation_in", "Title animates in", list(IN_PRESETS)),
     ("text.animation_out", "Title animates out", list(OUT_PRESETS)),
@@ -246,6 +263,8 @@ EDITABLE: list[tuple[str, str, Any]] = [
     ("motion.ken_burns", "Ken Burns zoom", bool),
     ("transitions.default", "Default transition", ["none", *TRANSITIONS]),
     ("transitions.frequency", "Transition frequency", ["never", "rare", "often", "every_cut"]),
+    ("color.look", "Colour look", list(COLOR_LOOKS)),
+    ("color.intensity", "Colour look strength (0-1)", float),
     ("sound.cut_on_beat", "Cut on the beat", bool),
     ("sound.voiceover", "Voice-over", bool),
 ]
@@ -272,7 +291,7 @@ def card(dna: StyleDNA) -> list[dict]:
         ("Hook", f"{d.hook.pattern.replace('_', ' ')} · {d.hook.duration_s:g}s" + (f" · first cut {d.hook.first_cut_s:g}s" if d.hook.first_cut_s else "")
                  + (f" · “{d.hook.example}”" if d.hook.example else "")),
         ("Structure", " → ".join(d.structure)),
-        ("Text", "none" if not d.text.present else f"{d.text.size}, {d.text.font_feel}, {d.text.color}"
+        ("Text", "none" if not d.text.present else f"{d.text.size}, {d.text.font or d.text.font_feel}, {d.text.color}"
                  + (" uppercase" if d.text.uppercase else "") + (" with outline" if d.text.stroke else "")
                  + (" on a box" if d.text.bg_box else "") + f" at y {d.text.position_y} · in: {', '.join(d.text.animation_in) or 'cut'}"
                  + f" · out: {', '.join(d.text.animation_out) or 'cut'}" + (" · on the beat" if d.text.on_beat else "")),
@@ -285,6 +304,11 @@ def card(dna: StyleDNA) -> list[dict]:
                                         f"{round((d.sound.beat_sync_score or 0) * 100)}% of cuts on the beat" if d.sound.beat_sync_score is not None else "",
                                         "voice-over" if d.sound.voiceover else "", f"{d.sound.music_energy}-energy music" if d.sound.music else "no music",
                                         "SFX on text" if d.sound.sfx_on_text else "", "ducking" if d.sound.ducking else ""] if x)),
-        ("Colour", d.color_feel or "—"),
+        ("Colour", ", ".join(x for x in [
+            f"{d.color.look} look" + (f" at {d.color.intensity:g}" if d.color.look != "natural" else ""),
+            d.color_feel,
+            (f"brightness {d.color.measured['luma']:.2f}, saturation {d.color.measured['sat']:.2f}, "
+             + ("warm" if d.color.measured['warmth'] > 0.03 else "cool" if d.color.measured['warmth'] < -0.03 else "neutral"))
+            if d.color.measured.get("luma") is not None else ""] if x)),
     ]
-    return [{"label": a, "value": b, "confidence": d.confidence.get(a.lower())} for a, b in rows]
+    return [{"label": a, "value": b, "confidence": d.confidence.get({"colour": "color"}.get(a.lower(), a.lower()))} for a, b in rows]

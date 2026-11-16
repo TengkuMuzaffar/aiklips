@@ -9,6 +9,8 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 - ✂️ **Cutting:** trim, split, delete ranges, reorder, speed / slow-mo, auto silence removal, jump-cut zoom, reframe (cover / contain / blurred fill), Ken Burns zoom
 - ↩️ **Undo / redo history:** every edit is a snapshot. You can undo, redo, or jump to any step.
 - 🎬 **Custom animation:** text and image layers with stackable presets (pop, slide, typewriter, bounce, shake…) or free-form keyframes with easing
+- 🔤 **Fonts & text looks:** 24 bundled open-licence fonts (condensed, serif, handwritten, rounded, display…) and 15 ready-made text looks (font + colours + outline / glow / gradient + animation). Save your own look once and reuse it in every project.
+- 🎨 **Colour grading:** match clips shot on different cameras so they look like one shoot, or match a reference video's colour. Then apply a look (warm film, teal & orange, moody, vibrant, B&W…) or a `.cube` LUT. All measured by code, no guessing.
 - 💬 **Captions:** word-by-word highlighted captions from SRT, or offline auto-transcription (faster-whisper)
 - 🎞️ **Transitions:** crossfade, dip to black / white, slide, push, wipe, zoom, whip, circle and more. They're centred on the cut, so timing never shifts.
 - 🫥 **Tracked masks:** hide labels, logos or plates with a feathered blur / pixelate / fill that follows the object as the camera moves. Draw the box on the preview, or let the AI find it.

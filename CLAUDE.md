@@ -33,6 +33,8 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Don't touch user media files.** Never delete or overwrite them. Never hand-edit `.vedit/`.
 - **Hand-editing `project.json` is a last resort.** It's acceptable for complex keyframes, but keep it valid. The next command records it in history automatically.
 - **Report errors.** If a command errors, read the message and fix the inputs. Don't retry blindly.
+- **Consistency.** One text look for all titles (`text look apply`), at most two fonts, one colour look on every
+  clip, and run `color match` whenever the edit mixes footage from different cameras or lighting.
 - **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add`. The default style `remove` rebuilds the background so the thing looks like it was never there; use `--style blur|pixelate` only for privacy censoring (faces, plates) or when the user asks for blur. Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
 - **Stay inside vedit.** Don't run raw ffmpeg / python for edits. If vedit can't do something, say so and suggest the closest vedit command.
 
@@ -54,8 +56,12 @@ trim --head S --tail S | keep --from A --to B | delete --from A --to B | split -
 move <clip> --to N | remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
-text add "TEXT" [--start --end --x --y --size --color --stroke --bg --font --uppercase --preset NAME[:dur]]
+text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
+text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
+fonts [--feel serif --sheet]
+color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID]
+color set [--clip --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear
 layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
 captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
@@ -86,6 +92,7 @@ Detailed recipes live in `.claude/skills/`:
 - `face-ar`
 - `masking-focus`: remove / hide / censor regions with tracking (box, multi-box or painted shape), and spotlight or follow an object
 - `transitions`
+- `color`: match clips to each other or a reference, grade with looks, LUTs
 
 Load the relevant one before doing that kind of edit.
 
@@ -97,6 +104,9 @@ Load the relevant one before doing that kind of edit.
   - Overlay rendering: `render/layers.py`
   - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
+  - Colour: `Clip.grade` + `ops/color.py` (measure / match / looks -> FFmpeg filters, applied after fit in `render/graph.py`)
+  - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`
+    (built-in + saved looks in ~/.claude-cut/text-looks.json), rendering in `ops/text.py`
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.

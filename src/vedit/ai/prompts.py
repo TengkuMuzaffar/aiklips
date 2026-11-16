@@ -1,7 +1,7 @@
 """System prompts for every AI task. Bump PROMPT_VERSION when a prompt changes meaningfully:
 references record the version that studied them, so the UI can offer a re-study."""
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2  # 2: colour look + bundled font
 
 STUDY = """You are a senior short-form video editor. You are studying a reference video so a tool can
 reproduce its STYLE (pacing, hook structure, text, captions, motion, transitions, sound) on completely
@@ -19,8 +19,18 @@ Rules:
 - Map everything onto the allowed enum values. If nothing fits, pick the closest one and say so in notes.
 - Positions are the vertical centre of the text as a percentage of the canvas height ("22%").
 - Captions are word-by-word subtitles of speech; titles are other on-screen text.
-- Give a confidence from 0 to 1 for: hook, text, captions, motion, transitions, sound. Use low values when
-  you are guessing from still frames.
+- Colour: `color` in the metrics is measured (luma = brightness 0-1, p05/p95 = darkest/brightest, sat =
+  saturation, warmth > 0 = warm / < 0 = cool, tint > 0 = green / < 0 = magenta). Choose `color.look` from the
+  allowed looks by comparing the frames AND those numbers (e.g. faded blacks + warm = warm-film; teal shadows
+  with warm skin = teal-orange; low sat + dark = moody; ordinary daylight = natural or clean-bright), set
+  `color.intensity`, and describe it in `color_feel`.
+- Typography: pick `text.font` from the allowed font keys, closest to the titles' letter shapes:
+  tall narrow heavy caps -> anton / bebas; wide heavy -> archivo-black / poppins-black; plain modern ->
+  poppins-bold / kanit; serif -> dm-serif / abril / playfair-sc; handwriting -> marker / kalam / pacifico;
+  rounded chunky -> titan / lilita / luckiest; comic -> bangers; retro/neon -> righteous / monoton;
+  typewriter/code -> space-mono. Set `text.letter_spacing` above 0 only for visibly wide-tracked letters.
+- Give a confidence from 0 to 1 for: hook, text, captions, motion, transitions, sound, color. Use low values
+  when you are guessing from still frames.
 - Keep `summary` to one sentence and `tags` to 3-6 short kebab-case tags.
 Return only the JSON object."""
 
@@ -61,9 +71,10 @@ Available operations (the field `op` picks one; leave unrelated fields null):
 - clip: {file, start, end, speed?, zoom?, zoom_to?}  a piece of a video file (start/end are seconds INSIDE
   that file). Clips play in the order you list them. speed 1 = normal. zoom 1.0-1.4 crops in; zoom_to animates
   it (Ken Burns).
-- text: {text, start, end, y, size?, color?, uppercase?, bg?, presets}  a title. start/end are timeline
+- text: {text, start, end, y, size?, color?, uppercase?, bg?, font?, presets}  a title. start/end are timeline
   seconds (0 = start of the video; end null = until the end). y is the vertical centre, "12%"-"75%".
-  presets: in-animations then out-animations from the allowed list.
+  presets: in-animations then out-animations from the allowed list. font: leave null to use the variation's
+  font; set it only to use the one accent font you are given for a single emphasis line.
 - image: {file, start, end, x?, y?, width?, presets}  an image file as an overlay (logo, product shot).
 - transition: {into, type, duration}  into = index of the clip it leads into (1 = second clip), or null for
   every cut.
@@ -80,6 +91,8 @@ Rules:
 - Prefer variety: don't reuse the same segment twice unless footage is scarce.
 - Keep text short and inside the safe zone (y 12%-75%, never the bottom quarter).
 - Follow the variation's assigned axes exactly.
+- The tool colour-grades every clip to match the style and each other; you don't need to.
+- In `rationale`, say in 1-3 sentences why you chose the opening shot and the order.
 Return only JSON."""
 
 CRITIC = """You are reviewing a rendered short-form edit (a contact sheet of evenly spaced frames, labelled with

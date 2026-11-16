@@ -67,6 +67,54 @@ def _clip_set(p: Project, a: dict) -> str:
     return f"{c.id}: " + (", ".join(changed) or "no change")
 
 
+# ---- colour (clip inspector) ------------------------------------------------------------
+
+def _color_targets(p: Project, a: dict) -> list[str] | None:
+    """all=true -> every clip (None), else the one clip given."""
+    return None if a.get("all") else [p.clip(a["clip"]).id]
+
+
+@op("color_look")
+def _color_look(p: Project, a: dict) -> str:
+    from ..ops import color
+
+    name = a.get("name") or "natural"
+    ids = color.set_look(p, name, float(a.get("intensity", 1.0)), _color_targets(p, a))
+    return f"colour look {name} on {'all clips' if a.get('all') else ', '.join(ids)}"
+
+
+@op("color_match")
+def _color_match(p: Project, a: dict) -> str:
+    """Match every clip to their average, or to a hero clip (hero=<clip id>)."""
+    from ..ops import color
+
+    r = color.match_clips(p, _PDIR[0], hero=a.get("hero") or None, strength=float(a.get("strength", 0.8)))
+    return f"colour match {len(r['clips'])} clips to {r['matched_to']}"
+
+
+@op("color_set")
+def _color_set(p: Project, a: dict) -> str:
+    from ..project import Grade
+
+    keys = ("brightness", "contrast", "saturation", "temperature", "tint")
+    vals = {k: float(a[k]) for k in keys if a.get(k) not in (None, "")}
+    if not vals:
+        raise VeditError("Nothing to change")
+    ids = _color_targets(p, a) or [c.id for c in p.clips]
+    for cid in ids:
+        c = p.clip(cid)
+        c.grade = (c.grade or Grade()).model_copy(update=vals)
+    return f"colour {', '.join(f'{k} {v:g}' for k, v in vals.items())} on {', '.join(ids)}"
+
+
+@op("color_clear")
+def _color_clear(p: Project, a: dict) -> str:
+    ids = _color_targets(p, a) or [c.id for c in p.clips]
+    for cid in ids:
+        p.clip(cid).grade = None
+    return f"clear colour on {', '.join(ids)}"
+
+
 @op("transition_set")
 def _transition_set(p: Project, a: dict) -> str:
     kind = str(a.get("type") or "none")
@@ -196,14 +244,39 @@ def _layer_set(p: Project, a: dict) -> str:
     if isinstance(a.get("style"), dict):
         data = l.style.model_dump()
         data.update({k: v for k, v in a["style"].items() if k in data})
-        for k in ("size", "stroke_width", "max_width", "bg_padding", "bg_radius"):
+        for k in ("size", "stroke_width", "max_width", "bg_padding", "bg_radius", "glow_size"):
             if data.get(k) not in (None, ""):
                 data[k] = int(float(data[k]))
-        if data.get("bg_color") == "":
-            data["bg_color"] = None
+        if data.get("letter_spacing") not in (None, ""):
+            data["letter_spacing"] = float(data["letter_spacing"])
+        for k in ("bg_color", "glow_color", "font"):
+            if data.get(k) == "":
+                data[k] = None
+        if isinstance(data.get("gradient"), str):  # "#top,#bottom" from the GUI; "" = off
+            data["gradient"] = [c.strip() for c in data["gradient"].split(",") if c.strip()] or None
+        if data.get("font"):
+            from ..ops.text import find_font
+            find_font(data["font"])  # unknown font: clear error now, not a failed render later
+        if "look" not in a["style"]:
+            data["look"] = None  # hand-edited: no longer exactly that look
         l.style = TextStyle(**data)
         changed.append("style")
     return f"{l.id}: " + ", ".join(changed)
+
+
+@op("text_look")
+def _text_look(p: Project, a: dict) -> str:
+    """Apply a text look to one layer, or to every text layer with all=true (one look = consistent titles)."""
+    from ..ops import text_looks
+
+    name = a.get("name") or ""
+    text_looks.get(name)
+    targets = [l for l in p.layers if l.type == "text"] if a.get("all") else [p.layer(a["layer"])]
+    for l in targets:
+        if l.type not in ("text", "captions"):
+            raise VeditError(f"Layer {l.id} is not text")
+        text_looks.apply(l, name, animation=a.get("animation", True))
+    return f"look {name} on {', '.join(l.id for l in targets)}"
 
 
 @op("layer_add_text")

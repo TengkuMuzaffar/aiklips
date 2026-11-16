@@ -84,6 +84,24 @@ class Transition(_Model):
     duration: float = 0.5
 
 
+class Grade(_Model):
+    """Colour grade of a clip: a correction (from `color match` or set by hand), then a named look.
+
+    The correction numbers are what `vedit color match` measured to make this clip match its
+    target; the look is a creative grade applied on top at `intensity` (0..1).
+    """
+
+    brightness: float = 0.0  # added to luma, -0.3..0.3
+    contrast: float = 1.0  # 0.5..1.6, around mid grey
+    saturation: float = 1.0  # 0 = black & white .. 2
+    temperature: float = 0.0  # -1 cool .. +1 warm
+    tint: float = 0.0  # -1 green .. +1 magenta
+    look: str | None = None
+    intensity: float = 1.0
+    lut: str | None = None  # .cube file applied last (before the look's vignette)
+    matched_to: str | None = None  # informational: "clips", "c2", "ref 3"
+
+
 class Clip(_Model):
     id: str
     source: str
@@ -98,6 +116,7 @@ class Clip(_Model):
     zoom_to: float | None = None  # animated zoom (Ken Burns) from `zoom` to `zoom_to`
     effects: list[Effect] = Field(default_factory=list)
     transition: Transition | None = None  # transition *into* this clip from the previous one
+    grade: Grade | None = None  # colour correction + look (`vedit color ...`)
 
     @property
     def duration(self) -> float:
@@ -136,6 +155,11 @@ class TextStyle(_Model):
     uppercase: bool = False
     line_spacing: float = 1.15
     highlight_color: str = "#FFE600"
+    letter_spacing: float = 0.0  # extra px between letters (negative = tighter)
+    glow_color: str | None = None  # soft coloured glow behind the letters (neon looks)
+    glow_size: int = 18
+    gradient: list[str] | None = None  # fill top -> bottom, e.g. ["#FFE600", "#FF6A00"]
+    look: str | None = None  # name of the text look this style came from (informational)
 
 
 class Word(_Model):
