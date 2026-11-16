@@ -163,6 +163,33 @@ class EditPlan(_M):
     problems: SkipJsonSchema[list[str]] = Field(default_factory=list)  # validate_plan() errors left after the retry
 
 
+class PatchOp(_M):
+    """One targeted change to the current plan. Clips are C1..Cn and titles T1..Tn as listed in the prompt."""
+    op: Literal["replace_clip", "trim_clip", "move_clip", "remove_clip", "insert_clip", "set_audio",
+                "edit_text", "add_text", "remove_text", "set_music", "set_move"]
+    target: str | None = Field(None, description="C3 / T2: the clip or title it changes (insert_clip: insert BEFORE this clip; empty = at the end)")
+    segment: str | None = Field(None, description="replace_clip / insert_clip: footage segment id, e.g. f1.s4")
+    start: float | None = Field(None, description="clips: seconds inside the file; titles: timeline seconds")
+    end: float | None = None
+    to: int | None = Field(None, description="move_clip: new position, 1 = first")
+    beat: str | None = None
+    why: str | None = Field(None, description="replace_clip / insert_clip / add_text: why this is here now")
+    audio: Literal["voice", "ambient", "mute"] | None = None
+    text: str | None = None
+    y: str | None = None
+    size: int | None = None
+    offset: float | None = Field(None, description="set_music: where in the song to start")
+    volume: float | None = None
+    type: str | None = Field(None, description="set_move: move name (or 'none' to remove the move)")
+    into: int | None = Field(None, description="set_move: clip number it applies to (1 = first clip)")
+
+
+class PlanPatch(_M):
+    fixes: list[str] = Field(default_factory=list, description="Ids of the issues this patch fixes (I1, I3...)")
+    ops: list[PatchOp] = Field(default_factory=list, description="At most 6 targeted changes; everything else stays exactly as it is")
+    note: str = Field("", description="One line: what you changed and why it fixes those issues")
+
+
 class SegmentNote(_M):
     id: str
     description: str

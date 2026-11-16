@@ -243,6 +243,45 @@ def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: 
     return usage
 
 
+# ---- reviewer marks: what the auditor learned about a segment, kept with the upload ------------------------
+
+def marks(uid: str) -> dict:
+    """{segment k: {"weak": {role: n}, "good": {role: n}, "notes": [...]}}: survives across rounds, videos and batches."""
+    return _json(_dir(uid) / "marks.json", {}) or {}
+
+
+def mark(uid: str, k: int | str, role: str | None, good: bool, note: str = "") -> None:
+    role = role or "any"
+    data = marks(uid)
+    m = data.setdefault(str(k), {"weak": {}, "good": {}, "notes": []})
+    bucket = m["good" if good else "weak"]
+    bucket[role] = bucket.get(role, 0) + 1
+    if note:
+        m["notes"] = (m["notes"] + [("good " if good else "weak ") + f"as {role}: {note[:140]}"])[-4:]
+    (_dir(uid) / "marks.json").write_text(json.dumps(data, indent=1))
+
+
+def clear_marks(uid: str | None = None) -> int:
+    """Forget reviewer marks for one upload, or all uploads. Returns how many files were cleared."""
+    n = 0
+    for d in ([_dir(uid)] if uid else [x for x in root().iterdir() if x.is_dir()]):
+        f = d / "marks.json"
+        if f.exists():
+            f.unlink()
+            n += 1
+    return n
+
+
+def marks_text(m: dict | None) -> str:
+    """For prompts: 'reviewer: weak as hook x3 (blurry, face turned away); good as proof x1'."""
+    if not m:
+        return ""
+    bits = [f"weak as {r} x{n}" for r, n in sorted(m.get("weak", {}).items(), key=lambda kv: -kv[1])]
+    bits += [f"good as {r} x{n}" for r, n in sorted(m.get("good", {}).items(), key=lambda kv: -kv[1])]
+    note = next((x for x in reversed(m.get("notes") or []) if x.startswith("weak")), "")
+    return ("reviewer: " + ", ".join(bits) + (f" ({note.split(': ', 1)[-1][:90]})" if note else "")) if bits else ""
+
+
 def _measured_text(m: dict | None) -> str:
     if not m:
         return ""
@@ -282,9 +321,11 @@ def shot_log(files: list[tuple[str, str]], sound: list[tuple[str, str]] = ()) ->
             except Exception:  # measuring is a bonus; never block planning on it
                 measured = {}
             entry["has_audio"] = meta.get("has_audio")
+            learned = marks(uid)
             entry["segments"] = [{"id": f"{fid}.s{s['k']}", "from": s["from"], "to": s["to"],
                                   **(notes.get(str(s["k"])) or {"description": "(not described)", "quality": 3}),
-                                  **({"measured": measured[str(s["k"])]} if str(s["k"]) in measured else {})}
+                                  **({"measured": measured[str(s["k"])]} if str(s["k"]) in measured else {}),
+                                  **({"marks": learned[str(s["k"])]} if str(s["k"]) in learned else {})}
                                  for s in segments(uid)]
         elif meta["kind"] == "audio":
             entry["bpm"] = meta.get("bpm")

@@ -354,3 +354,127 @@ def test_new_format_fields_are_not_hand_edits(cli, test_clip):
     assert not history.same_as(pdir, h)
     history.sync(pdir)
     assert history.head(pdir) == h + 1
+
+
+def test_revisions_are_judged_side_by_side_not_by_drifting_scores():
+    best = {"score": 64, "counts": {"must-fix": 1}}
+    # scores drift, so a side-by-side verdict beats a raw comparison within the slack...
+    assert review.beats({"score": 61, "counts": {"must-fix": 1}, "verdict": "better"}, best)
+    # ...but "better" while scoring far below on the same (anchored) scale is contradictory: keep the best
+    assert not review.beats({"score": 52, "counts": {"must-fix": 1}, "verdict": "better"}, best)
+    assert not review.beats({"score": 70, "counts": {"must-fix": 1}, "verdict": "same"}, best)
+    assert not review.beats({"score": 90, "counts": {"must-fix": 2}, "verdict": "better"}, best)  # new must-fix: never
+    assert review.beats({"score": 65, "counts": {"must-fix": 0}}, best)  # no verdict (code-only audit): score decides
+    rounds = [{"must_cats": ["hook", "sound"]}, {"must_cats": ["hook"]}, {"must_cats": ["hook", "story"]}]
+    assert review.recurring(rounds) == "hook" and review.recurring(rounds[:2]) is None
+    assert review.recurring(rounds + [{"must_cats": ["story"]}]) is None
+
+
+def test_compare_prompt_shows_the_best_version(fake, tmp_path, make_project):
+    calls, answers = fake
+    sheets = []
+    for n in ("a", "b", "c", "d"):
+        f = tmp_path / f"{n}.jpg"
+        f.write_bytes(b"x")
+        sheets.append(f)
+    answers["auditor"].append({**_review(4), "verdict": "better"})
+    p = make_project(1)
+    rev, _ = review.ai_review(p, {"findings": []}, sheets[:2], [1.0, 2.0], compare={
+        "sheets": [str(sheets[2]), str(sheets[3])], "score": 64, "scores": {"hook": 3}, "summary": "weak opening"})
+    prompt = calls[-1][1]
+    assert "PREVIOUS BEST version" in prompt and "scored 64/100" in prompt and "weak opening" in prompt
+    assert rev.verdict == "better"
+    answers["auditor"].append({**_review(4), "verdict": "better"})
+    rev2, _ = review.ai_review(p, {"findings": []}, sheets[:2], [1.0, 2.0])
+    assert rev2.verdict is None  # no comparison shown: a verdict would be meaningless
+
+
+# ---- A: targeted patches -----------------------------------------------------------------------------
+
+def test_apply_patch_changes_only_what_it_names():
+    from tests.test_audit_justify import LOG, _good
+    from vedit.generate.spec import Op, PatchOp, PlanPatch
+
+    plan = _good()
+    plan.ops += [Op(op="text", text="Hook", start=0, end=2, y="25%"), Op(op="music", file="m1", offset=0, volume=0.4)]
+    before = plan.model_dump()
+    new, problems = planner.apply_patch(plan, PlanPatch(ops=[
+        PatchOp(op="replace_clip", target="C1", segment="f1.s2", why="sharper opener"),
+        PatchOp(op="edit_text", target="T1", y="20%"),
+        PatchOp(op="set_music", offset=3.5),
+        PatchOp(op="trim_clip", target="C9", start=1),  # no such clip
+    ]), LOG)
+    assert plan.model_dump() == before  # the original is untouched
+    c1 = [o for o in new.ops if o.op == "clip"][0]
+    assert (c1.segment, c1.start, c1.end, c1.why) == ("f1.s2", 3.0, 6.0, "sharper opener")
+    assert [o for o in new.ops if o.op == "text"][0].y == "20%"
+    assert [o for o in new.ops if o.op == "music"][0].offset == 3.5
+    assert [o.segment for o in new.ops if o.op == "clip"][1] == "f2.s1"  # C2 locked
+    assert problems == ["trim_clip C9: 'C9' is not one of C1..C2"]
+    moved, _ = planner.apply_patch(plan, PlanPatch(ops=[PatchOp(op="move_clip", target="C2", to=1),
+                                                       PatchOp(op="insert_clip", segment="f1.s2", beat="b2", why="proof"),
+                                                       PatchOp(op="set_audio", target="C1", audio="voice")]), LOG)
+    clips = [o for o in moved.ops if o.op == "clip"]
+    assert [o.segment for o in clips] == ["f2.s1", "f1.s1", "f1.s2"] and clips[0].audio == "voice"
+    listing = planner.plan_listing(plan)
+    assert "C1: f1.s1" in listing and 'T1: "Hook"' in listing and "MUSIC:" in listing
+
+
+# ---- B: the issue list -------------------------------------------------------------------------------
+
+def test_issues_keep_their_ids_across_rounds():
+    code = {"id": "F1", "severity": "must-fix", "category": "safe-zone", "at": 0.0, "message": "t1 is outside the safe zone: bottom at 97%"}
+    ai1 = {"id": "A1", "severity": "must-fix", "category": "hook", "at": 0.3, "message": "static opening", "source": "ai"}
+    issues, fixed, worse = review.track([], [code, ai1], [], 0)
+    assert [i["id"] for i in issues] == ["I1", "I2"] and not fixed
+    # round 1: the code check still fires (different number), the reviewer says the hook is fixed, adds one new issue,
+    # and restates an open one, which must not become a duplicate
+    code2 = dict(code, message="t1 is outside the safe zone: bottom at 96%")
+    new_ai = {"id": "A1", "severity": "should-fix", "category": "story", "at": 4.0, "message": "CTA unclear", "source": "ai"}
+    issues, fixed, worse = review.track(issues, [code2, new_ai], [review.IssueCheck(id="I2", status="fixed")], 1)
+    by = {i["id"]: i for i in issues}
+    assert fixed == ["I2"] and by["I2"]["status"] == "fixed" and by["I1"]["status"] == "open" and "96%" in by["I1"]["message"]
+    assert by["I3"]["message"] == "CTA unclear" and len(issues) == 3
+    issues, fixed, worse = review.track(issues, [], [review.IssueCheck(id="I3", status="worse")], 2)
+    assert fixed == ["I1"] and worse == ["I3"]  # code check gone = fixed; reviewer says worse
+    assert [i["id"] for i in review.open_issues(issues)] == ["I3"]
+    assert not review.beats({"counts": {}, "verdict": "better", "worse_now": ["I3"]}, {"counts": {}})
+    assert review.beats({"counts": {}, "verdict": "same", "fixed_now": ["I1"]}, {"counts": {}}, targeted=["I1"])
+    assert not review.beats({"counts": {}, "verdict": "same", "fixed_now": []}, {"counts": {}}, targeted=["I1"])
+    # live-run regression: "same", fixed only an issue the patch didn't aim at, 11 points lower: keep the best
+    assert not review.beats({"score": 29, "counts": {}, "verdict": "same", "fixed_now": ["I2"]}, {"score": 40, "counts": {}},
+                            targeted=["I3", "I4"])
+    assert not review.beats({"score": 30, "counts": {}, "verdict": "better"}, {"score": 40, "counts": {}})  # > slack below
+
+
+# ---- C: footage memory -------------------------------------------------------------------------------
+
+@needs_ffmpeg
+def test_reviews_leave_marks_on_footage(cli, test_clip):
+    from vedit.generate import batch as batch_mod
+    from vedit.generate import footage
+    from vedit.project import ClipMeta, save as _save
+
+    uid = footage.add(test_clip)["id"]
+    cli("import", str(test_clip))
+    cli("split", "--at", "3")
+    p = load(cli.project)
+    p.clips[0].meta = ClipMeta(segment="f1.s1", role="hook")
+    p.clips[1].meta = ClipMeta(segment="f1.s2", role="proof")
+    _save(cli.project, p)
+    rev = {"issues": [
+        {"id": "I1", "source": "ai", "severity": "must-fix", "category": "hook", "at": 0.4, "message": "blurry, face turned away", "status": "open", "opened": 0},
+        {"id": "I2", "source": "ai", "severity": "should-fix", "category": "typography", "at": 4.0, "message": "not about footage", "status": "open", "opened": 0},
+        {"id": "I3", "source": "code", "severity": "should-fix", "category": "footage", "at": 4.0, "message": "Clips c1 and c2 reuse the same footage", "status": "open", "opened": 0},
+        {"id": "I4", "source": "ai", "severity": "must-fix", "category": "hook", "at": 0.2, "message": "older issue", "status": "open", "opened": -1}]}
+    assert batch_mod._learn(cli.project, rev, {"f1": uid}, 0) == 1  # only I1: new, about the picture
+    assert batch_mod._learn(cli.project, rev, {"f1": uid}, 1) == 0  # re-checked next round: no new marks
+    m = footage.marks(uid)
+    assert m["1"]["weak"] == {"hook": 1} and "2" not in m
+    footage.mark(uid, 2, "proof", good=True, note="judged better")
+    log = footage.shot_log([("f1", uid)])
+    s1 = next(sg for sg in log["f1"]["segments"] if sg["id"] == "f1.s1")
+    line = planner._shot_line(s1)
+    assert "reviewer: weak as hook x1 (blurry, face turned away)" in line
+    assert "good as proof x1" in planner._shot_line(next(sg for sg in log["f1"]["segments"] if sg["id"] == "f1.s2"))
+    assert footage.clear_marks(uid) == 1 and footage.marks(uid) == {}

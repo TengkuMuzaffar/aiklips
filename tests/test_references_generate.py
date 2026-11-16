@@ -69,13 +69,17 @@ def fake_ai(monkeypatch):
             n = int(re.search(r"VARIATIONS \((\d+)\)", prompt).group(1))
             return {"variations": [{"index": i + 1, "angle": f"angle {i + 1}", "hook_text": f"Hook number {i + 1}",
                                     "cta_text": "Try it"} for i in range(n)]}
+        if task == "editor" and "Return a PATCH" in prompt:  # a targeted fix: move the hook title up
+            assert "FIX THESE ISSUES" in prompt and "T1:" in prompt
+            ids = re.findall(r"^- (I\d+) ", prompt, re.M)
+            return {"fixes": ids[:1], "ops": [{"op": "edit_text", "target": "T1", "y": "20%"}], "note": "hook title up"}
         if task == "editor":
             segs = re.findall(r"((f\d+)\.s\d+) \(([\d.]+)-([\d.]+)s", prompt)
             hook = re.search(r"hook line: (.+)", prompt).group(1)
             beats = [{"id": "b1", "role": "hook", "purpose": "stop the scroll"}, {"id": "b2", "role": "demo", "purpose": "show it"}]
             ops = [{"op": "clip", "file": f, "segment": sid, "start": float(a), "end": float(b), "beat": "b1" if i == 0 else "b2",
                     "why": f"shot {sid} shows the product"} for i, (sid, f, a, b) in enumerate(segs[:4])]
-            revising = "INDEPENDENT REVIEW" in prompt  # the auditor's review came back to the editor
+            revising = "INDEPENDENT REVIEW" in prompt  # a full revision (fallback when a patch is unusable)
             if revising:
                 assert "hook too low" in prompt and "no evidence: dropped" not in prompt
             ops.append({"op": "text", "text": hook, "start": 0, "end": 1.5, "beat": "b1", "why": "hook line",
@@ -271,6 +275,9 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
     assert 3.5 <= p.duration <= 6.5
     assert len(history.log(vdir)) > 4                    # one undoable step per operation
     assert fake_ai.count("planner") == 1 and fake_ai.count("editor") >= 4  # 2 plans + 2 revisions
+    # footage memory: the reviewer's "hook too low" at 0.5 s marked the opening segment weak as a hook
+    assert any(m["weak"].get("hook") for m in footage.marks(ups[0]).values())
+    assert a["issues"] and a["issues"][0]["id"].startswith("I")  # the issue list travels with the video
 
     row = batch.keep(v["id"])
     assert row["path"] == str(vdir)
@@ -412,9 +419,11 @@ def test_keep_improving_one_video(beat_ref, test_clip, song, fake_ai):
         NEVER_PASS = False
     v2 = batch.get(b["id"])["variations"][0]
     assert v2["status"] == "done" and len(v2["audit"]["rounds"]) == 3  # 2 more rounds after the first
-    revise = [pr for t, pr in PROMPTS if t == "editor" and "INDEPENDENT REVIEW" in pr]
-    assert revise and "YOUR BEST PLAN SO FAR" in revise[0]
-    assert "EARLIER ATTEMPTS" in revise[-1] and "best so far" in revise[-1]  # the 2nd revision knows how the 1st did
+    patches = [pr for t, pr in PROMPTS if t == "editor" and "Return a PATCH" in pr]
+    assert len(patches) == 2 and all("FIX THESE ISSUES" in pr and "THE CURRENT EDIT" in pr for pr in patches)
+    assert "I1" in patches[0]  # issues carry stable ids
+    assert "EARLIER ROUNDS" in patches[-1]  # the 2nd patch knows how the 1st did
+    assert not [pr for t, pr in PROMPTS if t == "editor" and "INDEPENDENT REVIEW" in pr]  # no full rewrites needed
     vdir = Path(batch._var(v["id"])["dir"])
     assert not list(vdir.parent.glob(f"{vdir.name}.r*"))
     # once a person edits it, improving from the AI's plan would throw their work away: refuse

@@ -110,6 +110,8 @@ Every clip and text op must say:
 - `why`: max ~15 words, specific to what is on screen and how it serves that beat, e.g. "close-up of the serum
   drop: proves the texture claim from the hook". Never generic ("looks good", "b-roll", "transition shot").
 Prefer segments whose `good_for` matches the beat's role. A reviewer will check every why against the picture.
+Some segments carry "reviewer:" marks from earlier reviews of this footage: never use a segment marked weak for a
+role in that role; prefer segments marked good for it.
 
 Rules:
 - Use only the file ids and segment ids given to you. Keep start/end inside the segment you name.
@@ -136,6 +138,16 @@ RANK = """You judge concepts for a batch of short-form video variations of the s
 one concept most likely to stop the scroll and be remembered, that the footage can deliver, and that keeps the
 batch varied (two variations should not get the same idea or the same signature move unless nothing else works).
 Give a one-line reason per pick. Return only JSON."""
+
+PATCHER = """You are the editor of a short-form video, fixing specific problems an independent reviewer found in your
+rendered edit. You change as little as possible: a patch, not a new edit. Each change must address one of the
+listed issues; everything else stays exactly as it is.
+- Clips are C1..Cn and titles T1..Tn in the order listed. Segment ids come from the footage list.
+- The footage list shows what the reviewer learned about segments ("weak as hook", "good as proof"). Use it: a
+  segment the reviewer rejected for a role will be rejected again.
+- Keep stated reasons honest: when you replace a clip, write the new clip's `why`.
+- If an issue can't be fixed with this footage, leave it and say so in `note` rather than making a random change.
+Return only JSON."""
 
 AUDITOR = """You are an independent senior reviewer at a short-form video agency. Another editor made this edit;
 you did not, and you are not here to be nice. Your job is to find what would make a viewer scroll away or a client

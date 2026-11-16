@@ -181,6 +181,11 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .pscore { display: flex; gap: 12px; align-items: center; }
 .pscore .ring { position: relative; right: auto; top: auto; flex: none; }
 .pscore b.ok { color: var(--accent); } .pscore b.near { color: #f5b041; } .pscore b.far { color: #fca5a5; }
+.pfind li.fixed { opacity: .55; } .pfind li.fixed div { text-decoration: line-through; text-decoration-color: #ffffff40; }
+.pfind li.worse .sev { color: #fca5a5; }
+.pfixed summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.fhint { margin: 10px 0 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid #5c4511; background: #2a210c; color: #f3d9a0; font-size: 13px; line-height: 1.45; }
+.fhint b { color: #f5b041; }
 .improve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--pane2); }
 .improve select { width: auto; }
 .improve .faint { flex-basis: 100%; }
@@ -878,6 +883,39 @@ function varCard(b, v) {
 }
 async function openVar(v) { const r = await call("POST", `/api/variations/${v.id}/open`); if (r) location.href = "/editor"; }
 
+function issueList(a, seek) {  // tracked issues: one problem keeps one id across rounds
+  const all = a.issues || [];
+  if (!all.length) return null;
+  const open = all.filter((i) => i.status !== "fixed");
+  const fixed = all.filter((i) => i.status === "fixed");
+  const row = (i) => h("li", { class: `${i.severity} ${i.status}` },
+    i.at != null ? h("button", { class: "t", title: "Play from here", onclick: () => seek(i.at) }, `${Number(i.at).toFixed(1)}s`) : h("span", { class: "t none" }, "—"),
+    h("div", {}, h("span", { class: "sev" }, `${i.id} · ${i.status === "worse" ? "got worse · " : i.status === "fixed" ? "fixed · " : ""}${i.severity} · ${i.category}`), i.message));
+  return h("div", {},
+    h("p", { class: "faint" }, `Issues: ${fixed.length} fixed · ${open.length} open`),
+    open.length ? h("ol", { class: "pfind" }, open.map(row)) : h("p", { class: "faint" }, "No open issues."),
+    fixed.length ? h("details", { class: "pfixed" }, h("summary", {}, `Show ${fixed.length} fixed`), h("ol", { class: "pfind" }, fixed.map(row))) : null);
+}
+function runNote(a) {  // why the last run ended where it did
+  const s = a.stopped;
+  if (!s) return null;
+  const ran = `${s.ran} of ${s.asked} round${s.asked === 1 ? "" : "s"}`;
+  const why = s.reason === "passed" ? "it passed" : s.reason === "plateau" ? `${s.stale} revisions in a row weren't better than the best version, so it stopped to save AI quota`
+    : "it used every round you gave it";
+  return h("p", { class: "faint" }, `Last run: ${ran}. Every revision was re-rendered and re-audited side by side with the best version; ${why}. The best version is the one shown.`);
+}
+const FOOTAGE_HINTS = {
+  hook: "a strong opening shot: steady, in focus, a face or the product clearly visible in the first second",
+  story: "shots that show each step of the story the brief asks for",
+  colour: "footage with cleaner, consistent light",
+  typography: "a calmer background area where titles can sit",
+  sound: "clean audio: speech without wind or background noise",
+};
+function footageHint(cat) {
+  const need = FOOTAGE_HINTS[cat] || "different footage for this part";
+  return h("div", { class: "fhint" }, h("b", {}, `The auditor flags the ${cat} every round.`),
+    ` More revisions are unlikely to fix it: the editor can only reuse your footage. Add ${need}, then regenerate, or lower the pass mark.`);
+}
 // "keep improving": more editor revisions from this video's best version, until it passes
 function improveBox(v, close) {
   const rounds = h("select", { "aria-label": "Rounds", title: "At most this many more revisions; it stops as soon as the video passes" },
@@ -915,12 +953,14 @@ function play(v) {
       h("div", { class: "pscore" }, scoreRing(st), h("div", {},
         h("b", { class: st.tone }, st.ok ? "Passed" : "Below the pass mark", h("span", { class: "faint" }, ` · pass ${st.pass}`)),
         (a.rounds || []).length > 1 ? h("div", { class: "faint" }, `Editor revised it ${a.rounds.length - 1}×: ${a.rounds.map((r) => r.score).join(" → ")}`) : null)),
+      runNote(a),
+      a.recurring && !st.ok ? footageHint(a.recurring) : null,
       !st.ok ? improveBox(v, close) : null,
       v.error ? h("p", { class: "faint" }, v.error) : null,
       a.summary ? h("p", {}, a.summary) : null,
-      findings.length ? h("ol", { class: "pfind" }, findings.map((f) => h("li", { class: f.severity },
+      issueList(a, seek) || (findings.length ? h("ol", { class: "pfind" }, findings.map((f) => h("li", { class: f.severity },
         f.at != null ? h("button", { class: "t", title: "Play from here", onclick: () => seek(f.at) }, `${Number(f.at).toFixed(1)}s`) : h("span", { class: "t none" }, "—"),
-        h("div", {}, h("span", { class: "sev" }, `${f.severity} · ${f.category}`), f.message)))) : h("p", { class: "faint" }, "No open findings.")) : null,
+        h("div", {}, h("span", { class: "sev" }, `${f.severity} · ${f.category}`), f.message)))) : h("p", { class: "faint" }, "No open findings."))) : null,
     axes.length ? h("section", {}, h("h4", {}, "Variation settings"), h("div", { class: "chips" }, axes.map((x) => h("span", { class: "chip" }, x)))) : null);
   const acts = h("div", { class: "actions" },
     h("button", { class: "ghost", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); close(); loadBatches(); } }, "Discard"),

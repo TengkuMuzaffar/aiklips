@@ -250,3 +250,61 @@ Watcher and Auditor look at frames, so `check_models()` only accepts vision mode
   - References studied outside the batch keep their study.
 - **Defaults:** `GET/POST /api/ai/roles`, the wizard's "AI team" panel ("Make these my defaults"), the editor Audit panel's
   "AI reviewer" picker (used by the chat Stop hook's AI review), and `vedit ai-models`.
+
+## 12. Keep improving, and judging revisions side by side (2026-11-16)
+
+- **Keep improving** one finished video: `batch.improve(vid, rounds)` → `variation_improve` job (`improve:<vid>:<n>`) →
+  `_loop(start=best)`. Revisions start from the best version, and the editor gets every earlier attempt's score and
+  verdict (`revise_plan(attempts=, best_round=)`).
+  - Refused when the project's content differs from the AI's last version (`history.same_as`), so hand edits
+    are never thrown away.
+  - UI: the player's "Keep improving" control; CLI: `vedit gen improve`.
+- **Noise.** Measured live: the same unchanged video scored 64, then 53, in two separate reviews. The original 64 was a lucky
+  draw that no revision could "beat".
+- **The fix: side-by-side judging.** A revision's review also shows the best version's sheets and score
+  (`ai_review(compare=)`, 4 images), asks for scores on that scale and a verdict (better / same / worse).
+  `review.beats()` keeps a revision when the verdict is "better" and it adds no must-fix; without a verdict
+  (code-only audit) the score decides.
+- **Stopping.** Generation stops after `PLATEAU = 2` non-improving revisions; an explicit improve run after 3.
+  `audit.stopped = {reason: passed|plateau|rounds, ran, asked}` is shown in the player.
+- **Footage limits.** `review.recurring()`: a must-fix category flagged in each of the last 3 rounds. The edit can't fix
+  it, the footage probably can't either. The player shows what footage to add, or suggests lowering the pass mark.
+- **History bug fixed.** `history.sync` compared raw files, so new format fields (`canvas.loudness`) were recorded as
+  "manual edit" steps. It now normalises snapshots through the current model.
+- **Loudness.** `canvas.loudness = -14` (`loudnorm` on the final mix), so "too quiet" stops being a finding the editor can't fix.
+
+## 13. Making the loop converge (2026-11-16): patches, issue list, footage memory
+
+**Observed:** 8 revisions of one video, none better than the original. The causes:
+- every round was a full rewrite, so changes amounted to a random walk;
+- each review was a fresh critique, so the target kept moving;
+- the editor never saw the footage;
+- nothing remembered which footage the reviewer kept rejecting.
+
+**A. Targeted patches** (`planner.patch_plan`, `apply_patch`, `PlanPatch`/`PatchOp`, `prompts.PATCHER`).
+- The editor sees its edit as numbered lines (`plan_listing`: C1..Cn clips, T1..Tn titles, MUSIC, MOVE) and the
+  top 3 open issues.
+- It returns at most 6 changes: replace / trim / move / remove / insert clip, set_audio, edit / add / remove text,
+  set_music, set_move. Everything else is locked.
+- A patch that names unknown targets, or creates new plan errors, is rejected. Then, or when the patch call fails,
+  the loop falls back to a full `revise_plan`.
+
+**B. Issue list** (`review.track`, `IssueCheck`, `AIReview.issue_checks`).
+- Every must-fix / should-fix becomes an issue with a stable id (I1, I2...).
+- Code issues stay open while their check fires; they are keyed by check + message with numbers stripped.
+- The AI reviewer checks each open AI issue (fixed / open / worse), then adds at most 3 new ones; restatements of an
+  open issue are dropped.
+- `beats()` never accepts a revision that adds must-fix problems or makes an issue worse. It accepts "better", and
+  "same" when the revision fixed issues.
+- The report and the player carry the list ("Issues: 3 fixed · 2 open").
+
+**C. Footage memory** (`footage.mark/marks/marks_text/clear_marks`, `~/.claude-cut/uploads/<id>/marks.json`).
+- Each picture finding (hook / story / footage / colour / pacing) with a time marks the segment playing there as
+  weak for that clip's role, with the reason.
+- Segments brought in by a revision that won get a "good" mark; ones brought in by a revision judged worse get a
+  "weak" mark.
+- `shot_log` carries the marks, and every prompt shows them ("reviewer: weak as hook x3 (blurry, face turned away)").
+  The editor and the first-draft planner are told never to reuse a segment in a role it is weak for.
+- The log is refreshed after every round, so learning applies within the same run, and to later videos and batches
+  from the same footage.
+- `vedit taste --clear-marks` resets the marks.
