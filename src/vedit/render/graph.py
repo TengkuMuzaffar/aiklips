@@ -257,7 +257,12 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             out = g.label("X")
             if trans[k] > 0:
                 tt = project.clips[k].transition.type  # type: ignore[union-attr]
-                g.add(f"[{vcur}][{vsegs[k]}]xfade=transition={tt}:duration={_f(trans[k])}:offset={_f(starts[k] - trans[k] / 2)}[{out}]")
+                # xfade needs constant-frame-rate inputs; some FFmpeg builds report 1/0 after
+                # concat/xfade/settb, so pin the rate explicitly on both sides.
+                xa, xb = g.label("xa"), g.label("xb")
+                g.add(f"[{vcur}]fps={_f(fps)}[{xa}]")
+                g.add(f"[{vsegs[k]}]fps={_f(fps)}[{xb}]")
+                g.add(f"[{xa}][{xb}]xfade=transition={tt}:duration={_f(trans[k])}:offset={_f(starts[k] - trans[k] / 2)}[{out}]")
             else:
                 g.add(f"[{vcur}][{vsegs[k]}]concat=n=2:v=1:a=0,settb=AVTB[{out}]")
             vcur = out
