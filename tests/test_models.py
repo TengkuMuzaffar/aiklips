@@ -30,7 +30,8 @@ def test_add_provider_and_model_with_stored_key(home):
     assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-secret" and env["ANTHROPIC_MODEL"] == "deepseek-chat"
     assert env["ANTHROPIC_SMALL_FAST_MODEL"] == "deepseek-chat"
     f = home / "models.json"
-    assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
+    if os.name != "nt":  # Windows has no POSIX permission bits
+        assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
     assert [x["id"] for x in json.loads(f.read_text())["providers"]] == ["deep-seek"]  # built-ins not persisted
     assert "sk-secret" not in json.dumps(reg.public())  # never sent to the browser
 

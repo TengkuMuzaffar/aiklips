@@ -1,5 +1,8 @@
 import json
 import stat
+import sys
+
+import pytest
 
 from vedit.editor import claude_setup
 
@@ -11,6 +14,7 @@ def _fake_cli(tmp_path, payload):
     return str(f)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="fake CLI is a POSIX shell script")
 def test_status_logged_in_keeps_only_safe_fields(tmp_path, monkeypatch):
     cli = _fake_cli(tmp_path, {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max",
                                "email": "someone@example.com", "orgName": "Org", "orgId": "x"})
@@ -20,6 +24,7 @@ def test_status_logged_in_keeps_only_safe_fields(tmp_path, monkeypatch):
     assert "email" not in s and "orgName" not in s and "orgId" not in s
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="fake CLI is a POSIX shell script")
 def test_status_logged_out_and_env_key(tmp_path, monkeypatch):
     cli = _fake_cli(tmp_path, {"loggedIn": False, "authMethod": "none"})
     monkeypatch.setattr(claude_setup, "cli_path", lambda: (cli, "system"))
