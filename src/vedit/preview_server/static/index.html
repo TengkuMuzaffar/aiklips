@@ -93,6 +93,20 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .fields .pair { display: flex; gap: 6px; align-items: center; }
 .fields .sec { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line2); font-size: 11px; text-transform: uppercase;
   letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.aa-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; margin-right: 6px; cursor: pointer; }
+.m-audit { border: 1px solid var(--line2); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; font-size: 12px; }
+.m-audit.ok { border-color: var(--accent); } .m-audit.bad { border-color: #e5a400; }
+.m-audit .aa-h { display: flex; align-items: center; gap: 6px; }
+.beats { display: grid; gap: 6px; }
+.beat { display: grid; gap: 1px; padding: 6px 8px; border: 1px solid var(--line2); border-radius: 8px; font-size: 12px; }
+.beat.empty-beat { border-style: dashed; opacity: .7; }
+.audit-score { font-weight: 600; margin: 4px 0 8px; }
+.audit-score.ok { color: var(--accent); } .audit-score.bad { color: var(--danger); }
+.findings { display: grid; gap: 6px; margin-bottom: 8px; }
+.finding { border-left: 3px solid var(--line2); padding: 4px 8px; font-size: 12px; display: grid; gap: 2px; }
+.finding.bad { border-color: var(--danger); } .finding.warn { border-color: #e5a400; }
+.finding code { font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.finding a { cursor: pointer; color: var(--accent); }
 .font-pick { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .font-pick select { width: 100%; }
 .font-pick .pair select { flex: 1; min-width: 0; }
@@ -424,7 +438,7 @@ dialog#dlg-models::backdrop { background: #000b; }
 
   <!-- 3. AI chat -->
   <section class="pane" id="p-chat">
-    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost icon" id="b-copychat" data-icon="copy" title="Copy this whole conversation"></button><button class="ghost icon" id="b-chats" data-icon="history" title="Chat history: reopen or delete earlier chats"></button><button class="ghost icon" id="b-newchat" data-icon="message-plus" title="New chat: start fresh (this chat stays in Chat history)"></button></div>
+    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><label class="aa-toggle" title="When the AI says it's done, code checks always run. Tick to also have an independent AI reviewer look at the rendered video (slower, one extra AI call per finished request)."><input type="checkbox" id="auto-audit"> AI auditor</label><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost icon" id="b-copychat" data-icon="copy" title="Copy this whole conversation"></button><button class="ghost icon" id="b-chats" data-icon="history" title="Chat history: reopen or delete earlier chats"></button><button class="ghost icon" id="b-newchat" data-icon="message-plus" title="New chat: start fresh (this chat stays in Chat history)"></button></div>
     <div id="chatlist" hidden></div>
     <div id="ai-setup" hidden></div>
     <div id="msgs"></div>
@@ -820,7 +834,74 @@ function renderRoot() {
       h("div", { class: "full hint" }, ST.project_dir)));
 
   const tip = h("p", { class: "hint", style: { marginTop: "14px" } }, "Select a clip, text or music block on the timeline to edit its properties here.");
-  return [project, tip];
+  return [project, renderPlanNotes(p), renderAudit(), tip];
+}
+
+function renderPlanNotes(p) {
+  const n = p.notes;
+  if (!n || (!n.rationale && !(n.beats || []).length)) return null;
+  const count = (id) => p.clips.filter((c) => c.meta?.beat === id).length;
+  return h("div", { class: "sec" },
+    h("div", { class: "sec-h" }, h("h3", {}, "Edit plan")),
+    n.rationale ? h("p", { class: "hint" }, n.rationale) : null,
+    h("div", { class: "beats" }, (n.beats || []).map((b) =>
+      h("div", { class: "beat" + (count(b.id) ? "" : " empty-beat") },
+        h("b", {}, `${b.id} · ${b.role}`), h("span", {}, b.purpose), h("span", { class: "hint" }, `${count(b.id)} clip(s)`)))));
+}
+
+let AUDIT = null;  // {busy, result, error, version}
+let AUDIT_CFG = null;
+fetch("/api/audit/settings").then((r) => r.json()).then((c) => { AUDIT_CFG = c; if (!SEL) renderInspector(); }).catch(() => {});
+let AUDIT_ROLES = null;
+fetch("/api/ai/roles").then((r) => r.json()).then((d) => { AUDIT_ROLES = d; if (!SEL) renderInspector(); }).catch(() => {});
+function auditorPicker() {
+  if (!AUDIT_ROLES) return null;
+  const role = AUDIT_ROLES.roles.find((r) => r.tier === "auditor");
+  const label = (k) => { const m = AUDIT_ROLES.models.find((x) => x.key === k); return m ? m.label : k; };
+  const opts = [["", `Default: ${label(role.tier_default)}`], ...AUDIT_ROLES.models.filter((m) => m.vision !== false && m.ready).map((m) => [m.key, `${m.label} · ${m.provider}`])];
+  return field("AI reviewer", selectIn(role.saved || "", opts, async (v) => {
+    const r = await api("/api/ai/roles", { auditor: v });
+    if (r) { AUDIT_ROLES.roles = r.roles; renderInspector(); }
+  }));
+}
+function auditSettings() {
+  if (!AUDIT_CFG) return null;
+  const save = async (k, v) => { const r = await api("/api/audit/settings", { [k]: Number(v) }); if (r) { AUDIT_CFG = r; renderInspector(); } };
+  return h("div", { class: "fields" },
+    field("Pass mark", h("div", { class: "pair" }, numIn(AUDIT_CFG.threshold, (v) => save("threshold", v), 5, { min: 0, max: 100, title: "Edits scoring below this go back to the AI editor" }), h("span", { class: "hint" }, "/ 100"))),
+    field("Max rounds", h("div", { class: "pair" }, numIn(AUDIT_CFG.max_rounds, (v) => save("max_rounds", v), 1, { min: 0, max: 8, title: "Revision rounds before you decide" }), h("span", { class: "hint" }, "revisions"))),
+    auditorPicker());
+}
+function renderAudit() {
+  const sev = { "must-fix": "bad", "should-fix": "warn", note: "" };
+  const run = async (withAI) => {
+    AUDIT = { busy: true }; renderInspector();
+    const r = await api("/api/audit", withAI ? { ai: true } : {});
+    AUDIT = r ? { result: r, version: ST.history?.length } : { error: "Audit failed" };
+    renderInspector();
+  };
+  const r = AUDIT?.result;
+  const stale = r && AUDIT.version !== ST.history?.length;
+  return h("div", { class: "sec" },
+    h("div", { class: "sec-h" }, h("h3", {}, "Audit"),
+      h("div", { class: "pair" },
+        h("button", { class: "ghost", disabled: AUDIT?.busy, onclick: () => run(false), title: "Code checks only: instant and free" }, AUDIT?.busy ? "Checking…" : r ? "Re-check" : "Check edit"),
+        h("button", { class: "ghost", disabled: AUDIT?.busy, onclick: () => run(true), title: "Also have an independent AI reviewer watch the render (one AI call)" }, "+ AI reviewer"))),
+    AUDIT?.error ? h("p", { class: "m-err" }, AUDIT.error) : null,
+    auditSettings(),
+    !r ? h("p", { class: "hint" }, "Checks hook, readability, safe zones, overlaps, fonts, colour, pacing, reused footage, footage sound vs music, loudness and reasons.") : [
+      ((ok) => h("p", { class: "audit-score " + (ok ? "ok" : "bad") },
+        `${r.score}/100 · ${ok ? "passed" : AUDIT_CFG && r.score < AUDIT_CFG.threshold ? `below the pass mark (${AUDIT_CFG.threshold})` : "must-fix left"}`,
+        stale ? h("span", { class: "hint" }, " (edited since)") : null))(r.passed && (!AUDIT_CFG || r.score >= AUDIT_CFG.threshold)),
+      r.summary ? h("p", { class: "hint" }, r.summary) : null,
+      r.scores ? h("div", { class: "chips" }, Object.entries(r.scores).map(([k, v]) => h("span", { class: "chip" + (v <= 2 ? " bad" : "") }, `${k} ${v}/5`))) : null,
+      r.findings.length ? h("div", { class: "findings" }, r.findings.map((f) =>
+        h("div", { class: "finding " + sev[f.severity] },
+          h("div", {}, h("b", {}, f.severity), ` · ${f.category}`,
+            f.at != null ? h("a", { onclick: () => { video.currentTime = f.at; } }, ` @${f.at}s`) : null),
+          h("div", {}, f.message),
+          f.fix ? h("code", { title: "Suggested fix" }, f.fix) : null))) : h("p", { class: "hint" }, "No findings."),
+      h("button", { onclick: () => { $("#prompt").value = "Run `vedit audit`, fix every must-fix finding (and should-fix where it helps), then audit again and tell me what changed."; $("#prompt").focus(); autosize(); } }, "Ask AI to fix these…")]);
 }
 
 function renderMedia() {
@@ -864,6 +945,7 @@ function renderClip(c) {
       field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
       field("Focus X", rangeIn(c.focus_x, 0, 1, 0.01, (v) => set({ focus_x: v }))),
       field("Focus Y", rangeIn(c.focus_y, 0, 1, 0.01, (v) => set({ focus_y: v }))),
+      ...whyFields(c),
       ...colorFields(c),
       idx > 0 ? field("Transition in", h("div", { class: "pair" },
         selectIn(c.transition?.type || "none", TRANSITION_OPTS, (v) => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 })),
@@ -880,6 +962,19 @@ function renderClip(c) {
       h("button", { class: "danger", onclick: () => op("remove_clip", { clip: c.id }) }, "Delete clip"),
       idx > 0 && c.transition ? h("button", { onclick: () => op("transition_set", { type: c.transition.type, duration: c.transition.duration }) }, icon("transition"), "Use this transition on all cuts") : null,
       h("button", { onclick: () => askAbout(`clip ${c.id}`) }, "Ask AI about this…")),
+  ];
+}
+const ROLES = ["hook", "problem", "setup", "demo", "proof", "benefit", "payoff", "cta", "other"];
+function whyFields(c) {
+  const m = c.meta || {};
+  const beat = (P().notes?.beats || []).find((b) => b.id === m.beat);
+  return [
+    h("label", { class: "full sec" }, "Why this shot"),
+    h("textarea", { class: "full", rows: 2, value: m.why || "", placeholder: "What it shows and what it does for the viewer",
+      onchange: (e) => op("clip_why", { clip: c.id, why: e.target.value }) }),
+    field("Role", selectIn(m.role || "", [["", "—"], ...ROLES.map((r) => [r, r])], (v) => op("clip_why", { clip: c.id, role: v }))),
+    beat ? field("Beat", h("span", { class: "hint" }, `${beat.id} · ${beat.role}: ${beat.purpose}`)) : null,
+    m.segment ? field("From", h("span", { class: "hint" }, `${m.segment}${m.quality ? ` · quality ${m.quality}/5` : ""}`)) : null,
   ];
 }
 function colorFields(c) {
@@ -1064,6 +1159,7 @@ function addMsg(ev) {
   }
   else if (ev.type === "done") el = h("div", { class: "m-meta" }, ev.ok ? `done · ${ev.seconds}s` + (ev.cost ? ` · $${ev.cost.toFixed(3)}` : "") : `stopped: ${ev.error || ""}`);
   else if (ev.type === "error") el = h("div", { class: "m-err" }, ev.text);
+  else if (ev.type === "audit") el = auditCard(ev);
   else if (ev.type === "notice") el = h("div", { class: "m-note" }, ev.text);
   else if (ev.type === "permission") {
     if (document.getElementById(ev.id)) return;
@@ -1117,6 +1213,21 @@ function suggestions() {
     h("div", { class: "suggest" }, ["Remove the pauses", "Add a bold hook title for the first 3 seconds", "Add TikTok-style captions", "Blur my background", "Make this clip 2x faster"]
       .map((s) => h("button", { onclick: () => { $("#prompt").value = s; $("#prompt").focus(); } }, s))));
 }
+$("#auto-audit").onchange = (e) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "auto_audit", on: e.target.checked })); };
+function auditCard(ev) {
+  const sev = { "must-fix": "bad", "should-fix": "warn", note: "" };
+  const ok = ev.reached ?? ev.passed;
+  const mark = ev.threshold != null ? ` (pass mark ${ev.threshold})` : "";
+  const head = ok ? `Audit passed · ${ev.score}/100${mark}`
+    : ev.final ? `Audit ${ev.score}/100${mark}: stopped after ${ev.round} round(s), your call`
+    : `Audit ${ev.score}/100${mark} · sending the edit back to the AI editor (round ${ev.round})`;
+  return h("div", { class: "m-audit " + (ok ? "ok" : "bad") },
+    h("div", { class: "aa-h" }, icon("check"), h("b", {}, head), ev.ai ? h("span", { class: "hint" }, " · AI reviewer") : null),
+    ev.summary ? h("div", { class: "hint" }, ev.summary) : null,
+    (ev.findings || []).map((f) => h("div", { class: "finding " + sev[f.severity] },
+      h("div", {}, h("b", {}, f.severity), ` · ${f.category}`, f.at != null ? h("a", { onclick: () => { video.currentTime = f.at; } }, ` @${f.at}s`) : null),
+      h("div", {}, f.message))));
+}
 function connectChat() {
   ws = new WebSocket(`ws://${location.host}/ws/chat`);
   ws.onmessage = (m) => {
@@ -1124,12 +1235,14 @@ function connectChat() {
     if ((ev.type === "history" || ev.type === "models") && ev.models) { renderModelPicker(ev.models, ev.model); if (ev.type === "models") { checkAI(); return; } }
     if (ev.type === "error") checkAI();
     if (ev.type === "history") {
-      CHATS = ev.chats || []; CHAT_ID = ev.chat_id || null;
+      CHATS = ev.chats || []; CHAT_ID = ev.chat_id || null; $("#auto-audit").checked = !!ev.auto_audit_ai;
       $("#msgs").innerHTML = ""; toolEls = {}; typingEl = null; ev.log.forEach(addMsg); setBusy(ev.busy); suggestions();
       if (!$("#chatlist").hidden) renderChatList();
       return;
     }
     if (ev.type === "status") { setBusy(ev.busy); return; }
+    if (ev.type === "status_step") { $("#tl-step").textContent = ev.text; return; }
+    if (ev.type === "auto_audit") { $("#auto-audit").checked = !!ev.on; return; }
     addMsg(ev);
   };
   ws.onclose = () => setTimeout(connectChat, 1500);

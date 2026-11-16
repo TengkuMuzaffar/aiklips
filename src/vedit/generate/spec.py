@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from ..library import FORMATS
+from ..ops.moves import MOVE_NAMES
+from ..project import ROLES
+
+Role = Literal[ROLES]  # type: ignore[valid-type]
+MoveName = Literal[MOVE_NAMES]  # type: ignore[valid-type]
 
 AXES: dict[str, list[str]] = {
     "hook": ["reference", "question", "bold_claim", "stat", "pain_point", "pov", "before_after"],
@@ -19,11 +24,19 @@ AXES: dict[str, list[str]] = {
     "music_section": ["start", "middle", "late"],
     "color_look": ["reference", "clean-bright", "warm-film", "teal-orange", "moody", "vibrant"],
     "font": ["reference", "condensed", "bold_sans", "serif", "rounded", "handwritten"],
+    "structure": ["reference", "rhythmic_montage", "text_led", "one_take", "before_after", "problem_solution"],
 }
 AXIS_LABELS = {
     "hook": "Hook", "order": "Clip order", "pacing": "Pacing", "caption_style": "Caption style",
     "text_animation": "Text animation", "transitions": "Transitions", "music_section": "Music section",
-    "color_look": "Colour look", "font": "Font",
+    "color_look": "Colour look", "font": "Font", "structure": "Structure",
+}
+STRUCTURE_HINT = {
+    "rhythmic_montage": "Rhythmic montage: many short shots cut to the music, little text, energy builds to the payoff.",
+    "text_led": "Text-led story: a sequence of short on-screen lines carries the story; footage illustrates each line.",
+    "one_take": "One-take feel: few, longer shots with continuous motion; minimal cutting, the camera tells it.",
+    "before_after": "Before / after: show the 'before' state, a clear turning point, then the 'after' result.",
+    "problem_solution": "Problem / solution: open on a relatable problem, then show the product solving it, then proof.",
 }
 
 
@@ -52,7 +65,35 @@ class BatchSpec(_M):
     count: int = Field(3, ge=1, le=10)
     axes: list[str] = Field(default_factory=lambda: list(AXES))
     quality: Literal["best", "balanced", "economy"] = "balanced"
-    review: bool = Field(True, description="Run the AI review pass on each variation")
+    review: bool = Field(True, description="Run the AI auditor (review + fix rounds) on each variation")
+    explore: bool = Field(True, description="Write 3 concepts per variation and keep the best (AI ranks them across siblings)")
+    audit_threshold: int | None = Field(None, ge=0, le=100, description="Pass mark for the audit score (default: audit settings)")
+    audit_rounds: int | None = Field(None, ge=0, le=8, description="Max editor revisions per video (default: audit settings)")
+    models: dict[str, str] = Field(default_factory=dict,
+                                   description="Model per role for this generation: {vision|planner|editor|auditor: '<provider>/<model>'}")
+
+
+class Concept(_M):
+    title: str = Field(description="3-6 words naming the idea")
+    arc: str = Field(description="The emotional arc in one line, e.g. 'frustration -> surprise -> relief'")
+    motif: str = Field("", description="A visual motif that recurs, e.g. 'hands', 'the colour yellow', 'clock close-ups'")
+    signature_move: MoveName | None = Field(None, description="The one memorable editing move this concept is built around")
+    opening: str = Field(description="Exactly what the first 1.5 seconds show and say")
+    why: str = Field("", description="Why this would work for the brief and audience")
+
+
+class ConceptSet(_M):
+    concepts: list[Concept] = Field(description="Exactly 3 clearly different concepts")
+
+
+class Pick(_M):
+    variation: int
+    concept: int = Field(description="1-based index of the chosen concept for that variation")
+    reason: str = ""
+
+
+class Ranking(_M):
+    picks: list[Pick]
 
 
 class Creative(_M):
@@ -63,6 +104,8 @@ class Creative(_M):
     cta_text: str = ""
     structure: list[str] = Field(default_factory=list, description="Sections in order")
     notes: str = ""
+    concept: SkipJsonSchema[Concept | None] = None  # chosen by rank() when exploring
+    concept_reason: SkipJsonSchema[str] = ""
 
 
 class CreativePlan(_M):
@@ -71,7 +114,7 @@ class CreativePlan(_M):
 
 class Op(_M):
     """One edit operation. Flat on purpose (LLMs fill flat objects more reliably than unions)."""
-    op: Literal["clip", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit"]
+    op: Literal["clip", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit", "move"]
     file: str | None = None
     start: float | None = None
     end: float | None = None
@@ -97,31 +140,27 @@ class Op(_M):
     volume: float | None = None
     duck: bool | None = None
     words: int | None = None
+    beat: str | None = Field(None, description="clip/text: id of the beat it belongs to")
+    segment: str | None = Field(None, description="clip: the footage segment id it is cut from, e.g. f1.s3")
+    why: str | None = Field(None, description="clip/text: why it is here, max ~15 words, specific to what is on screen")
+    audio: Literal["voice", "ambient", "mute"] | None = Field(
+        None, description="clip: its own sound. voice = keep (music ducks under it); ambient = keep quietly; mute = music only")
+
+
+class PlanBeat(_M):
+    id: str = Field(description="b1, b2, ...")
+    role: Role = "other"
+    purpose: str = Field("", description="One line: what this beat must make the viewer feel or understand")
 
 
 class EditPlan(_M):
     title: str = Field("", description="Short name for this variation")
+    beats: list[PlanBeat] = Field(default_factory=list, description="The structure, in order; the first is the hook")
     beat_sync: bool = Field(False, description="Snap cuts to the music's beats")
     ops: list[Op]
     rationale: str = Field("", description="1-3 sentences: why this opening shot and this order")
     grade: SkipJsonSchema[dict | None] = None  # set by enforce(), never asked of the model
-
-
-class Fix(_M):
-    layer: str
-    x: str | None = None
-    y: str | None = None
-    size: int | None = None
-    start: float | None = None
-    end: float | None = None
-    text: str | None = None
-    remove: bool = False
-
-
-class Review(_M):
-    ok: bool
-    issues: list[str] = Field(default_factory=list)
-    fixes: list[Fix] = Field(default_factory=list)
+    problems: SkipJsonSchema[list[str]] = Field(default_factory=list)  # validate_plan() errors left after the retry
 
 
 class SegmentNote(_M):
@@ -130,6 +169,9 @@ class SegmentNote(_M):
     quality: int = Field(3, ge=1, le=5)
     talking: bool = False
     tags: list[str] = Field(default_factory=list)
+    shot: Literal["wide", "medium", "close", "detail", "screen", "other"] = "medium"
+    subject: str = Field("", description="Main subject in 1-4 words: 'woman's hands', 'serum bottle', 'phone screen'")
+    good_for: list[Role] = Field(default_factory=list, description="1-3 roles this segment could play in an edit")
 
 
 class FootageNotes(_M):

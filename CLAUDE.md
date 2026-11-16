@@ -16,8 +16,15 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 4. **Look at your work.**
    - After visual changes, run `uv run vedit --json frame --at <sec>` or `uv run vedit --json sheet`.
    - Then **Read the image** it returns to check the result yourself (text placement, crop, background).
-5. **Tell the user what changed**, in timeline seconds, and mention they can say "undo".
-6. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. The file goes to `projects/<name>/exports/`.
+5. **Justify and audit before saying done.**
+   - Record why each clip you chose or kept is there: `vedit why c3 "close-up proves the texture claim" --role proof`.
+   - Run `uv run vedit --json audit`. Fix every **must-fix** finding, and should-fix ones where they help. Re-run until it passes.
+   - In the desktop editor this is enforced: when you finish a turn that changed the edit, the auditor runs and, while
+     the score is below the pass mark (`vedit audit-settings`, default 80) or must-fix findings remain, sends the
+     findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed.
+   - Don't call an edit finished while the audit has must-fix findings; if one can't be fixed, say so and why.
+6. **Tell the user what changed**, in timeline seconds, the audit score, and mention they can say "undo".
+7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. The file goes to `projects/<name>/exports/`.
 
 **The desktop editor:** the user may have it open (`uv run vedit app`, or `vedit serve` in a browser).
 - It re-renders automatically after every command, so you never need to start it. Suggest it once.
@@ -33,6 +40,10 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Don't touch user media files.** Never delete or overwrite them. Never hand-edit `.vedit/`.
 - **Hand-editing `project.json` is a last resort.** It's acceptable for complex keyframes, but keep it valid. The next command records it in history automatically.
 - **Report errors.** If a command errors, read the message and fix the inputs. Don't retry blindly.
+- **Sound.** Speech clips keep their sound and the music ducks under them; b-roll noise (wind, traffic, hum) is
+  muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
+  those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
+- **Signature moves.** One memorable move beats five generic ones: `vedit fx apply <move>` (at most 2 per video).
 - **Consistency.** One text look for all titles (`text look apply`), at most two fonts, one colour look on every
   clip, and run `color match` whenever the edit mixes footage from different cameras or lighting.
 - **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add`. The default style `remove` rebuilds the background so the thing looks like it was never there; use `--style blur|pixelate` only for privacy censoring (faces, plates) or when the user asks for blur. Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
@@ -71,16 +82,28 @@ transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--cli
 mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
 focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --zoom 1.3] | focus clear
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | music remove <id>
+audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
+audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
+fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
+taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
 undo [--steps N] | redo | history | checkout <step>
 preview [--open] | frame --at T[,T2,...] | sheet | export [out.mp4] [--scale 1] | serve
 ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
-gen run --ref ID [--ref ID2] -f <footage/music/image>... [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
+gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
 
 **References / Generate:**
-- `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota (about 2 calls per video).
+- `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota:
+  about 5 calls per video with the defaults (concepts + editor + auditor, + one editor revision and re-audit when the
+  score is below the pass mark), plus 1 planner + 1 rank call per batch. Each extra revision round adds 2 calls (cap:
+  `vedit audit-settings --max-rounds`). `--no-review` / `--no-explore` cut that to about 1-2.
 - Give the estimate and ask before running it with `--count` above 3.
+- Four AI roles: Watcher (studies references, logs footage; needs vision), Creative director (angles, hooks,
+  concepts), Editor (builds and revises edits), Auditor (watches renders; needs vision). Precedence: this
+  generation's `--model` > the user's saved default (`vedit ai-models`) > the quality tier. Say which models you used.
 - To change one generated video, open its project folder with `vedit use` and edit it like any other project.
+- To keep the AI improving one generated video that's below the pass mark (and not edited by hand):
+  `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.
 
 ## Skills
 
@@ -108,6 +131,9 @@ Load the relevant one before doing that kind of edit.
   - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`
     (built-in + saved looks in ~/.claude-cut/text-looks.json), rendering in `ops/text.py`
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+  - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
+    `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).
+    Design + roadmap (AI reviewer, chat Stop hook, creativity): `docs/design/auditor-justification-creativity.md`
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
 - **Before committing:** keep the tests green. Add a test for each new op.

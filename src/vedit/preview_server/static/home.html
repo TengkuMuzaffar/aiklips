@@ -133,18 +133,79 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .vcard { background: var(--pane2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .vcard.keep { border-color: var(--accent); }
 .vcard.discard { opacity: .45; }
+/* variation cards: score ring on the thumbnail, one issue line, actions always visible */
+.vgrid { --warn: #f5b041; }
+.vcard.is-top { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.vthumb .top { position: absolute; left: 8px; top: 32px; font-size: 11px; font-weight: 600; background: var(--accent); color: var(--accent-ink);
+  padding: 2px 8px; border-radius: 6px; z-index: 2; }
+.vthumb .num, .vthumb .ring, .vthumb .concept { z-index: 2; }
+.ring { --c: var(--accent); position: absolute; right: 8px; top: 8px; width: 46px; height: 46px; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--v) * 1%), #ffffff26 0); display: grid; place-items: center;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.ring::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: #0b0d10e0; }
+.ring::after { content: ""; position: absolute; left: 50%; top: 0; width: 2px; height: 7px; margin-left: -1px; background: #fff;
+  transform-origin: 1px 23px; transform: rotate(calc(var(--pass) * 3.6deg)); border-radius: 1px; } /* the pass mark */
+.ring b { position: relative; font-size: 17px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.ring.near { --c: var(--warn); } .ring.far { --c: var(--danger); }
+.ring.near b { color: var(--warn); } .ring.far b { color: #fca5a5; } .ring.ok b { color: var(--accent); }
+.vthumb .concept { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 10px 8px; font-size: 12px; color: #f1f3f6;
+  background: linear-gradient(transparent, #000c 60%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vbody .hook { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vbody .issue { display: flex; gap: 7px; align-items: baseline; text-align: left; background: none; border: 0; padding: 2px 0; margin: 0;
+  font-size: 12px; color: var(--muted); cursor: pointer; min-width: 0; }
+.vbody .issue span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vbody .issue:hover span { color: var(--text); }
+.vbody .issue i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); transform: translateY(-1px); }
+.vbody .issue.far i { background: var(--danger); } .vbody .issue.ok i { background: var(--accent); }
+.vbody .issue.as-text { cursor: default; }
+.vacts .keep { flex: 1; font-weight: 600; } .vacts .keep.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.vacts button.icon { padding: 4px 9px; }
+.vcard { container-type: inline-size; }
+.vacts { flex-wrap: wrap; }
+@container (max-width: 230px) { .vacts .keep { flex-basis: 100%; } .vacts button:not(.keep) { flex: 1; } }
+/* player: video beside the reasons */
+#play-body { position: relative; }
+.pclose { position: absolute; right: 12px; top: 12px; z-index: 2; }
+.pgrid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 22px; align-items: start; }
+.pvideo { position: sticky; top: 0; }
+.pvideo .vplayer { max-height: calc(100vh - 90px); aspect-ratio: 9 / 16; object-fit: contain; }
+.pcol { display: flex; flex-direction: column; min-height: 100%; }
+.pside { flex: 1; }
+.pside .pnum { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-bottom: 4px; }
+.pside h2 { font-size: 22px; line-height: 1.2; margin: 0 28px 8px 0; }
+.pside section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+.pside h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.pside p { margin: 6px 0 0; }
+.pside .faint { color: var(--faint); font-size: 12px; }
+.pconcept { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pscore { display: flex; gap: 12px; align-items: center; }
+.pscore .ring { position: relative; right: auto; top: auto; flex: none; }
+.pscore b.ok { color: var(--accent); } .pscore b.near { color: #f5b041; } .pscore b.far { color: #fca5a5; }
+.improve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--pane2); }
+.improve select { width: auto; }
+.improve .faint { flex-basis: 100%; }
+.pfind { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.pfind li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; font-size: 13px; line-height: 1.45; }
+.pfind .t { font: 12px ui-monospace, monospace; padding: 2px 0; border-radius: 6px; height: fit-content; color: var(--accent); background: #0f2a26; border-color: #1d5a50; }
+.pfind .t.none { background: none; color: var(--faint); text-align: center; }
+.pfind .sev { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.pfind li.must-fix .sev { color: #fca5a5; } .pfind li.should-fix .sev { color: #f5b041; }
+.pcol .actions { position: sticky; bottom: 0; background: var(--pane); padding-top: 14px; margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+@media (max-width: 760px) { .pgrid { grid-template-columns: 1fr; } .pvideo { position: static; } .pvideo .vplayer { max-height: 60vh; } }
 .vthumb { aspect-ratio: 9 / 14; background: #000; position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; }
 .vthumb img { width: 100%; height: 100%; object-fit: cover; }
 .vthumb .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 34px; color: #fff; opacity: 0; background: #0006; transition: opacity .12s; }
 .vthumb:hover .play { opacity: 1; }
-.vthumb .wait { color: var(--muted); font-size: 12px; padding: 14px; text-align: center; }
+.vthumb .wait { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 18px; text-align: center; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.vthumb img + .wait, .vthumb .wait.over { background: #0b0d10c4; color: #e6e9ef; -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .vthumb .num { position: absolute; left: 8px; top: 8px; font-size: 11px; background: #000a; padding: 1px 7px; border-radius: 6px; color: #ddd; }
-.vbody { padding: 9px 10px 10px; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.vbody { padding: 10px 12px 12px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .vbody .hook { font-weight: 600; font-size: 13px; line-height: 1.3; }
 .vbody .angle { color: var(--muted); font-size: 12px; }
 .vbody .err { color: #fca5a5; font-size: 12px; }
-.vacts { display: flex; gap: 4px; margin-top: auto; padding-top: 8px; }
-.vacts button { padding: 4px 8px; font-size: 12px; }
+.vacts { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; }
+.vacts button { padding: 7px 10px; font-size: 13px; min-height: 36px; }
 .vacts .grow { flex: 1; }
 button.on-keep { border-color: var(--accent); color: var(--accent); }
 .mini { padding: 5px 10px; font-size: 12px; }
@@ -180,6 +241,17 @@ button.on-keep { border-color: var(--accent); color: var(--accent); }
 .checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; }
 .checks label, .radios label { display: flex !important; align-items: center; gap: 8px; color: var(--text) !important; font-size: 13px !important; margin: 4px 0 !important; cursor: pointer; }
 .radios { display: flex; gap: 18px; flex-wrap: wrap; }
+.team-pick { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.team-pick .role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 260px); gap: 12px; align-items: center; padding: 10px 12px; background: var(--pane2); }
+.team-pick .role b { font-size: 13px; }
+.team-pick .role .hint { font-size: 12px; margin-top: 2px; }
+.team-pick .vis { margin-left: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); border: 1px solid #1d5a50; border-radius: 999px; padding: 0 6px; }
+.team-pick select { width: 100%; }
+.team-pick .team-acts { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--pane); }
+.team-pick .team-acts .hint { font-size: 12px; }
+@media (max-width: 560px) { .team-pick .role { grid-template-columns: 1fr; } }
+.batch-head .team { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.batch-head .team i { font-style: normal; color: var(--faint); margin-right: 5px; }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; }
 .estimate { background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 16px; font-size: 13px; }
 .estimate b { color: var(--accent); }
@@ -286,7 +358,7 @@ function h(tag, attrs = {}, ...kids) {
     if (v == null || v === false) continue;
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "class") el.className = v;
-    else if (k === "style") Object.assign(el.style, v);
+    else if (k === "style") for (const [sk, sv] of Object.entries(v)) sk.startsWith("--") ? el.style.setProperty(sk, String(sv)) : (el.style[sk] = sv);
     else el.setAttribute(k, v);
   }
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
@@ -697,6 +769,7 @@ let BATCHES = [], genTimer = null;
 const ACTIVE = ["queued", "preparing", "running"];
 const VACTIVE = ["queued", "planning", "building", "rendering", "reviewing", "exporting"];
 async function loadBatches() {
+  if (!MODELS_INFO) await loadRoles("balanced");  // model names for the "AI team" line on each batch
   BATCHES = (await (await fetch("/api/batches")).json()).batches;
   const running = BATCHES.filter((b) => ACTIVE.includes(b.status)).length;
   $("#n-gen").textContent = running ? `● ${running}` : "";
@@ -723,7 +796,8 @@ function batchPanel(b) {
   const head = h("div", { class: "batch-head" },
     h("div", { style: { flex: 1, minWidth: "220px" } }, h("h3", {}, b.name),
       h("div", { class: "meta" }, `${b.count} video${b.count > 1 ? "s" : ""} · ${b.brief.length_s}s · style of ${b.refs.join(", ")} · ${ago(b.created_at)}`
-        + (b.usage && b.usage.calls ? ` · ${b.usage.calls} AI calls` : ""))),
+        + (b.usage && b.usage.calls ? ` · ${b.usage.calls} AI calls` : "")),
+      b.models ? h("div", { class: "team" }, ROLE_ORDER.map(([t, label]) => b.models[t] ? h("span", {}, h("i", {}, label), modelName(b.models[t])) : null)) : null),
     statusChip(b.status, b.status === "running" ? `${b.done}/${b.count} done` : b.status === "preparing" ? "preparing" : null),
     active ? h("button", { class: "mini", title: "Stop this batch", onclick: async () => { await call("POST", `/api/batches/${b.id}/cancel`); loadBatches(); } }, "Cancel") : null,
     ["failed", "cancelled"].includes(b.status) ? h("button", { class: "mini", title: "Retry what didn't finish", onclick: async () => { await call("POST", `/api/batches/${b.id}/resume`); loadBatches(); } }, "Resume") : null,
@@ -736,36 +810,125 @@ function batchPanel(b) {
     h("div", { class: "vcard" }, h("div", { class: "vthumb" }, h("span", { class: "num" }, `v${i + 1}`), h("div", { class: "wait" }, spinner(), "Waiting for the plan"))))));
   return panel;
 }
+// ---- variation cards: only what you need to choose; the detail lives in the player ----
+function auditState(v) {
+  const a = v.audit;
+  if (!a || a.score == null) return null;
+  const pass = a.threshold ?? 80;
+  const ok = a.reached ?? (a.passed && a.score >= pass);
+  return { a, pass, ok, tone: ok ? "ok" : a.score >= pass - 15 ? "near" : "far" };
+}
+function topPick(b) {  // the best-scoring finished video, when there is a real choice
+  const done = (b.variations || []).filter((v) => v.status === "done" && v.audit && v.audit.score != null && v.verdict !== "discard");
+  if (done.length < 2) return null;
+  return done.reduce((x, y) => (y.audit.score > x.audit.score ? y : x)).id;
+}
+function scoreRing(st) {
+  const hist = (st.a.rounds || []).map((r) => r.score);
+  return h("div", { class: `ring ${st.tone}`, style: { "--v": st.a.score, "--pass": st.pass },
+    title: `Audit ${st.a.score}/100 · pass mark ${st.pass}` + (hist.length > 1 ? `\nRevisions: ${hist.join(" → ")}` : "") },
+    h("b", {}, st.a.score));
+}
+function firstIssue(v) {
+  const a = v.audit || {};
+  const f = (a.top || []).find((x) => x.severity === "must-fix") || (a.top || [])[0];
+  if (f) return f.message;
+  return v.review && v.review.issues && v.review.issues[0];
+}
 function varCard(b, v) {
   const busy = VACTIVE.includes(v.status);
-  const thumb = h("div", { class: "vthumb", title: v.status === "done" ? "Play" : "" }, h("span", { class: "num" }, `v${v.idx}`));
+  const st = auditState(v);
+  const top = v.id === topPick(b);
+  const thumb = h("div", { class: "vthumb", role: v.status === "done" ? "button" : null, tabindex: v.status === "done" ? 0 : null,
+    title: v.status === "done" ? "Play and see why" : "" },
+    h("span", { class: "num" }, `v${v.idx}`), top ? h("span", { class: "top" }, "★ Top pick") : null);
   if (v.has_poster) thumb.append(h("img", { src: `/api/variations/${v.id}/poster.jpg?v=${Math.round(v.updated_at)}`, alt: "" }));
-  if (v.status === "done") { thumb.append(h("div", { class: "play" }, "▶")); thumb.onclick = () => play(v); }
-  else thumb.append(h("div", { class: "wait" }, busy ? [spinner(), v.progress || "Queued"] : v.status === "failed" ? "Failed" : "Cancelled"));
-  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && !["order", "music_section", "sound"].includes(k)).map(([, x]) => x.replace(/_/g, " "));
+  if (v.status === "done") {
+    thumb.append(h("div", { class: "play" }, "▶"));
+    thumb.onclick = () => play(v);
+    thumb.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); play(v); } };
+    if (st) thumb.append(scoreRing(st));
+    if (v.concept) thumb.append(h("div", { class: "concept", title: v.concept.arc || "" },
+      v.concept.title + (v.concept.signature_move ? ` · ${v.concept.signature_move.replace(/_/g, " ")}` : "")));
+  } else {
+    // still working (or improving): keep the poster and current score visible, progress on top
+    thumb.append(h("div", { class: "wait" + (v.has_poster ? " over" : "") }, busy ? [spinner(), h("span", {}, v.progress || "Queued")] : v.status === "failed" ? "Failed" : "Cancelled"));
+    if (busy && st) thumb.append(scoreRing(st));
+  }
+
+  const issue = v.status === "done" && st && !st.ok ? firstIssue(v) : null;
   const body = h("div", { class: "vbody" },
-    h("div", { class: "hook" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
-    v.angle ? h("div", { class: "angle" }, v.angle) : null,
-    axes.length ? h("div", { class: "chips" }, axes.slice(0, 4).map((a) => h("span", { class: "chip" }, a))) : h("div", { class: "chips" }, h("span", { class: "chip on" }, "closest to reference")),
+    h("div", { class: "hook", title: v.hook_text || "" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
     v.error ? h("div", { class: "err", title: v.error }, v.error.split("\n")[0].slice(0, 140)) : null,
-    v.review && v.review.fixed && v.review.fixed.length ? h("div", { class: "angle", title: (v.review.issues || []).join("\n") }, `AI review fixed ${v.review.fixed.length} thing${v.review.fixed.length > 1 ? "s" : ""}`) : null);
+    issue ? h("button", { class: `issue ${st.tone}`, title: issue, onclick: () => play(v) },
+      h("i", {}), h("span", {}, st.a.counts && st.a.counts["must-fix"] ? `${st.a.counts["must-fix"]} must-fix · ` : `below ${st.pass} · `, issue)) : null,
+    st && st.ok ? h("div", { class: "issue ok as-text" }, h("i", {}), h("span", {}, `Passed the audit (${st.pass})`)) : null);
+
   const acts = h("div", { class: "vacts" });
   if (v.status === "done") acts.append(
-    h("button", { class: "grow", title: "Open in the editor to keep editing", onclick: () => openVar(v) }, "Edit"),
-    h("button", { class: v.verdict === "keep" ? "on-keep" : "", title: "Keep: adds it to Projects", onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); loadBatches(); } } }, "✓"),
-    h("button", { title: "Discard", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); loadBatches(); } }, "✕"));
-  if (!busy) acts.append(h("button", { title: "Make this variation again, differently", onclick: async () => { await call("POST", `/api/variations/${v.id}/regenerate`); loadBatches(); } }, "↻"));
+    h("button", { class: v.verdict === "keep" ? "keep on" : "keep", title: "Keep: adds it to Projects",
+      onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); loadBatches(); } } },
+      v.verdict === "keep" ? "✓ Kept" : "Keep"),
+    h("button", { title: "Open in the editor to keep editing", onclick: () => openVar(v) }, "Edit"),
+    h("button", { class: "ghost icon", title: "Discard", "aria-label": "Discard", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); loadBatches(); } }, "✕"));
+  if (!busy) acts.append(h("button", { class: "ghost icon", title: "Make this variation again, differently", "aria-label": "Regenerate",
+    onclick: async () => { await call("POST", `/api/variations/${v.id}/regenerate`); loadBatches(); } }, "↻"));
   body.append(acts);
-  return h("div", { class: `vcard ${v.verdict || ""}` }, thumb, body);
+  return h("div", { class: `vcard ${v.verdict || ""} ${top ? "is-top" : ""}` }, thumb, body);
 }
 async function openVar(v) { const r = await call("POST", `/api/variations/${v.id}/open`); if (r) location.href = "/editor"; }
+
+// "keep improving": more editor revisions from this video's best version, until it passes
+function improveBox(v, close) {
+  const rounds = h("select", { "aria-label": "Rounds", title: "At most this many more revisions; it stops as soon as the video passes" },
+    [1, 2, 3, 5].map((n) => h("option", { value: n, selected: n === 3 ? "" : null }, `${n} more round${n > 1 ? "s" : ""}`)));
+  const go = h("button", { class: "primary", title: "The editor revises this video from its best version and the review above, re-renders and re-audits until it passes" },
+    "Keep improving");
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = "Starting…";
+    const r = await call("POST", `/api/variations/${v.id}/improve`, { rounds: Number(rounds.value) });
+    if (r) { toast(`Improving v${v.idx}: it keeps going until it passes`); close(); loadBatches(); }
+    else { go.disabled = false; go.textContent = "Keep improving"; }
+  };
+  return h("div", { class: "improve" }, go, rounds,
+    h("span", { class: "faint" }, "About 2 AI calls a round. It stops as soon as the video passes, and always keeps the best version."));
+}
+// the player: the video next to everything that explains it; finding times seek the video
 function play(v) {
   const body = $("#play-body"); body.innerHTML = "";
-  body.append(h("h2", {}, v.hook_text ? `v${v.idx}: “${v.hook_text}”` : `Variation ${v.idx}`),
-    h("p", {}, v.angle || ""),
-    h("video", { class: "vplayer", src: `/api/variations/${v.id}/video.mp4`, controls: true, autoplay: true, playsinline: true }),
-    h("div", { class: "actions" }, h("button", { onclick: () => { hide("#dlg-play"); body.innerHTML = ""; }, title: "Close" }, "Close"),
-      h("button", { class: "primary", onclick: () => openVar(v), title: "Open in the editor" }, "Open in editor")));
+  const st = auditState(v);
+  const video = h("video", { class: "vplayer", src: `/api/variations/${v.id}/video.mp4`, controls: true, autoplay: true, playsinline: true });
+  const seek = (t) => { if (t == null) return; video.currentTime = Math.max(0, t - 0.3); video.play(); };
+  const close = () => { hide("#dlg-play"); body.innerHTML = ""; };
+  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && k !== "sound").map(([k, x]) => `${k.replace(/_/g, " ")}: ${x.replace(/_/g, " ")}`);
+  const a = st ? st.a : null;
+  const findings = a ? (a.top || []) : [];
+  const side = h("div", { class: "pside" },
+    h("div", { class: "pnum" }, `Variation ${v.idx}`),
+    h("h2", {}, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
+    v.angle ? h("p", {}, v.angle) : null,
+    v.concept ? h("section", {}, h("h4", {}, "Concept"),
+      h("div", { class: "pconcept" }, h("b", {}, v.concept.title), v.concept.signature_move ? h("span", { class: "chip" }, v.concept.signature_move.replace(/_/g, " ")) : null),
+      v.concept.arc ? h("p", {}, v.concept.arc) : null,
+      v.concept_reason ? h("p", { class: "faint" }, `Picked because: ${v.concept_reason}`) : null) : null,
+    a ? h("section", {}, h("h4", {}, "Audit"),
+      h("div", { class: "pscore" }, scoreRing(st), h("div", {},
+        h("b", { class: st.tone }, st.ok ? "Passed" : "Below the pass mark", h("span", { class: "faint" }, ` · pass ${st.pass}`)),
+        (a.rounds || []).length > 1 ? h("div", { class: "faint" }, `Editor revised it ${a.rounds.length - 1}×: ${a.rounds.map((r) => r.score).join(" → ")}`) : null)),
+      !st.ok ? improveBox(v, close) : null,
+      v.error ? h("p", { class: "faint" }, v.error) : null,
+      a.summary ? h("p", {}, a.summary) : null,
+      findings.length ? h("ol", { class: "pfind" }, findings.map((f) => h("li", { class: f.severity },
+        f.at != null ? h("button", { class: "t", title: "Play from here", onclick: () => seek(f.at) }, `${Number(f.at).toFixed(1)}s`) : h("span", { class: "t none" }, "—"),
+        h("div", {}, h("span", { class: "sev" }, `${f.severity} · ${f.category}`), f.message)))) : h("p", { class: "faint" }, "No open findings.")) : null,
+    axes.length ? h("section", {}, h("h4", {}, "Variation settings"), h("div", { class: "chips" }, axes.map((x) => h("span", { class: "chip" }, x)))) : null);
+  const acts = h("div", { class: "actions" },
+    h("button", { class: "ghost", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); close(); loadBatches(); } }, "Discard"),
+    h("button", { onclick: () => openVar(v) }, "Open in editor"),
+    h("button", { class: "primary", onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); close(); loadBatches(); } } },
+      v.verdict === "keep" ? "✓ Kept" : "Keep"));
+  body.append(h("button", { class: "ghost icon pclose", title: "Close", "aria-label": "Close", onclick: close }, "✕"),
+    h("div", { class: "pgrid" }, h("div", { class: "pvideo" }, video), h("div", { class: "pcol" }, side, acts)));
   show("#dlg-play");
 }
 $("#b-gen-new").onclick = () => openWizard();
@@ -777,7 +940,7 @@ function newWizard() {
   // footage: used for pictures · sound: used only for its audio (the videos take turns) · roles: AI's footage/sound call per upload
   return { step: 0, refs: new Set(), lead: null, footage: [], sound: [], roles: {}, sorting: new Set(), manual: new Set(), uploading: 0, est: null,
     brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "" },
-    count: 3, axes: null, quality: "balanced", review: true };
+    count: 3, axes: null, quality: "balanced", review: true, explore: true };
 }
 async function openWizard() {
   const o = await options();
@@ -791,7 +954,8 @@ async function openWizard() {
   show("#dlg-wiz");
 }
 const payload = () => ({ refs: [...W.refs], lead: W.refs.size > 1 ? W.lead : null, footage: W.footage.map((f) => f.id),
-  sound: W.sound.map((f) => f.id), brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review });
+  sound: W.sound.map((f) => f.id), brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review, explore: W.explore,
+  audit_threshold: W.audit_threshold ?? null, audit_rounds: W.audit_rounds ?? null, models: W.models || {} });
 function stepOk(i) {
   if (i === 0) return W.refs.size > 0;
   if (i === 1) return W.footage.some((f) => f.kind === "video") && !W.uploading;
@@ -989,9 +1153,57 @@ function wizVariations(el) {
   }
   const rv = h("input", { type: "checkbox", checked: W.review ? "" : null });
   rv.onchange = () => { W.review = rv.checked; refreshEstimate(est); };
-  el.append(h("label", {}, "AI quality"), radios, h("div", { class: "checks", style: { marginTop: "8px" } },
-    h("label", { title: "The AI looks at each result and fixes text placement once" }, rv, "AI reviews each video (one round of fixes)")), est);
+  const ex = h("input", { type: "checkbox", checked: W.explore !== false ? "" : null });
+  ex.onchange = () => { W.explore = ex.checked; refreshEstimate(est); };
+  const thr = h("input", { type: "number", min: 0, max: 100, step: 5, style: { width: "64px" }, value: W.audit_threshold ?? "" , placeholder: "80" });
+  const rnd = h("input", { type: "number", min: 0, max: 8, step: 1, style: { width: "52px" }, value: W.audit_rounds ?? "", placeholder: "3" });
+  fetch("/api/audit/settings").then((r) => r.json()).then((c) => { thr.placeholder = c.threshold; rnd.placeholder = c.max_rounds; }).catch(() => {});
+  thr.onchange = () => { W.audit_threshold = thr.value === "" ? null : Number(thr.value); };
+  rnd.onchange = () => { W.audit_rounds = rnd.value === "" ? null : Number(rnd.value); refreshEstimate(est); };
+  const team = h("div", { class: "team-pick" }, h("div", { class: "hint" }, "Loading models…"));
+  const drawTeam = () => renderTeam(team);
+  radios.querySelectorAll("input").forEach((rb) => rb.addEventListener("change", drawTeam));
+  drawTeam();
+  el.append(h("label", {}, "AI quality"), radios, h("label", {}, "AI team: which model does which job"), team, h("div", { class: "checks", style: { marginTop: "8px" } },
+    h("label", { title: "An independent AI reviewer watches each result; below the pass mark its review goes back to the editor. Code checks always run." }, rv, "Auditor reviews each video; the editor revises until it passes"),
+    h("label", { title: "The AI writes 3 different concepts per video and a judge picks the strongest, keeping the batch varied" }, ex, "Explore 3 concepts per video, keep the best"),
+    h("label", { title: "Below the pass mark the auditor's review goes back to the editor, which revises the whole edit and rebuilds it" },
+      "Pass mark ", thr, " · up to ", rnd, " revisions")), est);
   refreshEstimate(est);
+}
+// ---- AI team: pick the model for each role (this generation), optionally save as defaults ----
+const ROLE_ORDER = [["vision", "Watcher"], ["planner", "Creative director"], ["editor", "Editor"], ["auditor", "Auditor"]];
+let MODELS_INFO = null;
+function modelName(k) {
+  const m = (MODELS_INFO?.models || []).find((x) => x.key === k);
+  return m ? m.label.replace(/\s*\(.*\)$/, "") : (k || "").split("/").pop();
+}
+async function loadRoles(quality) {
+  try { MODELS_INFO = await (await fetch(`/api/ai/roles?quality=${encodeURIComponent(quality || "balanced")}`)).json(); } catch { MODELS_INFO = null; }
+  return MODELS_INFO;
+}
+async function renderTeam(box) {
+  const info = await loadRoles(W.quality);
+  box.innerHTML = "";
+  if (!info) { box.append(h("div", { class: "hint" }, "Couldn't load the model list.")); return; }
+  W.models = W.models || {};
+  for (const r of info.roles) {
+    const pick = W.models[r.tier] || "";
+    const opts = info.models.filter((m) => !r.vision || m.vision !== false);
+    const sel = h("select", { "aria-label": `${r.label} model` },
+      h("option", { value: "" }, `${r.saved ? "My default" : "Default"}: ${modelName(r.effective)}`),
+      opts.map((m) => { const o = h("option", { value: m.key }, `${m.label} · ${m.provider}${m.ready ? "" : " (no key)"}`); if (!m.ready) o.disabled = true; if (m.key === pick) o.selected = true; return o; }));
+    sel.onchange = () => { if (sel.value) W.models[r.tier] = sel.value; else delete W.models[r.tier]; };
+    box.append(h("div", { class: "role" },
+      h("div", {}, h("b", {}, r.label), r.vision ? h("span", { class: "vis", title: "Looks at video frames: only models with vision are listed" }, "sees frames") : null,
+        h("div", { class: "hint" }, r.about)),
+      sel));
+  }
+  box.append(h("div", { class: "team-acts" },
+    h("button", { class: "mini", title: "Use these choices for every future generation and for the editor's AI auditor",
+      onclick: async () => { const body = { _quality: W.quality }; for (const [t] of ROLE_ORDER) body[t] = W.models[t] || (info.roles.find((x) => x.tier === t) || {}).saved || ""; const r = await call("POST", "/api/ai/roles", body); if (r) { toast("Saved as your defaults"); W.models = {}; renderTeam(box); } } },
+      "Make these my defaults"),
+    h("span", { class: "hint" }, "References that are already studied keep their study.")));
 }
 function wizReview(el) {
   const names = REFS.filter((r) => W.refs.has(r.id)).map((r) => r.name + (W.lead === r.id ? " ★" : ""));
@@ -1004,7 +1216,8 @@ function wizReview(el) {
     ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"],
     ["Length / format", `${b.length_s}s · ${(FORMATS.find((x) => x.id === b.format) || {}).label}`],
     ["Videos", `${W.count}, varying: ${OPTS.axes.filter((a) => W.axes.has(a.id)).map((a) => a.label.toLowerCase()).join(", ") || "nothing"}`],
-    ["AI", `${W.quality}${W.review ? ", with review" : ""}`],
+    ["AI", `${W.quality}${W.review ? ", with auditor" : ""}${W.explore !== false ? ", exploring concepts" : ""}`],
+    ["AI team", ROLE_ORDER.map(([t, label]) => `${label}: ${modelName(W.models?.[t] || (MODELS_INFO?.roles || []).find((r) => r.tier === t)?.effective)}`).join(" · ")],
   ].map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]).flat()), est);
   refreshEstimate(est);
 }

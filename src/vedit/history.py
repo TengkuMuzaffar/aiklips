@@ -75,8 +75,27 @@ def sync(pdir: Path) -> None:
     if h < 0:
         commit(pdir, current, "initial state")
         return
-    if _read(pdir, h)["project"] != current.to_dict():
+    if not same_as(pdir, h, current):
         commit(pdir, current, "manual edit of project.json")
+
+
+def _normal(data: dict) -> dict | None:
+    """A snapshot as the CURRENT project format sees it: fields added since it was taken get their defaults,
+    so a new setting (e.g. canvas.loudness) never looks like a hand edit."""
+    try:
+        return Project.model_validate(data).to_dict()
+    except Exception:
+        return None
+
+
+def same_as(pdir: Path, n: int, current: Project | None = None) -> bool:
+    """Is the project's content the same as history step n (ignoring fields added to the format since)?"""
+    try:
+        snap = _read(pdir, n)["project"]
+    except (OSError, KeyError, ValueError):
+        return False
+    cur = (current or load(pdir)).to_dict()
+    return snap == cur or _normal(snap) == cur
 
 
 def _restore(pdir: Path, n: int) -> dict:

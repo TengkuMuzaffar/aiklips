@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from .. import history
 from ..project import load, state_dir
 from . import models as registry
 
@@ -59,7 +60,12 @@ The user can also box, brush or grid-paint a mask (Mask button under the preview
 Keep the edit consistent: one text look for all titles (`vedit text look apply <name>`, bundled
 fonts via `vedit fonts`, load the `animation` skill), and for colour run `vedit color match`
 then one `vedit color look <name>` on every clip (load the `color` skill). Say why you chose a look.
+
+Before you say an edit is done: record why each clip you chose is there (`vedit why <clip> "..." --role ...`),
+run `vedit --json audit`, fix every must-fix finding and re-run until it passes. Report the score.
 """.strip()
+
+AUDIT_TIMEOUT = 300  # seconds: a render + an AI review can take a while
 
 _ALLOWED_TOOLS = {"Read", "Glob", "Grep", "LS", "Skill", "TodoWrite", "ToolSearch", "BashOutput", "KillShell", "KillBash"}
 
@@ -294,13 +300,18 @@ class ChatSession:
             self.model = registry.DEFAULT_KEY
         self.pending: dict[str, tuple[asyncio.Future, dict]] = {}  # permission requests awaiting the user
         self.always: set[str] = set(data.get("always_allow", []))  # "Always allow" answers, per project
+        # auditor: code checks run whenever a turn changed the edit; the AI reviewer only when switched on
+        self.auto_audit_ai: bool = bool(data.get("auto_audit_ai", False))
+        self.turn_head: int | None = None
+        self.audited_head: int | None = None  # history step the last audit looked at
+        self.audit_rounds = 0
         if data.get("log"):  # older single-chat format: keep it as a saved chat (once)
             self._write_chat(self._new_chat_id(data["log"][0].get("time")), data["log"], data.get("session_id"))
             self._save()
 
     # ---- plumbing --------------------------------------------------------------
     def _save(self) -> None:
-        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always)}))
+        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always), "auto_audit_ai": self.auto_audit_ai}))
         if self.log:
             if self.chat_id is None:
                 self.chat_id = self._new_chat_id()
@@ -337,7 +348,7 @@ class ChatSession:
 
     def _history_event(self) -> dict:
         return {"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": registry.public(),
-                "chats": self.chats(), "chat_id": self.chat_id}
+                "chats": self.chats(), "chat_id": self.chat_id, "auto_audit_ai": self.auto_audit_ai}
 
     async def _broadcast(self, ev: dict) -> None:
         for ws in list(self.sockets):
@@ -472,7 +483,7 @@ class ChatSession:
             pass
 
     async def _connect(self, resume: bool) -> None:
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
         root = REPO_ROOT if (REPO_ROOT / "CLAUDE.md").exists() else self.pdir
         provider, model = registry.resolve(self.model)
@@ -496,6 +507,8 @@ class ChatSession:
             resume=self.session_id if resume else None,
             max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
             stderr=self._cli_log,  # keep Claude Code's diagnostics out of the user's terminal
+            # the auditor: every time the agent says it's done, check the edit; must-fix findings send it back
+            hooks={"Stop": [HookMatcher(hooks=[self._on_stop], timeout=AUDIT_TIMEOUT)]},
         )
         self.client = ClaudeSDKClient(options=opts)
         await self.client.connect()
@@ -551,6 +564,7 @@ class ChatSession:
             await self.emit({"type": "status", "busy": True}, persist=False)
             try:
                 await self._ensure()
+                self.turn_head, self.audit_rounds, self.audited_head = self._head(), 0, None
                 await self.client.query(self.context_block(ctx) + "\n\n" + text)
                 await self._pump()
             except Exception as e:
@@ -565,6 +579,70 @@ class ChatSession:
             finally:
                 self.busy = False
                 await self.emit({"type": "status", "busy": False}, persist=False)
+
+    # ---- the auditor (Stop hook) -------------------------------------------------------
+    def _head(self) -> int | None:
+        try:
+            history.sync(self.pdir)
+            return history.head(self.pdir)
+        except Exception:
+            return None
+
+    def _run_audit(self) -> dict:
+        if self.auto_audit_ai:
+            from ..review import full_audit
+
+            return full_audit(self.pdir, use_ai=True)
+        from ..audit import audit
+
+        return audit(load(self.pdir), self.pdir, render=True)
+
+    async def _on_stop(self, data: Any, tool_use_id: str | None, context: Any) -> dict:
+        """Runs when the agent ends its turn. If the turn changed the edit, audit it. Below the pass mark (or with
+        must-fix findings) the stop is blocked and the findings go back to the agent, up to the round cap from the
+        audit settings; then the user decides."""
+        from .. import review
+
+        try:
+            head = self._head()
+            if head is None or head == self.turn_head:
+                return {}  # nothing was edited this turn (a question, a look at frames...)
+            if head == self.audited_head:
+                return {}  # the agent was sent back but chose not to change anything (it said why): let it stop
+            cfg = review.settings()
+            cap = max(1, cfg["max_rounds"])
+            if self.audit_rounds >= cap:
+                return {}
+            self.audit_rounds += 1
+            self.audited_head = head
+            await self.emit({"type": "status_step", "text": "Auditing the edit…"}, persist=False)
+            r = await asyncio.to_thread(self._run_audit)
+            ok = review.good_enough(r, cfg["threshold"])
+            last = self.audit_rounds >= cap
+            await self.emit({"type": "audit", "score": r["score"], "passed": r["passed"], "counts": r["counts"], "ai": bool(r.get("ai")),
+                             "threshold": cfg["threshold"], "reached": ok, "summary": r.get("summary"), "round": self.audit_rounds,
+                             "final": ok or last,
+                             "findings": [{k: f.get(k) for k in ("id", "severity", "category", "at", "message", "fix")}
+                                          for f in r["findings"] if f["severity"] != "note"][:8]})
+            if ok or last:
+                return {}
+            todo = [f for f in r["findings"] if f["severity"] != "note"]
+            lines = "\n".join(f"- {f['id']} [{f['severity']}] {f['category']}" + (f" @{f['at']}s" if f.get("at") is not None else "")
+                              + f": {f['message']}" + (f" (suggested: {f['fix']})" if f.get("fix") else "") for f in todo[:12])
+            return {"decision": "block", "reason":
+                    f"Automatic audit (round {self.audit_rounds}/{cap}): score {r['score']}/100, the pass mark is {cfg['threshold']}"
+                    + (f", with {r['counts']['must-fix']} must-fix" if r["counts"]["must-fix"] else "") + ".\n"
+                    + (f"Reviewer: {r['summary']}\n" if r.get("summary") else "") + f"{lines}\n"
+                    "Fix these with vedit commands (must-fix first), check with `vedit frame`, then finish with a short summary. "
+                    "If one can't or shouldn't be fixed, say why instead."}
+        except Exception as e:  # the auditor must never break the chat
+            await self.emit({"type": "notice", "text": f"Audit skipped: {e}"})
+            return {}
+
+    async def set_auto_audit(self, on: bool) -> None:
+        self.auto_audit_ai = bool(on)
+        self._save()
+        await self._broadcast({"type": "auto_audit", "on": self.auto_audit_ai})
 
     async def _pump(self) -> None:
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock

@@ -235,6 +235,14 @@ def mount(app: FastAPI, host, bad) -> None:
             raise bad(e)
         return row
 
+    @app.post("/api/variations/{vid}/improve")
+    def var_improve(vid: str, body: dict | None = None) -> dict:
+        """More editor revisions for one video, from its best version, until the pass mark (or the rounds run out)."""
+        try:
+            return batch.improve(vid, (body or {}).get("rounds"))
+        except VeditError as e:
+            raise bad(e)
+
     @app.post("/api/variations/{vid}/{action}")
     def var_action(vid: str, action: str) -> dict:
         try:

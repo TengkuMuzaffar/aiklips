@@ -137,6 +137,61 @@ def segments(uid: str) -> list[dict]:
     return out
 
 
+MEASURE_FPS = 4
+MEASURE_SIZE = 48
+
+
+def measure(uid: str) -> dict[str, dict]:
+    """Per segment, measured by code (cached in measure.json): motion (mean frame difference, 0 = static,
+    > 0.08 = fast), luma, sat, warmth (ops.color maths). One small-frame ffmpeg pass over the file."""
+    import subprocess
+
+    import numpy as np
+
+    from ..ops import color
+
+    d = _dir(uid)
+    segs = segments(uid)
+    cached = _json(d / "measure.json")
+    meta = meta_full(uid)
+    want_audio = bool(meta.get("has_audio"))
+    if cached is not None and all(str(sg["k"]) in cached and (not want_audio or "voice" in cached[str(sg["k"])]) for sg in segs):
+        return cached
+    n = MEASURE_SIZE
+    proc = subprocess.run(
+        [media.ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(meta["path"]), "-an",
+         "-vf", f"fps={MEASURE_FPS},scale={n}:{n},format=rgb24", "-f", "rawvideo", "-"],
+        capture_output=True,
+    )
+    raw = np.frombuffer(proc.stdout, dtype=np.uint8)
+    count = raw.size // (n * n * 3)
+    out: dict[str, dict] = {}
+    if count:
+        frames = raw[: count * n * n * 3].reshape(count, n, n, 3).astype(np.float32) / 255.0
+        grey = frames.mean(axis=3)
+        for sg in segs:
+            a = int(sg["from"] * MEASURE_FPS)
+            b = max(a + 1, min(count, int(round(sg["to"] * MEASURE_FPS))))
+            part = frames[a:b]
+            if not len(part):
+                continue
+            st = color.frame_stats(part)
+            diff = np.abs(np.diff(grey[a:b], axis=0)).mean() if b - a > 1 else 0.0
+            out[str(sg["k"])] = {"motion": round(float(diff), 4), "luma": st["luma"], "sat": st["sat"], "warmth": st["warmth"]}
+    if want_audio:  # the clip's own sound: level and a speech score (sound.py), one decode for the whole file
+        from .. import sound
+
+        y = sound.pcm(Path(meta["path"]))
+        for sg in segs:
+            k = str(sg["k"])
+            if y is None:
+                break
+            a = sound.analyse(y[int(sg["from"] * sound.SR): int(sg["to"] * sound.SR)])
+            out.setdefault(k, {}).update({"audio_db": a["db"], "voice": a["voice"]})
+    (d / "measure.json").write_text(json.dumps(out))
+    return out
+
+
 def _sheet(uid: str, fid: str, segs: list[dict]) -> Path:
     d = _dir(uid)
     meta = meta_full(uid)
@@ -165,7 +220,9 @@ def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: 
         if progress:
             progress(f"AI is logging your footage ({min(i + ai.MAX_IMAGES, len(todo))}/{len(todo)} files)")
         sheets = [_sheet(uid, fid, segs) for fid, uid, segs in chunk]
+        measured = {uid: measure(uid) for _fid, uid, _segs in chunk}
         listing = "\n".join(f"{fid}.s{s['k']}: {s['from']:.1f}-{s['to']:.1f}s of {meta_full(uid)['name']}"
+                            + _measured_text(measured[uid].get(str(s["k"])))
                             for fid, uid, segs in chunk for s in segs)
         try:
             res, u = ai.call("footage", "Segments to log (one entry each):\n" + listing, FootageNotes,
@@ -186,6 +243,27 @@ def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: 
     return usage
 
 
+def _measured_text(m: dict | None) -> str:
+    if not m:
+        return ""
+    bits = []
+    if "motion" in m:
+        pace = "static" if m["motion"] < 0.01 else "fast" if m["motion"] > 0.06 else "moving"
+        light = "dark" if m["luma"] < 0.25 else "bright" if m["luma"] > 0.65 else "normal light"
+        bits += [f"{pace} (motion {m['motion']:.3f})", light, f"saturation {m['sat']:.2f}"]
+    if "voice" in m:
+        bits.append(_audio_text(m))
+    return f"  [measured: {', '.join(bits)}]" if bits else ""
+
+
+def _audio_text(m: dict) -> str:
+    from ..sound import NOISY_DB, SPEECH
+
+    if m["voice"] >= SPEECH:
+        return f"speech in its audio ({m['audio_db']:.0f} dB)"
+    return f"background sound, no speech ({m['audio_db']:.0f} dB)" if m["audio_db"] > NOISY_DB else "near-silent audio"
+
+
 def shot_log(files: list[tuple[str, str]], sound: list[tuple[str, str]] = ()) -> dict:
     """What the planner sees: {fid: {name, kind, duration, segments:[{id, from, to, description, quality}]}}.
     `sound` files appear as kind 'audio' whatever they are on disk."""
@@ -199,9 +277,14 @@ def shot_log(files: list[tuple[str, str]], sound: list[tuple[str, str]] = ()) ->
         entry = {"name": meta["name"], "kind": meta["kind"], "duration": meta.get("duration")}
         if meta["kind"] == "video":
             notes = _json(_dir(uid) / "notes.json", {})
+            try:
+                measured = measure(uid)
+            except Exception:  # measuring is a bonus; never block planning on it
+                measured = {}
             entry["has_audio"] = meta.get("has_audio")
             entry["segments"] = [{"id": f"{fid}.s{s['k']}", "from": s["from"], "to": s["to"],
-                                  **(notes.get(str(s["k"])) or {"description": "(not described)", "quality": 3})}
+                                  **(notes.get(str(s["k"])) or {"description": "(not described)", "quality": 3}),
+                                  **({"measured": measured[str(s["k"])]} if str(s["k"]) in measured else {})}
                                  for s in segments(uid)]
         elif meta["kind"] == "audio":
             entry["bpm"] = meta.get("bpm")
