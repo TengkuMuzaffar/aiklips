@@ -110,7 +110,42 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 /* ---- preview ---- */
 #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; background: radial-gradient(circle at 50% 40%, #151a21, var(--bg)); }
 video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px; box-shadow: 0 10px 40px #0009; }
-#badge { position: absolute; top: 14px; right: 16px; }
+/* preview busy: keep the last frame on screen (frozen canvas) and show what is happening over it */
+#pv-hold { position: absolute; pointer-events: none; z-index: 2; border-radius: 10px; display: none; }
+#pv-busy { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  background: #0b0d1059; backdrop-filter: blur(2px) saturate(.6); -webkit-backdrop-filter: blur(2px) saturate(.6); overflow: hidden; animation: fadein .18s ease-out; }
+#pv-busy[hidden] { display: none; }
+#pv-busy::before { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, #5eead414 50%, transparent 70%); animation: sweep 1.8s linear infinite; }
+.pv-card { position: relative; display: flex; gap: 12px; align-items: center; background: #12151aeb; border: 1px solid var(--line2); border-radius: 12px; padding: 12px 16px; box-shadow: 0 10px 40px #000a; max-width: 82%; }
+.pv-card b { display: block; font-size: 13px; }
+#pv-sub { display: block; color: var(--muted); font-size: 12px; }
+#pv-sub:empty { display: none; }
+#pv-time { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.pv-bar { position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; overflow: hidden; background: var(--line); }
+.pv-bar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 35%; background: var(--accent); animation: indet 1.2s ease-in-out infinite; }
+#pv-ai { position: absolute; top: 14px; left: 16px; z-index: 4; display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 8px; border-radius: 999px;
+  background: #0f2a26e6; border: 1px solid #1f4a43; color: var(--accent); font-size: 12px; pointer-events: none; }
+#pv-ai[hidden] { display: none; }
+#pv-ai i, .ai-orb { display: inline-block; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 #5eead488; animation: pulse 1.4s infinite; }
+#pv-ai i { width: 7px; height: 7px; }
+/* AI is editing: timeline + properties are locked until it finishes */
+#p-tl, #p-insp { position: relative; }
+.ai-lock { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; cursor: not-allowed; animation: fadein .2s ease-out;
+  background: repeating-linear-gradient(-45deg, #0b0d10c7 0 14px, #12151ac7 14px 28px); background-size: 40px 40px;
+  backdrop-filter: blur(1.5px) grayscale(.6); -webkit-backdrop-filter: blur(1.5px) grayscale(.6); }
+.ai-lock[hidden] { display: none; }
+.ai-card { cursor: default; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: min(420px, 90%);
+  background: var(--pane2); border: 1px solid #1f4a43; border-radius: 12px; padding: 14px 20px; box-shadow: 0 0 0 4px #5eead412, 0 10px 40px #000a; }
+.ai-card b { font-size: 13px; }
+.ai-orb { width: 12px; height: 12px; }
+.ai-step { font: 12px ui-monospace, monospace; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-card .hint { font-size: 11px; color: var(--faint); }
+.ai-lock.slim .ai-card { flex-direction: row; padding: 8px 12px; gap: 8px; }
+body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy #b-redo { opacity: .35; pointer-events: none; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes indet { from { left: -35%; } to { left: 100%; } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 #5eead488; } 70% { box-shadow: 0 0 0 7px #5eead400; } 100% { box-shadow: 0 0 0 0 #5eead400; } }
+@keyframes fadein { from { opacity: 0; } }
 #drawlayer { position: absolute; cursor: crosshair; z-index: 5; border-radius: 10px; outline: 2px solid var(--accent); outline-offset: -2px; touch-action: none; }
 #drawlayer .dhint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: #000c; color: var(--text); font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
 .drawbox { position: absolute; border: 2px solid var(--accent); background: #5eead41f; box-shadow: 0 0 0 9999px #0007; pointer-events: none; }
@@ -352,6 +387,7 @@ dialog#dlg-models::backdrop { background: #000b; }
       <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
+    <div class="ai-lock slim" id="insp-lock" hidden><div class="ai-card"><span class="ai-orb"></span><span>AI is editing, so properties are locked</span></div></div>
   </section>
   <div class="splitter" id="split-v"></div>
 
@@ -360,7 +396,9 @@ dialog#dlg-models::backdrop { background: #000b; }
     <div class="pane-h"><h2>Preview</h2><div class="spacer"></div><span class="hint" id="canvas-info"></span></div>
     <div id="stage">
       <video id="video" playsinline preload="auto"></video>
-      <span class="pill" id="badge" style="display:none">rendering…</span>
+      <canvas id="pv-hold"></canvas>
+      <div id="pv-busy" hidden><div class="pv-card"><span class="spin big"></span><div><b id="pv-title">Updating preview</b><span id="pv-sub"></span></div><span id="pv-time"></span><div class="pv-bar"></div></div></div>
+      <div id="pv-ai" hidden><i></i>AI is editing</div>
       <div id="nomedia"><span data-icon="film"></span><div>Drop a video anywhere to start,<br>or ask the AI in the chat.</div><button id="b-import2" data-icon="upload" title="Pick video, audio or image files to add">Import media</button></div>
     </div>
     <div class="transport">
@@ -414,6 +452,13 @@ dialog#dlg-models::backdrop { background: #000b; }
       <div id="tl-heads"></div>
       <div id="tl-scroll"><div id="tl-inner"></div></div>
     </div>
+    <div class="ai-lock" id="tl-lock" hidden><div class="ai-card">
+      <span class="ai-orb"></span>
+      <b>AI is editing your video <span id="tl-time" class="hint"></span></b>
+      <span class="ai-step" id="tl-step">Thinking…</span>
+      <span class="hint">The timeline is locked until it finishes. You can still play the preview.</span>
+      <button id="tl-stop" data-icon="x">Stop AI</button>
+    </div></div>
   </section>
 </div>
 <input type="file" id="file" multiple accept="video/*,audio/*,image/*" hidden>
@@ -535,10 +580,81 @@ function toast(msg, err = false) {
   clearTimeout(toast.tm); toast.tm = setTimeout(() => (t.style.display = "none"), err ? 5000 : 2200);
 }
 async function api(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
-  return r.json();
+  const lbl = editLabel(url, body);
+  if (lbl) pvBegin(lbl);
+  let ok = false;
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
+    ok = true;
+    return r.json();
+  } finally { if (lbl) pvEnd(ok); }
 }
+
+// ---------- preview busy state: manual edits + re-renders show over the last frame ----------
+// [title, while the op runs, while the preview re-renders]
+const OP_LABELS = {
+  mask_add: ["Adding mask", "Finding the region…", "Tracking it and rebuilding the background"],
+  mask_set: ["Updating mask", "", "Re-rendering the masked area"],
+  focus_add: ["Adding focus", "Finding the object…", "Tracking the object"],
+  bg_remove: ["Removing background", "", "Cutting out the subject"],
+  speed: ["Changing speed", "", "Re-timing the clip"],
+  split: ["Splitting clip", "", "Rendering preview"],
+  add_text: ["Adding text", "", "Rendering preview"],
+};
+function editLabel(url, body) {
+  if (url === "/api/op") { const L = OP_LABELS[body?.op]; return L || ["Applying edit", "", "Rendering preview"]; }
+  if (url === "/api/undo") return ["Undoing", "", "Rendering preview"];
+  if (url === "/api/redo") return ["Redoing", "", "Rendering preview"];
+  if (url.startsWith("/api/checkout/")) return ["Restoring version", "", "Rendering preview"];
+  if (url === "/api/import") return ["Importing media", "Copying the file…", "Building the preview"];
+  return null;
+}
+const PV = { op: null, label: null, waitUntil: 0, loading: false, t0: 0, timer: null };
+function pvBegin(lbl) { PV.depth = (PV.depth || 0) + 1; if (PV.depth === 1) { PV.op = lbl; PV.label = lbl; } updatePreviewBusy(); }
+function pvEnd(ok) {
+  PV.depth = Math.max(0, (PV.depth || 0) - 1);
+  if (PV.depth) return;
+  PV.op = null;
+  if (ok) PV.waitUntil = Date.now() + 2500; // bridge the gap until the renderer picks up the change
+  else PV.label = null;
+  updatePreviewBusy();
+}
+function updatePreviewBusy() {
+  const rendering = ST?.render?.status === "rendering";
+  if (rendering) PV.waitUntil = 0;
+  const waiting = PV.waitUntil > Date.now();
+  const on = !!(ST && P().clips.length && (PV.op || rendering || waiting || PV.loading)) || !!PV.op;
+  const box = $("#pv-busy");
+  if (!on) {
+    box.hidden = true; PV.t0 = 0; PV.label = null; clearInterval(PV.timer); PV.timer = null; return;
+  }
+  if (!PV.t0) PV.t0 = Date.now();
+  const L = PV.label;
+  let title, sub;
+  if (PV.op) { title = L[0]; sub = L[1]; }
+  else if (L) { title = L[0]; sub = PV.loading && !rendering ? "Loading the new preview…" : L[2]; }
+  else { title = PV.loading && !rendering ? "Loading preview" : "Rendering preview"; sub = busy ? "Applying the AI's edit" : "Showing the last frame until it's ready"; }
+  $("#pv-title").textContent = title; $("#pv-sub").textContent = sub;
+  box.hidden = false;
+  if (!PV.timer) PV.timer = setInterval(() => {
+    const s = Math.floor((Date.now() - PV.t0) / 1000);
+    $("#pv-time").textContent = s >= 1 ? `${s}s` : "";
+    if (PV.waitUntil && PV.waitUntil <= Date.now()) { PV.waitUntil = 0; updatePreviewBusy(); }
+  }, 250);
+}
+// freeze the current frame on a canvas so swapping the video source never flashes black
+function holdFrame() {
+  if (!video.videoWidth || video.style.display === "none") return;
+  const c = $("#pv-hold"), r = video.getBoundingClientRect(), st = $("#stage").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  Object.assign(c.style, { left: `${r.left - st.left}px`, top: `${r.top - st.top}px`, width: `${r.width}px`, height: `${r.height}px`, display: "block" });
+  const ctx = c.getContext("2d"), s = Math.min(c.width / video.videoWidth, c.height / video.videoHeight);
+  const w = video.videoWidth * s, hh = video.videoHeight * s;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, c.width, c.height);
+  try { ctx.drawImage(video, (c.width - w) / 2, (c.height - hh) / 2, w, hh); } catch { c.style.display = "none"; }
+}
+function releaseFrame() { $("#pv-hold").style.display = "none"; }
 async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
 function layerLabel(l) {
   if (l.type === "text") return l.text || "";
@@ -577,12 +693,22 @@ function setStatus(r) {
   el.className = "pill " + (r.error ? "error" : r.status === "rendering" ? "rendering" : "ready");
   el.textContent = r.error ? "render error" : r.status === "rendering" ? "rendering preview…" : "up to date";
   el.title = r.error || "";
-  $("#badge").style.display = r.status === "rendering" ? "" : "none";
+  updatePreviewBusy();
 }
 function reloadVideo() {
   const t = video.currentTime, playing = !video.paused, v = Date.now();
+  holdFrame();
+  PV.loading = true; updatePreviewBusy();
+  let done = false;
+  const ready = () => { if (done) return; done = true; clearTimeout(fallback); releaseFrame(); PV.loading = false; updatePreviewBusy(); };
+  const fallback = setTimeout(ready, 4000);
   video.src = `/media/preview.mp4?v=${v}`;
-  video.addEventListener("loadedmetadata", () => { video.currentTime = Math.min(t, video.duration || t); if (playing) video.play(); }, { once: true });
+  video.addEventListener("loadedmetadata", () => {
+    video.addEventListener("seeked", ready, { once: true });
+    video.currentTime = Math.min(t, video.duration || t);
+    if (playing) video.play();
+  }, { once: true });
+  video.addEventListener("error", ready, { once: true });
   const clipsLane = $(".lane.clips");
   if (clipsLane) renderTimeline();
 }
@@ -834,7 +960,7 @@ function addMsg(ev) {
   const copyBtn = () => h("button", { class: "m-copy", title: "Copy message", onclick: (e) => { e.stopPropagation(); copyText(ev.text); } }, icon("copy"));
   if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ev.text, copyBtn());
   else if (ev.type === "assistant") { el = h("div", { class: "m-ai" }); el.innerHTML = md(ev.text); el.append(copyBtn()); }
-  else if (ev.type === "tool") { el = h("div", { class: "m-tool" }, h("span", { class: "st" }, "▸"), h("span", { class: "tx", title: ev.summary }, ev.summary)); toolEls[ev.id] = el; }
+  else if (ev.type === "tool") { el = h("div", { class: "m-tool" }, h("span", { class: "st" }, "▸"), h("span", { class: "tx", title: ev.summary }, ev.summary)); toolEls[ev.id] = el; $("#tl-step").textContent = "▸ " + ev.summary; $("#tl-step").title = ev.summary; }
   else if (ev.type === "tool_result") {
     const t = toolEls[ev.id]; if (t) { const st = $(".st", t); st.textContent = ev.ok ? "✓" : "✗"; st.className = "st " + (ev.ok ? "ok" : "bad"); if (!ev.ok) t.title = ev.text; }
     return;
@@ -866,7 +992,27 @@ function setBusy(b) {
   const box = $("#msgs");
   if (b && !typingEl) { typingEl = h("div", { class: "typing" }, h("i"), h("i"), h("i"), " working"); box.append(typingEl); box.scrollTop = box.scrollHeight; }
   if (!b && typingEl) { typingEl.remove(); typingEl = null; }
+  aiLock(b);
 }
+// while the AI edits, lock everything that writes to the project (timeline, properties, mask, undo)
+let AI_T0 = 0, AI_TIMER = null;
+function aiLock(b) {
+  const was = document.body.classList.contains("ai-busy");
+  document.body.classList.toggle("ai-busy", b);
+  $("#tl-lock").hidden = $("#insp-lock").hidden = $("#pv-ai").hidden = !b;
+  if (b && !was) {
+    if (DRAW) endDraw();
+    if (document.activeElement && $("#insp-body").contains(document.activeElement)) document.activeElement.blur();
+    $("#tl-step").textContent = "Thinking…"; $("#tl-step").title = ""; $("#tl-time").textContent = "";
+    AI_T0 = Date.now();
+    AI_TIMER = setInterval(() => { const s = Math.floor((Date.now() - AI_T0) / 1000); $("#tl-time").textContent = s >= 1 ? `· ${s}s` : ""; }, 500);
+  }
+  if (!b) { clearInterval(AI_TIMER); AI_TIMER = null; }
+  updatePreviewBusy();
+}
+function aiBlocked() { if (busy) toast("The AI is editing. Wait for it to finish, or press Stop."); return busy; }
+$("#tl-stop").onclick = () => { if (busy && ws?.readyState === 1) { ws.send(JSON.stringify({ type: "interrupt" })); $("#tl-step").textContent = "Stopping…"; } };
+for (const id of ["#tl-lock", "#insp-lock"]) $(id).addEventListener("click", (e) => { if (e.target === e.currentTarget) aiBlocked(); });
 function suggestions() {
   const box = $("#msgs");
   if (box.children.length) return;
@@ -1476,7 +1622,10 @@ function setupDrop(vl) {
   });
 }
 async function uploadFiles(files, append, index) {
-  let i = index;
+  if (aiBlocked()) return;
+  let i = index, ok = false;
+  pvBegin(editLabel("/api/import"));
+  try {
   for (const f of files) {
     toast(`Importing ${f.name}…`);
     const fd = new FormData(); fd.append("file", f); fd.append("append", append ? "true" : "false");
@@ -1486,11 +1635,13 @@ async function uploadFiles(files, append, index) {
     const res = await r.json();
     if (!res.has_video) await api("/api/op", { op: "add_music", args: { source: res.source, start: 0 } });
     if (res.clip && i != null) i++;
+    ok = true;
   }
-  await refresh(); toast("Imported");
+  } finally { pvEnd(ok); }
+  await refresh(); if (ok) toast("Imported");
 }
 // drop anywhere else in the window → import to the end of the timeline
-window.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); $("#dropveil").style.display = "flex"; } });
+window.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("Files") && !busy) { e.preventDefault(); $("#dropveil").style.display = "flex"; } });
 window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) $("#dropveil").style.display = "none"; });
 window.addEventListener("drop", (e) => { e.preventDefault(); $("#dropveil").style.display = "none"; if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files], true, null); });
 $("#file").onchange = (e) => { uploadFiles([...e.target.files], !P().clips.length, null); e.target.value = ""; };
@@ -1565,6 +1716,7 @@ function endDraw() {
 }
 function startDraw(kind) {
   if (DRAW === kind) return endDraw();
+  if (aiBlocked()) return;
   endDraw();
   if (!ST || !P().clips.length) return toast("Import a video first", true);
   DRAW = kind; video.pause();
@@ -1766,8 +1918,9 @@ document.addEventListener("keydown", (e) => {
     const sel = String(window.getSelection() || "");
     if (sel) { e.preventDefault(); copyText(sel); return; }
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); if (aiBlocked()) return; (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
   if (typing) return;
+  if (busy && (["s", "t"].includes(e.key.toLowerCase()) || e.key === "Delete" || e.key === "Backspace")) { aiBlocked(); return; }
   if (e.key === " ") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
   else if (e.key === "ArrowLeft") step(e.shiftKey ? -fps() : -1);
   else if (e.key === "ArrowRight") step(e.shiftKey ? fps() : 1);
