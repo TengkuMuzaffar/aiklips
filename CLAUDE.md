@@ -24,7 +24,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
      findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed.
    - Don't call an edit finished while the audit has must-fix findings; if one can't be fixed, say so and why.
 6. **Tell the user what changed**, in timeline seconds, the audit score, and mention they can say "undo".
-7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. The file goes to `projects/<name>/exports/`.
+7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. Default: H.264 MP4 at the project's size and fps in `projects/<name>/exports/`; unset options reuse the project's last export settings, and a file is never overwritten (name-2…). Ask before ProRes or 2× (huge files).
 
 **The desktop editor:** the user may have it open (`uv run vedit app`, or `vedit serve` in a browser).
 - It re-renders automatically after every command, so you never need to start it. Suggest it once.
@@ -87,7 +87,8 @@ audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
 fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
 undo [--steps N] | redo | history | checkout <step>
-preview [--open] | frame --at T[,T2,...] | sheet | export [out.mp4] [--scale 1] | serve
+preview [--open] | frame --at T[,T2,...] | sheet | serve
+export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
 ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
 gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
