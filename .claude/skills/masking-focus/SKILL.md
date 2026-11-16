@@ -1,6 +1,6 @@
 ---
 name: masking-focus
-description: Hide or censor part of a video (brand names, labels, logos, number plates, screens, faces of bystanders) with a tracked, feathered blur / pixelate mask, or put the focus on one object (spotlight it, or make the camera follow it / auto-reframe). Use when the user says hide, censor, blur this, cover the logo/label/brand, mask, focus on, spotlight, follow the product/person, keep it centred, or auto-reframe.
+description: Remove, hide or censor part of a video (brand names, labels, logos, stickers, number plates, screens, faces of bystanders) with a tracked mask that rebuilds the background (remove) or blurs / pixelates, or put the focus on one object (spotlight it, or make the camera follow it / auto-reframe). Use when the user says remove, erase, hide, censor, blur this, cover the logo/label/brand, mask, focus on, spotlight, follow the product/person, keep it centred, or auto-reframe.
 ---
 
 # Masks and object focus
@@ -17,15 +17,21 @@ Boxes are `x,y,w,h` = **top-left corner + size**, on the **canvas** (what `frame
 1. Go to a moment where the thing is clearly visible: `uv run vedit --json frame --at T`.
 2. Read the frame and estimate the box in % of the frame (e.g. `20%,55%,60%,12%`).
    Make it generous: the mask already adds 10% margin (`--expand 1.1`), but a box that's too tight leaks letters.
-3. If you can't see images (no-vision model) use `--object NAME` (COCO names: person, car, truck, bottle,
+3. **Odd shapes:** don't cover a lot of extra background with one big box. Join several boxes with `;`
+   (`--box "20%,10%,30%,8%;25%,18%,20%,6%"`), which makes one region shaped like their union. That keeps the
+   `remove` fill from sampling the object next to the label.
+4. If you can't see images (no-vision model) use `--object NAME` (COCO names: person, car, truck, bottle,
    cup, cell phone, laptop, tv, book, handbag, ...; `any` = most prominent object),
-   or ask the user to draw it: **Mask** / **Focus** buttons under the preview, drag a box.
+   or ask the user to mark it: **Mask** button under the preview → **Brush** (paint over it), **Grid** (tick squares)
+   or **Box**. Painted masks are stored as `shape: paint` and follow the tracked object like boxes do.
 
 ## Hide something (mask)
 
 ```
-uv run vedit --json mask add --at 3.2 --box 18%,52%,64%,14%                 # tracked blur (default)
+uv run vedit --json mask add --at 3.2 --box 18%,52%,64%,14%                 # tracked remove (default): looks like it was never there
+uv run vedit --json mask add --at 3.2 --box 18%,52%,64%,14% --style blur     # censor look
 uv run vedit --json mask add --at 3.2 --box 18%,52%,64%,14% --style pixelate
+uv run vedit --json mask add --at 3.2 --paint '[{"pts":[[200,400],[600,420]],"r":40},{"rect":[150,380,500,90]},{"rect":[...],"erase":true}]'  # canvas px
 uv run vedit --json mask add --at 3.2 --box ... --style fill --color "#F2C200"  # solid, feathered
 uv run vedit --json mask add --at 3.2 --box ... --no-track                  # static (tripod shot, burned-in text)
 uv run vedit --json mask list | mask set mk1 --style pixelate --strength 36 | mask remove mk1 | mask remove all
@@ -34,7 +40,17 @@ uv run vedit --json mask list | mask set mk1 --style pixelate --strength 36 | ma
 - `--at` is the timeline second where the box is right; tracking runs forwards **and** backwards from there
   through the whole clip. It applies to the clip under `--at` (or `--clip c3`).
 - One `mask add` per clip: the same label in 4 shots = 4 masks (one `--at` inside each shot).
-- Styles: `blur` (default, reads as professional censoring), `pixelate`, `fill` (brand-colour block), `dim`.
+- Styles: `remove` (default; rebuilds the surface behind it from the pixels around the region, with matching
+  grain, every frame, so it follows lighting changes), `blur` (reads as deliberate censoring: use for faces / plates),
+  `pixelate`, `fill` (brand-colour block), `dim`.
+- **Product in front of the label** (the label's box overlaps the thing being sold): add `--keep-box x,y,w,h[;...]`
+  (canvas, at `--at`) over the product, or `mask set mk2 --keep-box ... --at T` on an existing mask. That
+  region is tracked on its own and the mask is never applied over it (any style). In the editor: **Keep** brush.
+  `remove` also locks onto the label's texture each frame and leaves alone anything that passes in front of it
+  (a hand), and stops painting once the label has left the shot.
+- `remove` works best on fairly plain surfaces (cardboard, walls, tables, sky, a shirt). Over detailed texture
+  or another object it gives a soft smooth patch. Mask as tightly as you can (multi-box / painted) so the fill
+  only samples the surface around the label. It runs once per mask (~real time) and is cached.
 - Looks: `--feather 0.04` (soft edge; 0 = hard), `--expand 1.1`, `--shape ellipse` for faces / round logos.
 - `--invert` = apply to everything except the region.
 - Style changes (`mask set`) are instant; a new box or `--at` re-tracks (one-time, ~real time).
@@ -56,5 +72,6 @@ uv run vedit --json focus clear [--clip c2]
 ## Check it
 
 Masks: `frame --at` at the **start, middle and end** of the clip. Look at the edges: no letters may peek out.
+For `remove`, also check that the fill matches the surface and hasn't picked up a nearby object's colour (tighten the region if it has).
 If they do: `mask remove`, then add again with a bigger box, or at the moment where the label is largest.
 If tracking drifts on a fast whip pan, split the clip there and mask each part.

@@ -49,10 +49,12 @@ Keep replies short: what you changed, in timeline seconds. To check visual resul
 run `vedit frame --at T` (several at once: `--at 72,75.5,78`) or `vedit sheet` and read
 the JPGs it returns. Don't write shell loops or scripts; one vedit command per step.
 
-To hide something (label, logo, brand, plate) use `vedit mask add` (tracked, feathered blur /
-pixelate), never PNG / colour patches made with ffmpeg. For object focus use `vedit focus add`;
-for transitions `vedit transition`. Load the `masking-focus` / `transitions` skill first.
-The user can also draw a mask or focus box with the Mask / Focus buttons under the preview.
+To hide something (label, logo, brand, plate) use `vedit mask add` (tracked; default style
+`remove` rebuilds the background so it looks like the thing was never there; blur / pixelate
+for privacy), never PNG / colour patches made with ffmpeg. For an exact shape, give several
+boxes joined with ';'. For object focus use `vedit focus add`; for transitions
+`vedit transition`. Load the `masking-focus` / `transitions` skill first.
+The user can also box, brush or grid-paint a mask (Mask button under the preview) or draw a focus box.
 """.strip()
 
 _ALLOWED_TOOLS = {"Read", "Glob", "Grep", "LS", "Skill", "TodoWrite", "ToolSearch", "BashOutput", "KillShell", "KillBash"}

@@ -33,7 +33,7 @@ cap_app = typer.Typer(help="Captions (SRT import or offline auto-captions)")
 bg_app = typer.Typer(help="Background removal / replacement")
 face_app = typer.Typer(help="Face mesh / AR effects (needs: uv sync --extra ai)")
 music_app = typer.Typer(help="Background music")
-mask_app = typer.Typer(help="Hide a region (text, logo, label, plate) with a feathered, tracked blur / pixelate / fill")
+mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
@@ -674,24 +674,30 @@ def face_clear(clip: Optional[str] = None):
 
 # ---- masks & object focus ---------------------------------------------------------------
 
-def _region(p: Project, d: Path, clip: str | None, at: float | None, box: str | None, obj: str | None, space: str) -> tuple:
+def _region(p: Project, d: Path, clip: str | None, at: float | None, box: str | None, obj: str | None, space: str,
+            paint: list | None = None, keep: str | None = None) -> tuple:
     from .ops import track
 
-    return track.region(p, d, clip, at, box, obj, space)
+    return track.region(p, d, clip, at, box, obj, space, paint, keep)
 
 
 @mask_app.command("add")
 def mask_add(
-    box: Optional[str] = typer.Option(None, help="x,y,w,h of the region on the canvas (px or %), e.g. 20%,55%,60%,10%"),
+    box: Optional[str] = typer.Option(None, help="x,y,w,h of the region on the canvas (px or %), e.g. 20%,55%,60%,10%; "
+                                      "several boxes joined with ';' make one region of any shape"),
     obj: Optional[str] = typer.Option(None, "--object", help="Detect it instead: person, car, bottle, cell phone, laptop, any..."),
+    paint: Optional[str] = typer.Option(None, help='Painted region as JSON in canvas px: [{"pts":[[x,y],...],"r":20}, {"rect":[x,y,w,h]}, '
+                                        '{"rect":[...],"erase":true}, {"pts":[...],"r":30,"keep":true}]'),
+    keep_box: Optional[str] = typer.Option(None, help="Region that must stay ON TOP of the mask (the product in front of the label), "
+                                           "x,y,w,h[;x,y,w,h...] on the canvas; tracked on its own"),
     clip: Optional[str] = typer.Option(None, help="Clip (default: the clip under --at)"),
     at: Optional[float] = typer.Option(None, help="Timeline seconds where the box is right (tracking starts here)"),
-    style: str = typer.Option("blur", help="blur | pixelate | fill | dim"),
+    style: str = typer.Option("remove", help="remove (fill with the background around it) | blur | pixelate | fill | dim"),
     strength: Optional[float] = typer.Option(None, help="blur sigma (40) / pixel block size (28) / dim amount 0-1 (0.6)"),
     color: str = typer.Option("#000000", help="Fill colour for --style fill"),
     shape: str = typer.Option("rect", help="rect (rounded) | ellipse"),
     feather: float = typer.Option(0.04, help="Soft edge, fraction of the frame's short side (0 = hard edge)"),
-    expand: float = typer.Option(1.1, help="Grow the box (1.1 = 10% margin so edges never peek out)"),
+    expand: Optional[float] = typer.Option(None, help="Grow the region (default 1.1 for a box = 10% margin; 1.0 for painted)"),
     track_: bool = typer.Option(True, "--track/--no-track", help="Follow the region as the camera / object moves"),
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     invert: bool = typer.Option(False, help="Apply to everything EXCEPT the region"),
@@ -707,11 +713,16 @@ def mask_add(
     d = pdir()
     with edit(f"mask ({style})") as tx:
         p = tx.project
-        c, params, note = _region(p, d, clip, at, box, obj, space)
+        try:
+            paint_items = json.loads(paint) if paint else None
+        except json.JSONDecodeError as e:
+            raise VeditError(f"--paint must be JSON: {e}") from None
+        c, params, note = _region(p, d, clip, at, box, obj, space, paint_items, keep_box)
         from .ops.track import new_mask_id
 
-        params.update({"id": new_mask_id(p), "style": style, "color": color, "shape": shape, "feather": feather,
-                       "expand": expand, "track": track_, "smooth": smooth, "invert": invert})
+        painted = params.get("shape") == "paint"
+        params.update({"id": new_mask_id(p), "style": style, "color": color, "shape": "paint" if painted else shape,
+                       "feather": feather, "expand": expand if expand is not None else (1.0 if painted else 1.1), "track": track_, "smooth": smooth, "invert": invert})
         if strength is not None:
             params["strength"] = strength
         c.effects.append(Effect(type="mask", params=params))
@@ -738,14 +749,30 @@ def mask_list():
 @mask_app.command("set")
 def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float] = None, color: Optional[str] = None,
              feather: Optional[float] = None, expand: Optional[float] = None, shape: Optional[str] = None,
-             invert: Optional[bool] = typer.Option(None, "--invert/--no-invert")):
+             invert: Optional[bool] = typer.Option(None, "--invert/--no-invert"),
+             keep_box: Optional[str] = typer.Option(None, help="Region that must stay on top (the product in front), "
+                                                    "x,y,w,h[;...] on the canvas at --at; 'none' clears it"),
+             at: Optional[float] = typer.Option(None, help="Timeline seconds the --keep-box is drawn at")):
     """Change how a mask looks (style changes don't re-track)."""
+    from .ops import track
+
     with edit(f"mask {mask_id}") as tx:
-        for _, e in _masks(tx.project, mask_id):
+        for c, e in _masks(tx.project, mask_id):
             for k, v in (("style", style), ("strength", strength), ("color", color), ("feather", feather),
                          ("expand", expand), ("shape", shape), ("invert", invert)):
                 if v is not None:
                     e.params[k] = v
+            if keep_box is not None:
+                if keep_box.strip().lower() == "none":
+                    e.params.pop("keep", None)
+                    continue
+                if at is None:
+                    raise VeditError("Give --at <timeline seconds> where the --keep-box is right")
+                hit, t_src, u = track.locate(tx.project, at)
+                if hit is not c:
+                    raise VeditError(f"--at {at} is not inside {c.id}, the clip of {mask_id}")
+                e.params["keep"] = track.keep_region(tx.project, c, u, keep_box)
+                e.params["keep"]["at"] = round(t_src, 3)
     emit({"mask": mask_id}, f"Updated {mask_id}")
 
 

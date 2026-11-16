@@ -147,3 +147,102 @@ def test_mask_needs_a_box_or_object(cli, test_clip):
     cli("import", str(test_clip))
     cli("mask", "add", ok=False)
     cli("mask", "add", "--box", "10%,10%,20%,20%", "--style", "sparkles", ok=False)
+
+
+# ---- painted regions & style "remove" -----------------------------------------------------
+
+def test_several_boxes_become_one_painted_region(make_project):
+    p = make_project(1)  # 1920x1080 source, cover on a 1080x1920 canvas
+    _, params, _ = track.region(p, None, None, 1.0, "10%,10%,20%,5%;30%,20%,10%,10%", None)
+    assert params["shape"] == "paint" and len(params["paint"]) == 2
+    x, y, w, h = params["box"]  # bounds of both rectangles, in source fractions
+    r0, r1 = params["paint"][0]["rect"], params["paint"][1]["rect"]
+    assert x == pytest.approx(r0[0]) and y == pytest.approx(r0[1])
+    assert x + w == pytest.approx(r1[0] + r1[2]) and y + h == pytest.approx(r1[1] + r1[3])
+
+
+def test_painted_region_errors_and_erase(make_project):
+    p = make_project(1)
+    c = p.clips[0]
+    with pytest.raises(VeditError):
+        track.paint_to_source(p, c, [], 0)
+    with pytest.raises(VeditError):  # only erasing = nothing selected
+        track.paint_to_source(p, c, [{"rect": [100, 100, 200, 200], "erase": True}], 0)
+    box, items = track.paint_to_source(p, c, [{"pts": [[540, 960], [640, 960]], "r": 40},
+                                              {"rect": [560, 940, 20, 20], "erase": True}], 0)
+    assert items[1]["erase"] and not items[0]["erase"]
+    assert box[2] > 0 and box[3] > 0
+
+
+@needs_cv2
+def test_painted_mask_follows_the_tracked_box():
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    prm = {"box": [0.4, 0.4, 0.2, 0.2], "shape": "paint", "feather": 0, "expand": 1.0,
+           "paint": [{"rect": [0.4, 0.4, 0.2, 0.2]}, {"rect": [0.45, 0.45, 0.05, 0.05], "erase": True}]}
+    m = track.region_mask(cv2, prm, [0.4, 0.4, 0.2, 0.2], 100, 100)
+    assert m[50, 58] == 255 and m[47, 47] == 0 and m[10, 10] == 0  # filled, erased hole, outside
+    moved = track.region_mask(cv2, prm, [0.1, 0.1, 0.2, 0.2], 100, 100)
+    assert moved[20, 28] == 255 and moved[50, 58] == 0  # the shape moved with the box
+    assert np.count_nonzero(moved) == np.count_nonzero(m)
+
+
+@needs_cv2
+def test_remove_fills_from_the_surroundings():
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    frame = np.full((200, 300, 3), (60, 120, 180), np.uint8)  # plain "cardboard" (BGR)
+    cv2.rectangle(frame, (100, 70), (200, 130), (255, 255, 255), -1)  # a white label
+    cv2.putText(frame, "LOGO", (110, 115), cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 220), 2)
+    m = np.zeros((200, 300), np.uint8)
+    cv2.rectangle(m, (95, 65), (205, 135), 255, -1)
+    out = track.remove_frame(cv2, frame, m, seed=1)
+    assert out.shape == (200, 300, 4) and out[100, 150, 3] == 255 and out[5, 5, 3] == 0
+    inside = out[75:125, 105:195, :3].reshape(-1, 3).astype(float)  # RGB
+    assert np.abs(inside.mean(0) - [180, 120, 60]).max() < 6  # rebuilt as the background colour
+    assert inside.std(0).max() < 8  # no trace of the white label or red text
+
+
+@needs_ffmpeg
+@needs_cv2
+def test_remove_style_renders_as_an_overlay(cli, moving_label):
+    cli("import", str(moving_label))
+    r = cli("mask", "add", "--box", "200,140,180,70", "--space", "source", "--at", "0")
+    assert load(cli.project).clips[0].effects[0].params["style"] == "remove"  # the default
+    graph = __import__("vedit.render.graph", fromlist=["filter_text"]).filter_text(load(cli.project), cli.project)
+    assert "[ovl" in graph and "gblur" not in graph  # composited as a rebuilt-background overlay
+    cli("frame", "--at", "1.0,3.5")
+    cli("mask", "add", "--at", "2", "--paint", '[{"pts": [[200, 900], [500, 900]], "r": 60}]')
+    p = load(cli.project)
+    assert p.clips[0].effects[1].params["shape"] == "paint" and p.clips[0].effects[1].params["expand"] == 1.0
+    cli("mask", "add", "--at", "2", "--paint", "not json", ok=False)
+    assert r["mask"] == "mk1"
+
+
+def test_keep_strokes_become_a_separate_region(make_project):
+    p = make_project(1)
+    _, params, _ = track.region(p, None, None, 1.0, None, None, paint=[
+        {"rect": [300, 600, 400, 200]}, {"rect": [200, 780, 700, 400], "keep": True}])
+    assert len(params["paint"]) == 1 and "keep" in params
+    assert params["keep"]["box"][1] > params["box"][1]  # the product sits below the label
+    _, params, _ = track.region(p, None, None, 1.0, "30%,30%,20%,10%", None, keep="20%,38%,60%,30%")
+    assert params["keep"]["paint"][0]["rect"]
+    with pytest.raises(VeditError):  # only keep strokes = nothing to hide
+        track.region(p, None, None, 1.0, None, None, paint=[{"rect": [200, 780, 700, 400], "keep": True}])
+
+
+@needs_cv2
+def test_remove_never_paints_over_or_samples_what_is_in_front():
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    frame = np.full((200, 300, 3), (60, 120, 180), np.uint8)  # cardboard
+    cv2.rectangle(frame, (100, 60), (200, 120), (255, 255, 255), -1)  # label
+    cv2.rectangle(frame, (0, 110), (300, 200), (200, 200, 200), -1)  # silver product in front, overlapping it
+    m = np.zeros((200, 300), np.uint8)
+    cv2.rectangle(m, (90, 50), (210, 140), 255, -1)  # sloppy mask reaching into the product
+    prot = np.zeros((200, 300), bool)
+    prot[110:, :] = True
+    out = track.remove_frame(cv2, frame, m, seed=1, protect=prot)
+    assert out[130, 150, 3] == 0  # the product stays on top
+    inside = out[62:105, 105:195, :3].reshape(-1, 3).astype(float)
+    assert np.abs(inside.mean(0) - [180, 120, 60]).max() < 8  # filled with cardboard, not grey product

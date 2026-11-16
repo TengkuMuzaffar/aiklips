@@ -115,6 +115,21 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 #drawlayer .dhint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: #000c; color: var(--text); font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
 .drawbox { position: absolute; border: 2px solid var(--accent); background: #5eead41f; box-shadow: 0 0 0 9999px #0007; pointer-events: none; }
 .drawbox.ellipse { border-radius: 50%; }
+#drawlayer canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; border-radius: 10px; }
+#drawlayer.painting { cursor: none; }
+.drawbar { position: absolute; z-index: 6; display: flex; gap: 4px; align-items: center; background: var(--pane2); border: 1px solid var(--line2);
+  border-radius: 10px; padding: 6px; font-size: 12px; cursor: default; box-shadow: 0 8px 24px #0008; }
+.drawbar.side { flex-direction: column; align-items: stretch; width: 104px; }
+.drawbar.side .sep { width: auto; height: 1px; margin: 2px 0; }
+.drawbar.side input[type=range] { width: 100%; }
+.drawbar.top { left: 50%; top: 4px; transform: translateX(-50%); max-width: calc(100% - 8px); overflow-x: auto; white-space: nowrap; }
+.drawbar button { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.drawbar button.on { border-color: var(--accent); color: var(--accent); }
+.drawbar button.keep { border-color: #fb923c; color: #fb923c; }
+.drawbar input[type=range] { width: 70px; }
+.drawbar .sep { width: 1px; height: 18px; background: var(--line2); margin: 0 2px; }
+.brushcur { position: absolute; border: 1.5px solid #fff; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px #000a; transform: translate(-50%, -50%); z-index: 4; }
+.brushcur.erase { border-style: dashed; }
 .drawpop { position: absolute; z-index: 7; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; min-width: 210px; box-shadow: 0 10px 30px #000a; font-size: 12px; }
 .drawpop .row { display: flex; gap: 6px; align-items: center; }
 .drawpop .row > label { width: 54px; color: var(--muted); }
@@ -143,6 +158,10 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 .m-user { align-self: flex-end; max-width: 88%; background: #1d3a36; border: 1px solid #275049; padding: 7px 10px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; }
 .m-user .ctx { display: block; font-size: 11px; color: var(--accent); opacity: .8; margin-bottom: 2px; }
 .m-ai { max-width: 94%; line-height: 1.5; }
+.m-user, .m-ai { position: relative; user-select: text; -webkit-user-select: text; cursor: text; }
+.m-copy { position: absolute; top: -8px; right: -6px; padding: 2px 4px; display: none; background: var(--pane2); border: 1px solid var(--line2); border-radius: 6px; color: var(--muted); cursor: pointer; }
+.m-copy:hover { color: var(--text); }
+.m-user:hover .m-copy, .m-ai:hover .m-copy { display: inline-flex; }
 .m-ai code { background: var(--pane3); padding: 0 4px; border-radius: 4px; font-size: 12px; }
 .m-tool { font: 12px ui-monospace, monospace; color: var(--muted); display: flex; gap: 6px; align-items: baseline; padding-left: 4px; }
 .m-tool .st { width: 12px; flex: none; }
@@ -351,7 +370,7 @@ dialog#dlg-models::backdrop { background: #000b; }
       <button class="ghost icon" id="t-fwd" data-icon="chevron-right" title="Next frame (→)"></button>
       <span id="tc">0:00.00 / 0:00.00</span>
       <span style="width:14px"></span>
-      <button class="ghost" id="t-mask" data-icon="mask" title="Draw a box over something to hide it (blur / pixelate). It follows the object.">Mask</button>
+      <button class="ghost" id="t-mask" data-icon="mask" title="Paint or box over something to hide it: remove it (blend into the background) or blur / pixelate. It follows the object.">Mask</button>
       <button class="ghost" id="t-focus" data-icon="target" title="Draw a box around an object to spotlight it or make the camera follow it">Focus</button>
     </div>
   </section>
@@ -359,7 +378,7 @@ dialog#dlg-models::backdrop { background: #000b; }
 
   <!-- 3. AI chat -->
   <section class="pane" id="p-chat">
-    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost icon" id="b-chats" data-icon="history" title="Chat history: reopen or delete earlier chats"></button><button class="ghost icon" id="b-newchat" data-icon="message-plus" title="New chat: start fresh (this chat stays in Chat history)"></button></div>
+    <div class="pane-h"><h2>AI editor</h2><div class="spacer"></div><select id="model" title="Model used by the AI editor" style="max-width:170px;min-width:0;font-size:12px"></select><button class="ghost icon" id="b-models" data-icon="sliders" title="Manage AI models and providers"></button><button class="ghost icon" id="b-copychat" data-icon="copy" title="Copy this whole conversation"></button><button class="ghost icon" id="b-chats" data-icon="history" title="Chat history: reopen or delete earlier chats"></button><button class="ghost icon" id="b-newchat" data-icon="message-plus" title="New chat: start fresh (this chat stays in Chat history)"></button></div>
     <div id="chatlist" hidden></div>
     <div id="ai-setup" hidden></div>
     <div id="msgs"></div>
@@ -670,7 +689,7 @@ function renderClip(c) {
       field("Effects", effs.length ? h("div", { class: "chips" }, effs.map((e) =>
         h("span", { class: "chip", title: JSON.stringify(e.params) }, effectLabel(e), h("button", { title: "Remove", onclick: () => op("remove_effect", { clip: c.id, type: e.type, id: e.params.id }) }, "×"))))
         : h("span", { class: "hint" }, "none — ask the AI, e.g. “remove my background”")),
-      ...masks.map((e) => field(`Mask ${e.params.id}`, h("div", { class: "pair" },
+      ...masks.map((e) => field(`Mask ${e.params.id}${e.params.shape === "paint" ? " (painted)" : ""}`, h("div", { class: "pair" },
         selectIn(e.params.style || "blur", MASK_STYLES, (v) => op("mask_set", { id: e.params.id, style: v })),
         h("button", { class: "ghost", title: "Remove mask", onclick: () => op("remove_effect", { clip: c.id, id: e.params.id }) }, "×"))))),
     h("div", { class: "btnrow" },
@@ -686,7 +705,7 @@ const TRANSITION_OPTS = [["none", "None (cut)"], ["fade", "Crossfade"], ["fadebl
   ["smoothleft", "Smooth push left"], ["smoothup", "Smooth push up"], ["wipeleft", "Wipe left"], ["wiperight", "Wipe right"],
   ["zoomin", "Zoom in"], ["hblur", "Whip (blur)"], ["circleopen", "Circle open"], ["circleclose", "Circle close"],
   ["radial", "Clock wipe"], ["pixelize", "Pixelize"], ["dissolve", "Dissolve"], ["squeezeh", "Squeeze"], ["coverleft", "Cover left"], ["revealleft", "Reveal left"]];
-const MASK_STYLES = [["blur", "Blur"], ["pixelate", "Pixelate"], ["fill", "Solid fill"], ["dim", "Darken"]];
+const MASK_STYLES = [["remove", "Remove (blend into background)"], ["blur", "Blur"], ["pixelate", "Pixelate"], ["fill", "Solid fill"], ["dim", "Darken"]];
 function effectLabel(e) {
   if (e.type === "focus") return `focus · ${e.params.mode || "spotlight"}`;
   if (e.type === "mask") return `mask ${e.params.id} · ${e.params.style}`;
@@ -812,8 +831,9 @@ function addMsg(ev) {
   const box = $("#msgs");
   $(".suggest", box)?.remove();
   let el = null;
-  if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ev.text);
-  else if (ev.type === "assistant") { el = h("div", { class: "m-ai" }); el.innerHTML = md(ev.text); }
+  const copyBtn = () => h("button", { class: "m-copy", title: "Copy message", onclick: (e) => { e.stopPropagation(); copyText(ev.text); } }, icon("copy"));
+  if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ev.text, copyBtn());
+  else if (ev.type === "assistant") { el = h("div", { class: "m-ai" }); el.innerHTML = md(ev.text); el.append(copyBtn()); }
   else if (ev.type === "tool") { el = h("div", { class: "m-tool" }, h("span", { class: "st" }, "▸"), h("span", { class: "tx", title: ev.summary }, ev.summary)); toolEls[ev.id] = el; }
   else if (ev.type === "tool_result") {
     const t = toolEls[ev.id]; if (t) { const st = $(".st", t); st.textContent = ev.ok ? "✓" : "✗"; st.className = "st " + (ev.ok ? "ok" : "bad"); if (!ev.ok) t.title = ev.text; }
@@ -833,6 +853,9 @@ function addMsg(ev) {
         h("button", { onclick: () => answer(false) }, "Deny")));
   }
   else if (ev.type === "permission_done") { document.getElementById(ev.id)?.remove(); return; }
+  if (el && (ev.type === "user" || ev.type === "assistant" || ev.type === "tool" || ev.type === "error")) {
+    el.dataset.copy = ev.type === "user" ? `You: ${ev.text}` : ev.type === "assistant" ? `Claude: ${ev.text}` : ev.type === "tool" ? `  > ${ev.summary}` : `Error: ${ev.text}`;
+  }
   if (el) { box.insertBefore(el, typingEl && typingEl.parentNode === box ? typingEl : null); box.scrollTop = box.scrollHeight; }
 }
 function setBusy(b) {
@@ -897,6 +920,10 @@ function renderChatList() {
   }
 }
 $("#b-newchat").onclick = newChat;
+$("#b-copychat").onclick = () => {
+  const lines = [...$("#msgs").querySelectorAll("[data-copy]")].map((x) => x.dataset.copy);
+  if (lines.length) copyText(lines.join("\n\n")); else toast("Nothing to copy yet");
+};
 $("#b-chats").onclick = () => { const b = $("#chatlist"); b.hidden = !b.hidden; if (!b.hidden) renderChatList(); };
 document.addEventListener("pointerdown", (e) => {
   const b = $("#chatlist");
@@ -1533,7 +1560,7 @@ function videoBox() {
   return { left: r.left - st.left + (r.width - w) / 2, top: r.top - st.top + (r.height - hh) / 2, width: w, height: hh, sc };
 }
 function endDraw() {
-  DRAW = null; $("#drawlayer")?.remove();
+  DRAW = null; PAINT_UNDO = null; $("#drawlayer")?.remove(); $("#stage .drawbar")?.remove();
   $("#t-mask").classList.remove("on"); $("#t-focus").classList.remove("on");
 }
 function startDraw(kind) {
@@ -1543,13 +1570,19 @@ function startDraw(kind) {
   DRAW = kind; video.pause();
   $(kind === "mask" ? "#t-mask" : "#t-focus").classList.add("on");
   const vb = videoBox();
-  const layer = h("div", { id: "drawlayer", style: { left: `${vb.left}px`, top: `${vb.top}px`, width: `${vb.width}px`, height: `${vb.height}px` } },
-    h("div", { class: "dhint" }, kind === "mask" ? "Drag a box over what to hide · Esc to cancel" : "Drag a box around the object · Esc to cancel"));
-  let box = null, x0 = 0, y0 = 0;
+  const layer = h("div", { id: "drawlayer", style: { left: `${vb.left}px`, top: `${vb.top}px`, width: `${vb.width}px`, height: `${vb.height}px` } });
+  $("#stage").append(layer);
+  if (kind === "mask") return paintMode(layer, vb);
+  layer.append(h("div", { class: "dhint" }, "Drag a box around the object · Esc to cancel"));
+  boxMode(layer, kind, vb, () => true);
+}
+// drag a box (focus, and the mask's Box tool)
+function boxMode(layer, kind, vb, active) {
+  let box = null;
   layer.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".drawpop")) return;
+    if (!active() || e.target.closest(".drawpop, .drawbar")) return;
     layer.querySelector(".drawpop")?.remove(); box?.remove();
-    const r = layer.getBoundingClientRect(); x0 = e.clientX - r.left; y0 = e.clientY - r.top;
+    const r = layer.getBoundingClientRect(), x0 = e.clientX - r.left, y0 = e.clientY - r.top;
     box = h("div", { class: "drawbox" + (kind === "focus" ? " ellipse" : "") }); layer.append(box);
     layer.setPointerCapture(e.pointerId);
     const mv = (ev) => {
@@ -1565,27 +1598,147 @@ function startDraw(kind) {
       drawPopup(layer, kind, bx, vb.sc);
     }, { once: true });
   });
-  $("#stage").append(layer);
 }
-function drawPopup(layer, kind, bx, sc) {
+// mask: paint the exact region with a brush, or fill grid cells, or drag a box
+let PAINT_UNDO = null;
+function paintMode(layer, vb) {
+  const W = vb.width, H = vb.height, dpr = window.devicePixelRatio || 1;
+  const mkCanvas = () => { const c = h("canvas", { width: Math.round(W * dpr), height: Math.round(H * dpr) }); c.getContext("2d").scale(dpr, dpr); return c; };
+  const cvsHide = mkCanvas(), cvsKeep = mkCanvas(), cvsGrid = mkCanvas();
+  const cur = h("div", { class: "brushcur", style: { display: "none" } });
+  layer.append(cvsHide, cvsKeep, cvsGrid, cur);
+  layer.classList.add("painting");
+  // keep = paint what must stay ON TOP of the mask (the product in front of the label)
+  let tool = "brush", erase = false, keepOn = false, size = Math.round(Math.max(10, W * 0.05));
+  const ctxOf = (keep) => (keep ? cvsKeep : cvsHide).getContext("2d");
+  const COLS = 20, cs = W / COLS, ROWS = Math.ceil(H / cs);
+  const groups = []; // one group of items per drag (undo removes a whole drag)
+  const items = () => groups.flat();
+
+  function redraw() {
+    for (const c of [cvsHide, cvsKeep, cvsGrid]) c.getContext("2d").clearRect(0, 0, W, H);
+    for (const it of items()) {
+      const ctx = ctxOf(it.keep);
+      ctx.globalCompositeOperation = it.erase ? "destination-out" : "source-over";
+      ctx.fillStyle = ctx.strokeStyle = it.keep ? "rgba(251, 146, 60, 0.55)" : "rgba(94, 234, 212, 0.5)";
+      if (it.rect) { ctx.fillRect(...it.rect); continue; }
+      ctx.lineCap = ctx.lineJoin = "round"; ctx.lineWidth = it.r * 2;
+      ctx.beginPath(); it.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      if (it.pts.length === 1) ctx.lineTo(it.pts[0][0] + 0.01, it.pts[0][1]);
+      ctx.stroke();
+    }
+    const ctx = cvsGrid.getContext("2d");
+    if (tool === "grid") {
+      ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.lineWidth = 1; ctx.beginPath();
+      for (let c = 1; c < COLS; c++) { ctx.moveTo(c * cs + 0.5, 0); ctx.lineTo(c * cs + 0.5, H); }
+      for (let r = 1; r < ROWS; r++) { ctx.moveTo(0, r * cs + 0.5); ctx.lineTo(W, r * cs + 0.5); }
+      ctx.stroke();
+    }
+    done.disabled = !items().some((it) => !it.erase && !it.keep);
+  }
+  const btn = (label, title, fn) => h("button", { class: "ghost", title, onclick: fn }, label);
+  const tools = { brush: btn("Brush", "Paint over what to hide (B)", () => setTool("brush")),
+                  grid: btn("Grid", "Click / drag over grid squares to cover them (G)", () => setTool("grid")),
+                  box: btn("Box", "Drag a box (X)", () => setTool("box")) };
+  const sizeIn = h("input", { type: "range", min: 4, max: Math.round(W * 0.2), value: size, title: "Brush size ( [ / ] )",
+    oninput: (e) => { size = +e.target.value; } });
+  const eraseB = btn("Erase", "Paint to remove parts of the selection (E)", () => { erase = !erase; eraseB.classList.toggle("on", erase); cur.classList.toggle("erase", erase); });
+  const keepB = btn("Keep", "Paint what must stay ON TOP of the mask, e.g. the product in front of the label (K)", () => {
+    keepOn = !keepOn; keepB.classList.toggle("on", keepOn); keepB.classList.toggle("keep", keepOn); });
+  const undoB = btn("Undo", "Undo last stroke (Ctrl/Cmd+Z)", () => { groups.pop(); redraw(); });
+  const clearB = btn("Clear", "Start over", () => { groups.length = 0; redraw(); });
+  const done = h("button", { class: "primary", title: "Next: choose how to hide it", onclick: () => finish() }, "Done");
+  const bar = h("div", { class: "drawbar" }, tools.brush, tools.grid, tools.box, h("span", { class: "sep" }), sizeIn, keepB, eraseB, undoB, clearB,
+    h("span", { class: "sep" }), done, btn("✕", "Cancel (Esc)", endDraw));
+  // keep the toolbar off the picture: beside the video when there's room, else a slim strip at the top of the stage
+  const stage = $("#stage"), BW = 104 + 12, right = stage.clientWidth - (vb.left + vb.width);
+  if (right >= BW + 8) { bar.classList.add("side"); Object.assign(bar.style, { left: `${vb.left + vb.width + 10}px`, top: `${vb.top}px` }); }
+  else if (vb.left >= BW + 8) { bar.classList.add("side"); Object.assign(bar.style, { left: `${vb.left - BW - 6}px`, top: `${vb.top}px` }); }
+  else bar.classList.add("top");
+  stage.append(bar);
+  function setTool(t) {
+    tool = t;
+    for (const [k, b] of Object.entries(tools)) b.classList.toggle("on", k === t);
+    sizeIn.style.display = t === "brush" ? "" : "none";
+    for (const b of [keepB, eraseB, undoB, clearB, done]) b.style.display = t === "box" ? "none" : "";
+    layer.classList.toggle("painting", t === "brush");
+    layer.querySelector(".drawbox")?.remove(); layer.querySelector(".drawpop")?.remove();
+    redraw();
+  }
+  PAINT_UNDO = { undo: () => undoB.click(), key: (k) => {
+    if (k === "b") setTool("brush"); else if (k === "g") setTool("grid"); else if (k === "x") setTool("box"); else if (k === "e") eraseB.click(); else if (k === "k") keepB.click();
+    else if (k === "[" || k === "]") { size = Math.max(4, Math.min(+sizeIn.max, size + (k === "]" ? 4 : -4))); sizeIn.value = size; }
+  } };
+  boxMode(layer, "mask", vb, () => tool === "box");
+
+  const pos = (e) => { const r = layer.getBoundingClientRect(); return [Math.max(0, Math.min(W, e.clientX - r.left)), Math.max(0, Math.min(H, e.clientY - r.top))]; };
+  layer.addEventListener("pointermove", (e) => {
+    if (tool !== "brush" || e.target.closest(".drawbar, .drawpop")) { cur.style.display = "none"; return; }
+    const [x, y] = pos(e);
+    Object.assign(cur.style, { display: "", left: `${x}px`, top: `${y}px`, width: `${size * 2}px`, height: `${size * 2}px` });
+  });
+  layer.addEventListener("pointerleave", () => { cur.style.display = "none"; });
+  layer.addEventListener("pointerdown", (e) => {
+    if (tool === "box" || e.target.closest(".drawbar, .drawpop")) return;
+    layer.querySelector(".drawpop")?.remove();
+    layer.setPointerCapture(e.pointerId);
+    const group = []; groups.push(group);
+    let mv;
+    if (tool === "brush") {
+      const it = { pts: [pos(e)], r: size, erase, keep: keepOn }; group.push(it);
+      mv = (ev) => { const p = pos(ev), q = it.pts[it.pts.length - 1]; if (Math.hypot(p[0] - q[0], p[1] - q[1]) >= 2) { it.pts.push(p); redraw(); } };
+    } else {
+      // grid: the first cell decides add or remove for the whole drag
+      const seen = new Set();
+      const cellAt = ([x, y]) => [Math.min(COLS - 1, Math.floor(x / cs)), Math.min(ROWS - 1, Math.floor(y / cs))];
+      const covered = ([c, r]) => { const cx = (c + 0.5) * cs, cy = (r + 0.5) * cs; return ctxOf(keepOn).getImageData(Math.floor(cx * dpr), Math.floor(cy * dpr), 1, 1).data[3] > 40; };
+      const c0 = cellAt(pos(e)), rm = erase || covered(c0);
+      mv = (ev) => {
+        const [c, r] = cellAt(pos(ev)), k = `${c},${r}`;
+        if (seen.has(k)) return; seen.add(k);
+        group.push({ rect: [c * cs, r * cs, Math.min(cs, W - c * cs), Math.min(cs, H - r * cs)], erase: rm, keep: keepOn }); redraw();
+      };
+    }
+    mv(e); redraw();
+    layer.addEventListener("pointermove", mv);
+    layer.addEventListener("pointerup", () => { layer.removeEventListener("pointermove", mv); if (!group.length) groups.pop(); }, { once: true });
+  });
+
+  function finish() {
+    const its = items(), pos = its.filter((it) => !it.erase && !it.keep);
+    if (!pos.length) return;
+    let x0 = W, y0 = H, x1 = 0, y1 = 0;
+    for (const it of pos) {
+      if (it.rect) { x0 = Math.min(x0, it.rect[0]); y0 = Math.min(y0, it.rect[1]); x1 = Math.max(x1, it.rect[0] + it.rect[2]); y1 = Math.max(y1, it.rect[1] + it.rect[3]); }
+      else for (const [x, y] of it.pts) { x0 = Math.min(x0, x - it.r); y0 = Math.min(y0, y - it.r); x1 = Math.max(x1, x + it.r); y1 = Math.max(y1, y + it.r); }
+    }
+    const sc = vb.sc, rd = (v) => Math.round(v / sc * 10) / 10;
+    const paint = its.map((it) => ({ ...(it.rect ? { rect: it.rect.map(rd) } : { pts: it.pts.map(([x, y]) => [rd(x), rd(y)]), r: rd(it.r) }), erase: it.erase, keep: it.keep }));
+    drawPopup(layer, "mask", { x: Math.max(0, x0), y: Math.max(0, y0), w: Math.min(W, x1) - Math.max(0, x0), h: Math.min(H, y1) - Math.max(0, y0) }, sc, paint);
+  }
+  setTool("brush");
+}
+function drawPopup(layer, kind, bx, sc, paint = null) {
   const at = video.currentTime;
   const cbox = [bx.x, bx.y, bx.w, bx.h].map((v) => Math.round(v / sc)).join(",");
   let opts;
   const track = h("input", { type: "checkbox", checked: true });
   if (kind === "mask") {
     const style = h("select", {}, MASK_STYLES.map(([v, l]) => h("option", { value: v }, l)));
-    const shape = h("select", {}, h("option", { value: "rect" }, "Rounded box"), h("option", { value: "ellipse" }, "Ellipse"));
-    opts = { style, shape };
+    opts = { style };
+    if (!paint) opts.shape = h("select", {}, h("option", { value: "rect" }, "Rounded box"), h("option", { value: "ellipse" }, "Ellipse"));
   } else {
     const mode = h("select", {}, h("option", { value: "spotlight" }, "Spotlight (blur + dim around it)"), h("option", { value: "follow" }, "Follow (camera pans with it)"), h("option", { value: "both" }, "Follow + spotlight"));
     opts = { mode };
   }
   const apply = async () => {
-    const args = { box: cbox, at, track: track.checked };
+    const args = paint ? { paint, at, track: track.checked } : { box: cbox, at, track: track.checked };
     for (const [k, el] of Object.entries(opts)) args[k] = el.value;
     endDraw();
     const r = await op(kind === "mask" ? "mask_add" : "focus_add", args);
-    if (r) toast(`${kind === "mask" ? "Mask" : "Focus"} added — tracking the object, the preview updates when it's done`);
+    if (r) toast(kind === "mask" && args.style === "remove"
+      ? "Mask added — tracking it and rebuilding the background, the preview updates when it's done"
+      : `${kind === "mask" ? "Mask" : "Focus"} added — tracking the object, the preview updates when it's done`);
   };
   const pop = h("div", { class: "drawpop" },
     h("b", {}, kind === "mask" ? "Hide this region" : "Focus on this object"),
@@ -1603,7 +1756,16 @@ window.addEventListener("resize", () => { if (DRAW) { const k = DRAW; endDraw();
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && DRAW) { e.preventDefault(); endDraw(); return; }
+  if (PAINT_UNDO && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.stopPropagation(); PAINT_UNDO.undo(); return; }
+    if (!e.metaKey && !e.ctrlKey && "bgxek[]".includes(e.key.toLowerCase()) && e.key.length === 1) { e.preventDefault(); PAINT_UNDO.key(e.key.toLowerCase()); return; }
+  }
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  // Cmd/Ctrl+C on selected page text (the native desktop window doesn't copy it reliably)
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && !typing) {
+    const sel = String(window.getSelection() || "");
+    if (sel) { e.preventDefault(); copyText(sel); return; }
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
   if (typing) return;
   if (e.key === " ") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
