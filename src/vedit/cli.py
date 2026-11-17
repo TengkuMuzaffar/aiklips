@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,7 +25,7 @@ from .project import (
 )
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False,
-                  help="claude-cut: a video editor you drive with Claude Code. All edits are non-destructive and undoable.")
+                  help="aiklips: a video editor you drive with Claude Code. All edits are non-destructive and undoable.")
 text_app = typer.Typer(help="Text overlays")
 image_app = typer.Typer(help="Image overlays (logos, stickers)")
 layer_app = typer.Typer(help="List / change / remove overlay layers")
@@ -35,18 +36,44 @@ face_app = typer.Typer(help="Face mesh / AR effects (needs: uv sync --extra ai)"
 music_app = typer.Typer(help="Background music")
 mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
+color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
+sound_app = typer.Typer(help="Footage sound vs music: what each clip's audio is (speech / background / silent), and sensible defaults")
+fx_app = typer.Typer(help="Signature moves (punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, "
+                          "zoom-out reveal) and clip filters (blur, sharpen, glow, vignette, grain, RGB split, film, VHS, shake...)")
+overlay_app = typer.Typer(help="Video overlays (picture-in-picture, b-roll on top, green screen) and the overlay library "
+                               "(light leaks, dust, grain, bokeh, VHS lines, frame, stickers)")
+version_app = typer.Typer(help="Named versions: bookmark the edit as it is now, jump back to it later")
+template_app = typer.Typer(help="Templates: save a group of overlay layers (lower third, end card...) and reuse it in any project")
+adjust_app = typer.Typer(help="Adjustment layers: filters + colour over a time range, on everything under them")
+proxy_app = typer.Typer(help="Proxy media: small copies of big (4K) sources so previews are fast; exports use the originals")
+track_app = typer.Typer(help="Timeline tracks: list them, hide / show the main track or an overlay track")
+marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTube chapters from them")
+shape_app = typer.Typer(help="Shapes: boxes, circles, lines, arrows (callouts, lower-third backgrounds)")
+look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app)]:
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
+                  ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
+                  ("version", version_app), ("template", template_app), ("track", track_app)]:
     app.add_typer(sub, name=name)
+text_app.add_typer(look_app, name="look")
 
 STATE: dict[str, Any] = {"json": False, "project": None}
+
+
+def _print_version() -> None:
+    from . import __version__
+
+    print(__version__)
+    raise typer.Exit()
 
 
 @app.callback()
 def _global(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project folder (default: active project)"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
+    show_version: bool = typer.Option(False, "--version", help="Print the version and exit", is_eager=True,
+                                      callback=lambda v: _print_version() if v else None),
 ):
     STATE["project"] = project
     STATE["json"] = as_json
@@ -157,12 +184,25 @@ def info():
         clips.append({
             "id": c.id, "source": c.source, "timeline": [round(s, 3), round(s + c.duration, 3)],
             "source_range": [c.in_, c.out], "speed": c.speed, "fit": c.fit, "zoom": c.zoom, "zoom_to": c.zoom_to,
-            "effects": [e.type for e in c.effects],
+            "effects": [_fx_label(e) for e in c.effects],
+            **({"gap": True} if c.gap else {}),
             **({"transition_in": c.transition.model_dump()} if c.transition else {}),
         })
-    layers = [{"id": l.id, "type": l.type, "start": l.start, "end": l.end, "text": l.text or (" ".join(w.text for w in l.words[:8]) if l.words else l.image),
-               "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)} for l in p.layers]
+    layers = []
+    for l in p.layers:
+        row = {"id": l.id, "type": l.type, "track": l.track, "start": l.start, "end": l.end,
+               "text": l.text or (" ".join(w.text for w in l.words[:8]) if l.words else l.image),
+               "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)}
+        if l.hidden:
+            row["hidden"] = True
+        if l.type == "video":
+            row.update(source=l.source, src_in=l.src_in, fit=l.fit, flip_h=l.flip_h, flip_v=l.flip_v)
+        if l.type in ("video", "adjust"):
+            row["effects"] = [_fx_label(e) for e in l.effects]
+            row["grade"] = l.grade.model_dump(exclude_none=True) if l.grade else None
+        layers.append(row)
     data = {"project": str(d), "name": p.name, "canvas": p.canvas.model_dump(), "duration": round(p.duration, 3),
+            **({"main_hidden": True} if p.main_hidden else {}),
             "sources": {k: v.model_dump() for k, v in p.sources.items()}, "clips": clips, "layers": layers,
             "music": [m.model_dump(by_alias=True) for m in p.music], "history_step": history.head(d)}
     if STATE["json"]:
@@ -170,16 +210,31 @@ def info():
     out = [f"Project {p.name}  ({d})", f"Canvas {p.canvas.width}x{p.canvas.height} @{p.canvas.fps:g}fps   Duration {fmt_t(p.duration)}", "", "Sources:"]
     out += [f"  {k}: {v.path}  {v.duration}s" + (f" {v.width}x{v.height}" if v.has_video else " audio") for k, v in p.sources.items()] or ["  (none)"]
     out += ["", "Timeline:"]
-    out += [f"  {c['id']:>4}  {fmt_t(c['timeline'][0])} - {fmt_t(c['timeline'][1])}   src {c['source']} {c['source_range'][0]:.2f}-{c['source_range'][1]:.2f}s"
+    out += [f"  {c['id']:>4}  {fmt_t(c['timeline'][0])} - {fmt_t(c['timeline'][1])}   " + ("(gap)" if c.get("gap") else f"src {c['source']} {c['source_range'][0]:.2f}-{c['source_range'][1]:.2f}s") +
             f"{'  x' + str(c['speed']) if c['speed'] != 1 else ''}{'  zoom ' + str(c['zoom']) if c['zoom'] != 1 or c['zoom_to'] else ''}{' -> ' + str(c['zoom_to']) if c['zoom_to'] else ''}"
             f"{'  fx:' + ','.join(c['effects']) if c['effects'] else ''}"
             f"{'  <- ' + c['transition_in']['type'] + ' ' + str(c['transition_in']['duration']) + 's' if c.get('transition_in') else ''}" for c in clips] or ["  (empty)"]
     out += ["", "Layers:"]
-    out += [f"  {l['id']:>5}  {l['type']:<8} {l['start']:.2f}-{(l['end'] if l['end'] is not None else p.duration):.2f}s  {str(l['text'])[:40]!r}"
+    out += [f"  {l['id']:>5}  T{l['track']} {l['type']:<8}{' (hidden)' if l.get('hidden') else ''} {l['start']:.2f}-{(l['end'] if l['end'] is not None else p.duration):.2f}s  {str(l['text'] if l['text'] is not None else l.get('source') or '')[:40]!r}"
             f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}" for l in layers] or ["  (none)"]
     if p.music:
         out += ["", "Music:"] + [f"  {m.id}: {m.source} vol {m.volume}{' duck' if m.duck else ''}" for m in p.music]
     print("\n".join(out))
+
+
+def _fx_label(e) -> str:
+    """`blur (fx3)`, with its window when it covers only part of its clip / layer: `blur (fx3) 1.0-2.5s fade 0.3/0.3`."""
+    if e.type != "fx":
+        return e.type
+    s = f"{e.params.get('key')} ({e.params.get('id')})"
+    pr = e.params
+    if pr.get("start") or pr.get("end") is not None or pr.get("fade_in") or pr.get("fade_out"):
+        s += f" {float(pr.get('start') or 0):g}-{'end' if pr.get('end') is None else f'{float(pr['end']):g}'}s"
+        if pr.get("fade_in") or pr.get("fade_out"):
+            s += f" fade {float(pr.get('fade_in') or 0):g}/{float(pr.get('fade_out') or 0):g}"
+    if pr.get("on") is False:
+        s += " off"
+    return s
 
 
 @app.command()
@@ -252,6 +307,110 @@ def remove_clip(clip: str):
     with edit(f"remove clip {clip}") as tx:
         r = cut.remove_clip(tx.project, clip)
     emit(r, f"Removed {clip}. {_summary(tx.project)}")
+
+
+@app.command()
+def place(
+    item: str = typer.Argument(..., help="A clip id (main track) or a layer id (overlay track)"),
+    at: Optional[float] = typer.Option(None, help="New start, timeline seconds"),
+    end: Optional[float] = typer.Option(None, help="Layers: new end (timeline seconds)"),
+    track: Optional[int] = typer.Option(None, help="Layers: overlay track (0 = bottom, higher = drawn on top)"),
+    new_track: bool = typer.Option(False, "--new-track", help="Layers: open a new track at --track instead of sharing it"),
+    src_in: Optional[float] = typer.Option(None, help="Video layers: start this many seconds into the file (trim the head)"),
+):
+    """Move something on the timeline, like dragging it. A clip placed past the end of the clip before it leaves a gap
+    (background colour) before it; placed over another clip it goes before / after that clip. A layer gets new times
+    and / or a track (a busy track bumps it to a new track just above)."""
+    from .ops import tracks
+
+    with edit(f"place {item}") as tx:
+        p = tx.project
+        if any(c.id == item for c in p.clips):
+            if at is None:
+                raise VeditError("Give --at for a clip")
+            t = cut.place_clip(p, pdir(), item, at)
+            r = {"clip": item, "start": round(t, 3)}
+            msg = f"{item} at {t:.2f}s"
+        else:
+            l = tracks.place_layer(p, item, at, tracks._KEEP if end is None else end, track, new_track, src_in)
+            r = {"layer": l.id, "track": l.track, "start": l.start, "end": l.end}
+            msg = f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
+    emit(r, msg + f". {_summary(tx.project)}")
+
+
+@app.command("to-overlay")
+def to_overlay(clip: str, at: float = typer.Option(0.0, help="Start on the timeline after the clip leaves the main track"),
+               track: int = typer.Option(0, help="Overlay track (0 = bottom)"),
+               share_track: bool = typer.Option(False, "--share-track", help="Join --track instead of opening a new one")):
+    """Move a main-track clip onto an overlay track as a full-frame video layer (keeps sound, colour, filters; text on it
+    moves with it). The main track closes up. Use for b-roll over a talking head, or cutaways."""
+    from .ops import tracks
+
+    with edit(f"{clip} to overlay") as tx:
+        l = tracks.clip_to_overlay(tx.project, clip, at, track, not share_track)
+    emit({"layer": l.id, "track": l.track, "start": l.start, "end": l.end}, f"{clip} -> overlay {l.id} on track {l.track}. {_summary(tx.project)}")
+
+
+@app.command("to-clip")
+def to_clip(layer: str, index: Optional[int] = typer.Option(None, help="Position on the main track (default: the end)")):
+    """Move a video overlay onto the main track as a clip (keeps its trim, sound, colour and filters)."""
+    from .ops import tracks
+
+    with edit(f"{layer} to main track") as tx:
+        c = tracks.overlay_to_clip(tx.project, layer, index)
+    emit({"clip": c.id}, f"overlay {layer} -> clip {c.id}. {_summary(tx.project)}")
+
+
+@app.command("trim-to")
+def trim_to(at: float = typer.Option(..., help="Timeline seconds"), side: str = typer.Option("start", help="start | end")):
+    """Trim the clip under --at so it starts (side=start) or ends (side=end) there; later clips move up."""
+    from .ops import editing
+
+    with edit(f"trim {side} to {at:.2f}s") as tx:
+        c = editing.trim_to(tx.project, at, side)
+    emit({"clip": c.id}, f"{c.id}: trimmed {side} to {at:.2f}s. {_summary(tx.project)}")
+
+
+@app.command()
+def paste(src: str = typer.Option(..., "--from", help="Clip or layer to copy from"),
+          to: list[str] = typer.Option(..., help="Target clip / layer (repeatable)"),
+          group: list[str] = typer.Option(..., help="Clips: colour|effects|framing|sound|speed. Layers: style|frame|transform|animation (repeatable)")):
+    """Paste attributes from one clip / layer onto others (like Cmd+C / Cmd+V in the editor)."""
+    from .ops import editing
+
+    with edit(f"paste {','.join(group)} from {src}") as tx:
+        kind = "clip" if any(c.id == src for c in tx.project.clips) else "layer"
+        n = editing.paste_attributes(tx.project, kind, src, list(to), list(group))
+    emit({"changed": n, "kind": kind}, f"Pasted {', '.join(group)} from {src} onto {n} {kind}(s)")
+
+
+@track_app.command("list")
+def track_list():
+    """The main track and the overlay tracks (bottom to top) with what is on each."""
+    from .ops import tracks
+
+    rows = tracks.track_rows(load(pdir()))
+    emit({"tracks": rows}, "\n".join(f"  {str(r['track']):>4}{' (hidden)' if r['hidden'] else ''}: {', '.join(r['items']) or '-'}" for r in rows))
+
+
+def _track_vis(track: str, visible: bool) -> None:
+    from .ops import tracks
+
+    with edit(f"{'show' if visible else 'hide'} track {track}") as tx:
+        msg = tracks.set_track_visible(tx.project, track, visible)
+    emit({"track": track, "visible": visible}, msg)
+
+
+@track_app.command("hide")
+def track_hide(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+    """Hide a track (not drawn in the preview or export; its sound still plays)."""
+    _track_vis(track, False)
+
+
+@track_app.command("show")
+def track_show(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+    """Show a hidden track again."""
+    _track_vis(track, True)
 
 
 @app.command()
@@ -382,26 +541,46 @@ def _presets(names: list[str] | None) -> list[Preset]:
     return out
 
 
+def _gradient(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    cols = [c.strip() for c in value.split(",") if c.strip()]
+    return cols or []
+
+
 @text_app.command("add")
 def text_add(
     text: str,
     start: float = 0.0, end: Optional[float] = None,
     x: str = "50%", y: str = "30%",
-    size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
+    look: Optional[str] = typer.Option(None, help="Text look (font, colours, animation): `vedit text look list`"),
+    size: Optional[int] = None, color: Optional[str] = None,
+    font: Optional[str] = typer.Option(None, help="Bundled font key (`vedit fonts`), a font name, or a .ttf path"),
     stroke: Optional[str] = typer.Option(None, help="Outline colour"), stroke_width: Optional[int] = None,
     bg: Optional[str] = typer.Option(None, help="Background box colour, e.g. '#000000B0'"),
     max_width: Optional[int] = None, uppercase: Optional[bool] = None,
-    preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 ..."),
+    letter_spacing: Optional[float] = typer.Option(None, help="Extra px between letters (negative = tighter)"),
+    glow: Optional[str] = typer.Option(None, help="Glow colour behind the letters, e.g. '#FF2BD6'"),
+    gradient: Optional[str] = typer.Option(None, help="Fill gradient top->bottom, e.g. '#FFE600,#FF6A00'"),
+    preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 .. (overrides the look's)"),
 ):
     """Add a text overlay (titles, hooks, CTAs)."""
-    with edit(f"add text '{text[:30]}'") as tx:
+    from .ops import text_looks
+
+    kw = dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width, bg_color=bg, max_width=max_width,
+              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient))
+    with edit(f"add text '{text[:30]}'" + (f" ({look})" if look else "")) as tx:
         p = tx.project
-        layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y,
-                      style=_style_from(TextStyle(), size=size, color=color, font=font, stroke_color=stroke,
-                                        stroke_width=stroke_width, bg_color=bg, max_width=max_width, uppercase=uppercase),
-                      presets=_presets(preset))
+        layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y)
+        if look:
+            text_looks.apply(layer, look)
+            layer.style = text_looks.style_for(look, **kw)
+        else:
+            layer.style = _style_from(TextStyle(), **kw)
+        if preset:
+            layer.presets = _presets(preset)
         p.layers.append(layer)
-    emit({"layer": layer.id}, f"Added text layer {layer.id}")
+    emit({"layer": layer.id, "look": look}, f"Added text layer {layer.id}" + (f" with look {look}" if look else ""))
 
 
 @text_app.command("edit")
@@ -410,6 +589,9 @@ def text_edit(
     size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
     stroke: Optional[str] = None, stroke_width: Optional[int] = None, bg: Optional[str] = None,
     max_width: Optional[int] = None, uppercase: Optional[bool] = None, highlight: Optional[str] = None,
+    letter_spacing: Optional[float] = None,
+    glow: Optional[str] = typer.Option(None, help="Glow colour, or 'none' to remove"),
+    gradient: Optional[str] = typer.Option(None, help="'#top,#bottom' colours, or 'none' to remove"),
 ):
     """Change the text or style of a text/captions layer."""
     with edit(f"edit text {layer_id}") as tx:
@@ -417,8 +599,102 @@ def text_edit(
         if text is not None:
             l.text = text
         l.style = _style_from(l.style, size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
-                              bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight)
+                              bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight,
+                              letter_spacing=letter_spacing,
+                              glow_color=None if glow in (None, "none") else glow,
+                              gradient=None if gradient in (None, "none") else _gradient(gradient))
+        if glow == "none":
+            l.style.glow_color = None
+        if gradient == "none":
+            l.style.gradient = None
+        if font is not None:
+            from .ops.text import find_font
+            find_font(font)  # fail now with the list of fonts, not at render time
     emit({"layer": layer_id}, f"Updated {layer_id}")
+
+
+@look_app.command("list")
+def look_list():
+    """Built-in and saved text looks."""
+    from .ops import text_looks
+
+    rows = text_looks.catalog()
+    emit({"looks": rows}, "\n".join(f"  {r['name']:<16} {r['font']:<16} {'+'.join(r['animation']):<28} {r['about']}"
+                                    + ("  [saved]" if r["saved"] else "") for r in rows))
+
+
+@look_app.command("apply")
+def look_apply(
+    name: str,
+    layer: Optional[list[str]] = typer.Option(None, "--layer", "-l", help="Layer id, repeatable (default: every text layer)"),
+    captions: bool = typer.Option(False, help="Also restyle captions layers (keeps their size)"),
+    animation: bool = typer.Option(True, help="Also replace the layers' animation with the look's"),
+):
+    """Give layers one look, so every title in the edit matches."""
+    from .ops import text_looks
+
+    text_looks.get(name)
+    with edit(f"text look {name}") as tx:
+        p = tx.project
+        targets = [p.layer(i) for i in layer] if layer else [l for l in p.layers if l.type == "text" or (captions and l.type == "captions")]
+        if not targets:
+            raise VeditError("No text layers to restyle")
+        for l in targets:
+            if l.type not in ("text", "captions"):
+                raise VeditError(f"Layer {l.id} is {l.type}, not text")
+            text_looks.apply(l, name, animation=animation)
+    emit({"layers": [l.id for l in targets], "look": name}, f"Look {name} on {', '.join(l.id for l in targets)}")
+
+
+@look_app.command("save")
+def look_save(name: str, from_: str = typer.Option(..., "--from", help="Layer to copy the look from"),
+              about: str = typer.Option("", help="When to use it (shown in `text look list`)")):
+    """Save a layer's style + animation as a reusable look (stored in ~/.aiklips, works in every project)."""
+    from .ops import text_looks
+
+    look = text_looks.save(name, load(pdir()).layer(from_), about)
+    emit({"look": name, "saved": look}, f"Saved look {name} from {from_}")
+
+
+@look_app.command("delete")
+def look_delete(name: str):
+    """Delete a saved look."""
+    from .ops import text_looks
+
+    text_looks.delete(name)
+    emit({"deleted": name}, f"Deleted look {name}")
+
+
+@app.command()
+def fonts(feel: Optional[str] = typer.Option(None, help="Only this feel: condensed, bold_sans, clean, serif, handwritten, rounded, display, retro, mono"),
+          sheet: bool = typer.Option(False, help="Render a sample sheet image (Read it to see the fonts)")):
+    """Bundled fonts with their feel and when to use them."""
+    from .ops import fonts as font_lib
+
+    rows = [r for r in font_lib.catalog() if not feel or r["feel"] == font_lib.feel_of(feel)]
+    data: dict = {"fonts": rows}
+    if sheet:
+        data["sheet"] = str(_font_sheet(rows))
+    emit(data, "\n".join(f"  {r['key']:<18} {r['feel']:<12} {r['use']}" for r in rows) + (f"\nSheet: {data['sheet']}" if sheet else ""))
+
+
+def _font_sheet(rows: list[dict]) -> Path:
+    from PIL import Image, ImageDraw
+
+    from . import library
+    from .ops.text import load_font
+
+    W, row_h = 1400, 140
+    img = Image.new("RGB", (W, row_h * len(rows) + 20), "#15171c")
+    d = ImageDraw.Draw(img)
+    label = load_font("poppins", 22)
+    for i, r in enumerate(rows):
+        y = 10 + i * row_h
+        d.text((20, y + 8), f"{r['key']}  ·  {r['feel']}", font=label, fill="#5eead4")
+        d.text((20, y + 42), "Stop scrolling: 50% OFF", font=load_font(r["key"], 56), fill="#ffffff")
+    out = library.home_dir() / "fonts-sheet.png"
+    img.save(out)
+    return out
 
 
 @image_app.command("add")
@@ -438,6 +714,134 @@ def image_add(
                       width=width, presets=_presets(preset))
         p.layers.append(layer)
     emit({"layer": layer.id}, f"Added image layer {layer.id}")
+
+
+def _frame_opts(blend, radius, border, border_color, circle, chroma, similarity) -> dict:
+    out: dict[str, Any] = {}
+    for k, v in (("blend", blend), ("radius", radius), ("border_width", border), ("border_color", border_color),
+                 ("chroma", chroma), ("chroma_similarity", similarity)):
+        if v is not None:
+            out[k] = v
+    if circle is not None:
+        out["mask"] = "circle" if circle else "rect"
+    return out
+
+
+@overlay_app.command("library")
+def overlay_library():
+    """The built-in overlays (made on first use, then cached)."""
+    from .ops import overlays
+
+    rows = overlays.catalog()
+    emit({"library": rows}, "\n".join(f"  {r['key']:<16} {r['kind']:<6} {r['blend']:<8} {r['about']}" for r in rows))
+
+
+@overlay_app.command("add")
+def overlay_add(
+    what: str = typer.Argument(..., help="A video file, an imported source id (s2), or a library key (see `overlay library`)"),
+    start: float = 0.0, end: Optional[float] = None,
+    x: Optional[str] = None, y: Optional[str] = None, width: Optional[int] = typer.Option(None, help="Width in canvas px"),
+    src_in: float = typer.Option(0.0, help="Start this many seconds into the overlay video"),
+    volume: Optional[float] = typer.Option(None, help="Overlay sound 0..2 (default: muted)"),
+    loop: bool = typer.Option(False, help="Repeat the video if the layer is longer"),
+    blend: Optional[str] = typer.Option(None, help="normal|screen|multiply|overlay|add|lighten|darken"),
+    radius: Optional[int] = None, border: Optional[int] = typer.Option(None, help="Border width px"),
+    border_color: Optional[str] = None, circle: Optional[bool] = typer.Option(None, "--circle/--rect", help="Circle cut-out"),
+    chroma: Optional[str] = typer.Option(None, help="Key colour to remove (green screen), e.g. #00FF00"),
+    similarity: Optional[float] = typer.Option(None, help="Green-screen tolerance 0.01..0.9 (default 0.25)"),
+    preset: Optional[list[str]] = typer.Option(None),
+):
+    """Put a video (or a library overlay) on top of the edit."""
+    from .ops import overlays
+
+    d = pdir()
+    with edit(f"overlay add {Path(what).name}") as tx:
+        p = tx.project
+        if what in overlays.LIBRARY:
+            layer = overlays.add_from_library(p, d, what, start)
+        else:
+            if what in p.sources:
+                sid = what
+            else:
+                path = Path(what).expanduser().resolve()
+                if not path.exists():
+                    raise VeditError(f"Not a file, source id or library overlay: {what}. Library: {', '.join(overlays.LIBRARY)}")
+                sid = overlays.add_source(p, d, path)
+            kw: dict[str, Any] = {"src_in": src_in, "loop": loop}
+            for k, v in (("x", x), ("y", y), ("width", width), ("volume", volume)):
+                if v is not None:
+                    kw[k] = v
+            layer = overlays.add_video(p, sid, start, end, **kw)
+        if end is not None:
+            layer.end = end
+        for k, v in (("x", x), ("y", y), ("width", width)):
+            if v is not None:
+                setattr(layer, k, v)
+        overlays.set_fields(layer, _frame_opts(blend, radius, border, border_color, circle, chroma, similarity))
+        if preset:
+            layer.presets = _presets(preset)
+    emit({"layer": layer.id, "type": layer.type}, f"Added {layer.type} overlay {layer.id}")
+
+
+@shape_app.command("add")
+def shape_add(
+    shape: str = typer.Argument(..., help="rect | ellipse | line | arrow"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    width: Optional[int] = None, height: Optional[int] = None, fill: Optional[str] = typer.Option(None, help="Fill colour, or 'none'"),
+    border: Optional[int] = None, border_color: Optional[str] = None, radius: Optional[int] = None,
+    rotation: float = 0.0, blend: Optional[str] = None, preset: Optional[list[str]] = typer.Option(None),
+):
+    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it)."""
+    from .ops import overlays
+
+    with edit(f"shape add {shape}") as tx:
+        kw: dict[str, Any] = {"x": x, "y": y, "rotation": rotation}
+        for k, v in (("width", width), ("height", height), ("radius", radius), ("border_width", border), ("border_color", border_color)):
+            if v is not None:
+                kw[k] = v
+        layer = overlays.add_shape(tx.project, shape, start, end, **kw)
+        vals = {} if fill is None else {"fill": fill}
+        if blend:
+            vals["blend"] = blend
+        overlays.set_fields(layer, vals)
+        layer.presets = _presets(preset)
+    emit({"layer": layer.id}, f"Added {shape} {layer.id}")
+
+
+@layer_app.command("order")
+def layer_order(layer_id: str, to: str = typer.Argument(..., help="up | down | front | back | index (0 = bottom)")):
+    """Change which overlay is on top."""
+    from .ops import overlays
+
+    with edit(f"layer order {layer_id} {to}") as tx:
+        i = overlays.move_layer(tx.project, layer_id, to)
+        order = [l.id for l in tx.project.layers]
+    emit({"layer": layer_id, "index": i, "order": order}, f"{layer_id} is now #{i} (bottom to top: {', '.join(order)})")
+
+
+@layer_app.command("style")
+def layer_style(
+    layer_id: str, blend: Optional[str] = None, radius: Optional[int] = None,
+    border: Optional[int] = typer.Option(None, help="Border width px"), border_color: Optional[str] = None,
+    circle: Optional[bool] = typer.Option(None, "--circle/--rect"), chroma: Optional[str] = typer.Option(None, help="Key colour, or 'none'"),
+    similarity: Optional[float] = None, volume: Optional[float] = None, loop: Optional[bool] = typer.Option(None, "--loop/--no-loop"),
+    src_in: Optional[float] = None, fill: Optional[str] = None, height: Optional[int] = None,
+    fit: Optional[str] = typer.Option(None, help="Video overlays: free (width-sized, picture-in-picture) | cover (fill the screen) | contain (fit the screen)"),
+    flip_h: Optional[bool] = typer.Option(None, "--flip-h/--no-flip-h", help="Mirror left-right"),
+    flip_v: Optional[bool] = typer.Option(None, "--flip-v/--no-flip-v", help="Flip upside down"),
+):
+    """Blend mode and frame of an overlay: rounded corners, border, circle, green screen; video sound / loop / fit / flip; shape fill."""
+    from .ops import overlays
+
+    vals = _frame_opts(blend, radius, border, border_color, circle, chroma, similarity)
+    for k, v in (("volume", volume), ("loop", loop), ("src_in", src_in), ("fill", fill), ("height", height),
+                 ("fit", fit), ("flip_h", flip_h), ("flip_v", flip_v)):
+        if v is not None:
+            vals[k] = v
+    with edit(f"layer style {layer_id}") as tx:
+        layer = tx.project.layer(layer_id)
+        changed = overlays.set_fields(layer, vals)
+    emit({"layer": layer_id, "changed": changed}, f"{layer_id}: " + (", ".join(changed) or "nothing changed"))
 
 
 @layer_app.command("list")
@@ -577,14 +981,77 @@ def _clear_effect(p: Project, clip: str | None, types: tuple[str, ...]) -> list[
 @bg_app.command("remove")
 def bg_remove(
     clip: Optional[str] = typer.Option(None, help="Only this clip (default: all clips)"),
-    mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow)"),
+    mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow) | chroma (green/blue screen, instant)"),
     replace: str = typer.Option("color:#00B140", help="color:#RRGGBB | blur[:sigma] | image:path | video:path"),
-    smooth: float = typer.Option(0.5, help="Temporal smoothing 0..0.9 (less flicker)"),
+    smooth: float = typer.Option(0.5, help="fast/quality: temporal smoothing 0..0.9 (less flicker)"),
+    key: str = typer.Option("auto", help="chroma: screen colour #RRGGBB, or auto (sampled from each clip)"),
+    similarity: float = typer.Option(0.12, help="chroma: how far from the key colour still counts as screen (0.01-0.6)"),
+    blend: float = typer.Option(0.08, help="chroma: edge softness (0-0.5)"),
+    spill: float = typer.Option(0.6, help="chroma: remove green/blue cast on the person's edges (0-1)"),
+    shrink: int = typer.Option(1, help="chroma: pull the matte edge in by N px (0-4) to hide fringes"),
 ):
     """Remove the background behind people and replace it."""
+    from .ops import chroma
+
+    if mode not in ("fast", "quality", "chroma"):
+        raise VeditError("--mode must be fast, quality or chroma")
+    d = pdir()
     with edit(f"remove background ({mode}, {replace})") as tx:
-        ids = _set_effect(tx.project, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
-    emit({"clips": ids}, f"Background removal on {', '.join(ids)}. Run `vedit preview` to compute it (one-time, may take a while).")
+        p = tx.project
+        if mode != "chroma":
+            ids = _set_effect(p, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
+        else:
+            base = chroma.clean({"key": key, "similarity": similarity, "blend": blend, "spill": spill, "shrink": shrink})
+            ids, keys = [], {}
+            for c in ([p.clip(clip)] if clip else p.clips):
+                if c.gap:
+                    continue
+                k = base["key"]
+                if k == "auto":
+                    k = chroma.clip_key(d, p, c)
+                keys[c.id] = k
+                c.effects = [e for e in c.effects if e.type != "bg"]
+                c.effects.append(Effect(type="bg", params={**base, "mode": "chroma", "key": k, "replace": replace}))
+                ids.append(c.id)
+    if mode == "chroma":
+        emit({"clips": ids, "keys": keys},
+             f"Green screen keyed on {', '.join(ids)} ({', '.join(sorted(set(keys.values())))}). Check edges with `vedit frame`; "
+             "tune with `vedit bg tune --similarity/--spill/--shrink`.")
+    else:
+        emit({"clips": ids}, f"Background removal on {', '.join(ids)}. Run `vedit preview` to compute it (one-time, may take a while).")
+
+
+@bg_app.command("tune")
+def bg_tune(
+    clip: Optional[str] = typer.Option(None, help="Only this clip (default: every clip with a green-screen key)"),
+    key: Optional[str] = typer.Option(None, help="Screen colour #RRGGBB, or auto"),
+    similarity: Optional[float] = typer.Option(None, help="Higher = more is keyed out (try +0.03 if screen shows through)"),
+    blend: Optional[float] = typer.Option(None, help="Edge softness"),
+    spill: Optional[float] = typer.Option(None, help="Green/blue cast removal 0-1"),
+    shrink: Optional[int] = typer.Option(None, help="Pull the edge in by N px (0-4)"),
+):
+    """Adjust a green-screen key (instant: nothing is recomputed)."""
+    from .ops import chroma
+
+    vals = chroma.clean({k: v for k, v in {"key": key, "similarity": similarity, "blend": blend, "spill": spill,
+                                            "shrink": shrink}.items() if v is not None})
+    if not vals:
+        raise VeditError("Give at least one of --key --similarity --blend --spill --shrink")
+    d = pdir()
+    with edit("tune green screen") as tx:
+        p = tx.project
+        n = 0
+        for c in ([p.clip(clip)] if clip else p.clips):
+            for e in c.effects:
+                if e.type == "bg" and e.params.get("mode") == "chroma":
+                    upd = dict(vals)
+                    if upd.get("key") == "auto":
+                        upd["key"] = chroma.clip_key(d, p, c)
+                    e.params.update(upd)
+                    n += 1
+        if not n:
+            raise VeditError("No green-screen key on these clips. Use `vedit bg remove --mode chroma` first.")
+    emit({"updated": n, **vals}, f"Green screen tuned on {n} clip(s)")
 
 
 @bg_app.command("replace")
@@ -790,34 +1257,71 @@ def mask_remove(mask_id: str = typer.Argument(..., help="Mask id, or 'all'")):
 def focus_add(
     box: Optional[str] = typer.Option(None, help="x,y,w,h of the object on the canvas (px or %)"),
     obj: Optional[str] = typer.Option(None, "--object", help="Detect it: person, car, dog, bottle, cell phone, any..."),
+    paint: Optional[str] = typer.Option(None, help='Object painted with a brush, JSON in canvas px: [{"pts":[[x,y],...],"r":20}, '
+                                        '{"rect":[x,y,w,h]}, {"rect":[...],"erase":true}] (hugs its shape)'),
     clip: Optional[str] = typer.Option(None, help="Clip (default: the clip under --at)"),
     at: Optional[float] = typer.Option(None, help="Timeline seconds where the box is right"),
-    mode: str = typer.Option("spotlight", help="spotlight (blur + dim around it) | follow (camera pans with it) | both"),
+    mode: str = typer.Option("spotlight", help="spotlight (highlight it in place) | follow (camera pans with it) | both"),
+    style: str = typer.Option("spotlight", help="How to highlight: spotlight (blur + dim around) | colorpop (rest black & white) | "
+                              "brighten (lift the object) | glow (coloured halo) | outline (coloured stroke)"),
+    color: Optional[str] = typer.Option(None, help="glow / outline colour (default #FFD400)"),
+    width: Optional[float] = typer.Option(None, help="glow / outline width in px at 1080p (default 30 glow, 6 outline)"),
+    strength: Optional[float] = typer.Option(None, help="colorpop / brighten / glow strength 0-2 (default 1)"),
     zoom: Optional[float] = typer.Option(None, help="follow: how tight the shot is (default: 1.0 when reframing wide video, else 1.4)"),
     blur: float = typer.Option(14, help="spotlight: background blur sigma (0 = none)"),
     dim: float = typer.Option(0.35, help="spotlight: background darkening 0-1"),
-    feather: float = typer.Option(0.12, help="spotlight: edge softness"),
-    expand: float = typer.Option(1.35, help="spotlight: room around the object"),
+    feather: Optional[float] = typer.Option(None, help="Edge softness (default 0.12 for a box, 0.03 painted)"),
+    expand: Optional[float] = typer.Option(None, help="Room around the object (default 1.35 for a box, 1.0 painted)"),
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     track_: bool = typer.Option(True, "--track/--no-track"),
     space: str = typer.Option("canvas", help="canvas | source"),
 ):
-    """Put the focus on one object: spotlight it, or reframe the shot to follow it."""
-    if mode not in ("spotlight", "follow", "both"):
-        raise VeditError("--mode must be spotlight, follow or both")
+    """Put the focus on one object: highlight it (spotlight, colour pop, glow, outline...) or reframe to follow it."""
+    from .ops import track
+
+    try:
+        paint_items = json.loads(paint) if paint else None
+    except json.JSONDecodeError as e:
+        raise VeditError(f"--paint must be JSON: {e}") from None
     d = pdir()
-    with edit(f"focus ({mode})") as tx:
+    with edit(f"focus ({mode}, {style})") as tx:
         p = tx.project
         if clip is None and at is None and len(p.clips) > 1:
             raise VeditError("Say which clip with --clip, or give --at <timeline seconds>")
-        c, params, note = _region(p, d, clip, at, box, obj, space)
-        params.update({"mode": mode, "blur": blur, "dim": dim, "feather": feather, "expand": expand,
-                       "smooth": smooth, "track": track_, "shape": "ellipse", "invert": True})
-        if zoom is not None:
-            params["zoom"] = zoom
+        c, params, note = _region(p, d, clip, at, box, obj, space, paint_items)
+        params = track.focus_params(params, mode, style, color=color, width=width, strength=strength, blur=blur, dim=dim,
+                                    feather=feather, expand=expand, smooth=smooth, track=track_, zoom=zoom)
         c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
-    emit({"clip": c.id, "mode": mode, "box_source": params["box"], "note": note},
-         f"Focus ({mode}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+    emit({"clip": c.id, "mode": mode, "style": style, "shape": params["shape"], "box_source": params["box"], "note": note},
+         f"Focus ({mode}, {style}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+
+
+@focus_app.command("set")
+def focus_set(
+    clip: Optional[str] = typer.Option(None, help="Only this clip (default: every clip with a focus)"),
+    style: Optional[str] = typer.Option(None, help="spotlight | colorpop | brighten | glow | outline"),
+    color: Optional[str] = typer.Option(None, help="glow / outline colour"),
+    width: Optional[float] = typer.Option(None, help="glow / outline width (px at 1080p)"),
+    strength: Optional[float] = typer.Option(None, help="0-2"),
+    blur: Optional[float] = typer.Option(None, help="spotlight: background blur"),
+    dim: Optional[float] = typer.Option(None, help="spotlight: background darkening 0-1"),
+):
+    """Change how a focused object is highlighted (instant: the tracking is reused)."""
+    from .ops import track
+
+    vals = {k: v for k, v in {"style": style, "color": color, "width": width, "strength": strength, "blur": blur, "dim": dim}.items()
+            if v is not None}
+    if not vals:
+        raise VeditError("Give at least one of --style --color --width --strength --blur --dim")
+    if style is not None and style not in track.FOCUS_STYLES:
+        raise VeditError(f"--style must be one of {', '.join(track.FOCUS_STYLES)}")
+    with edit("focus look") as tx:
+        hits = [e for c in ([tx.project.clip(clip)] if clip else tx.project.clips) for e in c.effects if e.type == "focus"]
+        if not hits:
+            raise VeditError("No focus on these clips. Use `vedit focus add` first.")
+        for e in hits:
+            e.params.update(vals)
+    emit({"updated": len(hits), **vals}, f"Focus updated on {len(hits)} clip(s)")
 
 
 @focus_app.command("clear")
@@ -829,6 +1333,594 @@ def focus_clear(clip: Optional[str] = None):
 
 
 # ---- music ------------------------------------------------------------------------------
+
+# ---- audit & justification ------------------------------------------------------------
+
+@app.command("audit")
+def audit_cmd(render: bool = typer.Option(True, help="Render the preview to measure audio loudness (cached if unchanged)"),
+              ai_review: bool = typer.Option(False, "--ai", help="Also run the independent AI reviewer on the rendered frames (one vision call)"),
+              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy")):
+    """Check the edit before calling it done: hook, readability, safe zones, overlaps, fonts, colour, pacing,
+    footage reuse, loudness and stated reasons. Fix every must-fix finding."""
+    from .audit import audit
+
+    d = pdir()
+    if ai_review:
+        from .review import full_audit
+
+        r = full_audit(d, use_ai=True, quality=quality)
+    else:
+        r = audit(load(d), d, render=render)
+    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + [
+        f"Score {r['score']}/100 · {'PASSED' if r['passed'] else 'NOT PASSED'} · "
+             f"{r['counts']['must-fix']} must-fix, {r['counts']['should-fix']} should-fix, {r['counts']['note']} notes"]
+    for f in r["findings"]:
+        at = f" @{f['at']:g}s" if f["at"] is not None else ""
+        lines.append(f"  [{f['severity']}] {f['category']}{at}: {f['message']}" + (f"\n      fix: {f['fix']}" if f["fix"] else ""))
+    emit(r, "\n".join(lines))
+
+
+@fx_app.command("list")
+def fx_list():
+    """The signature move library."""
+    from .ops import moves
+
+    rows = moves.catalog()
+    emit({"moves": rows}, "\n".join(f"  {r['name']:<16} [{r['needs']}]  {r['about']}" for r in rows))
+
+
+@fx_app.command("apply")
+def fx_apply(name: str, clip: Optional[str] = typer.Option(None, help="Clip the move applies to (clip moves)"),
+             at: Optional[float] = typer.Option(None, help="Timeline seconds (moment moves)"),
+             text: Optional[str] = typer.Option(None, help="Word / line for freeze_title and keyword_pop")):
+    """Apply one signature move as one undoable step."""
+    from .ops import moves
+
+    with edit(f"move {name}") as tx:
+        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text)
+    emit({"move": name, "done": msg}, msg)
+
+
+def _kv(pairs: list[str] | None) -> dict:
+    out = {}
+    for p in pairs or []:
+        k, sep, v = p.partition("=")
+        if not sep:
+            raise VeditError(f"Use name=value, got '{p}'")
+        out[k.strip()] = v.strip()
+    return out
+
+
+@fx_app.command("filters")
+def fx_filters_list():
+    """The clip filter library (blur, vignette, grain, film, VHS, shake...) with their settings."""
+    from .ops import fx_filters
+
+    rows = fx_filters.catalog()
+    lines = []
+    for r in rows:
+        ps = ", ".join(f"{p['name']}={p['default']}" + (f" ({'|'.join(p['choices'])})" if p["choices"] else f" [{p['min']:g}..{p['max']:g}]")
+                       for p in r["params"])
+        lines.append(f"  {r['key']:<11} {r['category']:<15} {r['about']}" + (f"\n              {ps}" if ps else ""))
+    emit({"filters": rows}, "\n".join(lines))
+
+
+@fx_app.command("add")
+def fx_add(key: str, clip: Optional[str] = typer.Option(None, help="Clip id (default: every clip)"),
+           layer: Optional[str] = typer.Option(None, help="An adjustment layer or video overlay instead of clips"),
+           set_: Optional[list[str]] = typer.Option(None, "--set", help="Setting name=value (repeatable), e.g. --set amount=20"),
+           start: Optional[float] = typer.Option(None, help="Only from this many seconds into the clip / layer"),
+           end: Optional[float] = typer.Option(None, help="Only until this many seconds into the clip / layer"),
+           fade_in: Optional[float] = typer.Option(None, help="Fade the filter in over S seconds"),
+           fade_out: Optional[float] = typer.Option(None, help="Fade the filter out over S seconds")):
+    """Add a filter to a clip (or all clips), a video overlay or an adjustment layer. It stacks after the other filters.
+    --start / --end / --fade-in / --fade-out limit it to part of the clip (seconds from the clip's own start)."""
+    from .ops import fx_filters
+
+    timing = {k: v for k, v in dict(start=start, end=end, fade_in=fade_in, fade_out=fade_out).items() if v is not None}
+    with edit(f"fx add {key}") as tx:
+        targets = [tx.project.layer(layer)] if layer else [tx.project.clip(clip)] if clip else tx.project.clips
+        effs = [fx_filters.add(tx.project, c, key, _kv(set_)) for c in targets]
+        if timing:
+            for e in effs:
+                fx_filters.set_params(tx.project, e.params["id"], timing)
+    ids = [e.params["id"] for e in effs]
+    emit({"added": ids, "clips": [c.id for c in targets]}, f"{key} added: " + ", ".join(f"{i} on {c.id}" for i, c in zip(ids, targets)))
+
+
+@fx_app.command("set")
+def fx_set(fx_id: str, values: list[str] = typer.Argument(..., help="name=value pairs; on=false switches it off; "
+                                                                     "start= end= fade_in= fade_out= time it (seconds from its clip's start, end=none: to the end)")):
+    """Change a filter's settings or timing, e.g. `vedit fx set fx1 amount=30 on=true` or `vedit fx set fx1 start=1 end=2.5 fade_in=0.3`."""
+    from .ops import fx_filters
+
+    with edit(f"fx set {fx_id}") as tx:
+        eff = fx_filters.set_params(tx.project, fx_id, _kv(values))
+    emit({"id": fx_id, "params": eff.params}, f"{fx_id}: {eff.params}")
+
+
+@fx_app.command("remove")
+def fx_remove(fx_id: str = typer.Argument(..., help="Filter id, or 'all'"),
+              clip: Optional[str] = typer.Option(None, help="With 'all': only this clip")):
+    """Remove a filter (or all filters)."""
+    from .ops import fx_filters
+
+    with edit(f"fx remove {fx_id}") as tx:
+        if fx_id == "all":
+            n = 0
+            for c in ([tx.project.clip(clip)] if clip else tx.project.clips):
+                before = len(c.effects)
+                c.effects = [e for e in c.effects if e.type != "fx"]
+                n += before - len(c.effects)
+        else:
+            fx_filters.remove(tx.project, fx_id)
+            n = 1
+    emit({"removed": n}, f"Removed {n} filter(s)")
+
+
+@fx_app.command("replace")
+def fx_replace(fx_id: str, key: str = typer.Argument(..., help="The filter to swap in (see `vedit fx filters`)")):
+    """Swap an applied filter for another, keeping its place in the stack, its timing and on/off (settings reset)."""
+    from .ops import fx_filters
+
+    with edit(f"fx replace {fx_id} -> {key}") as tx:
+        e = fx_filters.replace(tx.project, fx_id, key)
+    emit({"id": fx_id, "params": e.params}, f"{fx_id} is now {key}")
+
+
+@fx_app.command("move")
+def fx_move(fx_id: str, index: int = typer.Argument(..., help="New position among the clip's filters (0 = first)")):
+    """Reorder a clip's filters (they run top to bottom)."""
+    from .ops import fx_filters
+
+    with edit(f"fx move {fx_id}") as tx:
+        fx_filters.move(tx.project, fx_id, index)
+    emit({"id": fx_id, "index": index}, f"{fx_id} -> position {index}")
+
+
+@fx_app.command("copy")
+def fx_copy(src: str = typer.Option(..., "--from", help="Clip whose filters to copy"),
+            to: Optional[list[str]] = typer.Option(None, help="Target clip (repeatable; default: all clips)")):
+    """Copy one clip's filters onto other clips (replacing their filters)."""
+    from .ops import fx_filters
+
+    with edit(f"fx copy {src}") as tx:
+        targets = [tx.project.clip(t) for t in to] if to else tx.project.clips
+        n = fx_filters.copy_to(tx.project, tx.project.clip(src), targets)
+    emit({"copied_to": n}, f"Copied {src}'s filters to {n} clip(s)")
+
+
+@version_app.command("save")
+def version_save(name: str = typer.Argument("", help="e.g. 'client v1' (default: the date and time)")):
+    """Name the edit as it is now. `vedit checkout <step>` (or the History tab) goes back to it."""
+    r = history.save_version(pdir(), name)
+    emit(r, f"Saved version '{r['name']}' (step {r['step']})")
+
+
+@version_app.command("list")
+def version_list():
+    """Named versions, oldest first."""
+    rows = history.versions(pdir())
+    emit({"versions": rows}, "\n".join(f"  step {r['step']:<4} {r['name']}" for r in rows) or "No named versions yet")
+
+
+@template_app.command("save")
+def template_save(name: str, layer: list[str] = typer.Option(..., "--layer", "-l", help="Layer id (repeatable)"), about: str = ""):
+    """Save overlay layers as a template (timing relative to the first one)."""
+    from .ops import templates
+
+    d = pdir()
+    data = templates.save(load(d), d, name, layer, about)
+    emit({"template": name, "layers": len(data["layers"])}, f"Saved template '{name}' ({len(data['layers'])} layer(s))")
+
+
+@template_app.command("list")
+def template_list():
+    """Saved templates."""
+    from .ops import templates
+
+    rows = templates.catalog()
+    emit({"templates": rows}, "\n".join(f"  {r['key']:<20} {r['layers']} layer(s)  {', '.join(r['types'])}  {r['about']}" for r in rows) or "No templates yet")
+
+
+@template_app.command("apply")
+def template_apply(name: str, at: float = typer.Option(0.0, help="Timeline seconds where the template starts")):
+    """Add a template's layers at a moment."""
+    from .ops import templates
+
+    d = pdir()
+    with edit(f"template {name}") as tx:
+        ids = templates.apply(tx.project, d, name, at)
+    emit({"layers": ids}, f"Added {', '.join(ids)}")
+
+
+@template_app.command("delete")
+def template_delete(name: str):
+    """Delete a saved template."""
+    from .ops import templates
+
+    templates.delete(name)
+    emit({"deleted": name}, f"Deleted template {name}")
+
+
+@adjust_app.command("add")
+def adjust_add(start: float = 0.0, end: Optional[float] = typer.Option(None, help="Default: the end of the timeline"),
+               look: Optional[str] = typer.Option(None, help="Colour look for this stretch (see `color looks`)"),
+               intensity: float = 1.0, saturation: Optional[float] = None, brightness: Optional[float] = None,
+               contrast: Optional[float] = None, temperature: Optional[float] = None,
+               fx: Optional[list[str]] = typer.Option(None, help="Filter to add (repeatable), e.g. --fx vignette --fx grain")):
+    """Grade or filter a whole stretch of the edit at once (e.g. a black & white flashback, a warm ending)."""
+    from .ops import color, fx_filters
+    from .project import Grade
+
+    with edit("adjustment layer") as tx:
+        p = tx.project
+        layer = Layer(id=p.new_id("adj"), type="adjust", start=start, end=end)
+        vals = {k: v for k, v in (("saturation", saturation), ("brightness", brightness), ("contrast", contrast),
+                                  ("temperature", temperature)) if v is not None}
+        if look:
+            vals["look"], vals["intensity"] = color.look_name(look), intensity
+        if vals:
+            layer.grade = Grade(**vals)
+        for key in fx or []:
+            fx_filters.add(p, layer, key)
+        p.layers.append(layer)
+    emit({"layer": layer.id}, f"Added adjustment layer {layer.id} ({start:g}s-{'end' if end is None else f'{end:g}s'})")
+
+
+@proxy_app.command("make")
+def proxy_make():
+    """Build proxies for every source larger than 1280 px (the editor does this by itself in the background)."""
+    from . import proxies
+
+    d = pdir()
+    p = load(d)
+    made = []
+    for sid, src in p.sources.items():
+        if proxies.needs_proxy(src) and not proxies.available(d, src):
+            proxies.make(d, src)
+            made.append(sid)
+    emit({"made": made, "status": proxies.status(d, p)}, f"Made {len(made)} proxy(ies)" if made else "All proxies ready")
+
+
+@proxy_app.command("status")
+def proxy_status():
+    """Which sources have a proxy."""
+    from . import proxies
+
+    d = pdir()
+    rows = proxies.status(d, load(d))
+    emit({"sources": rows}, "\n".join(f"  {r['source']:<5} {r['size']:<11} " + ("ready" if r["ready"] else "needed" if r["needed"] else "not needed (small)")
+                                     for r in rows) or "No video sources")
+
+
+@proxy_app.command("clean")
+def proxy_clean():
+    """Delete proxies of sources that are no longer in the project."""
+    from . import proxies
+
+    d = pdir()
+    n = proxies.clean(d, load(d))
+    emit({"removed": n}, f"Removed {n} unused proxy(ies)")
+
+
+@marker_app.command("add")
+def marker_add(at: float = typer.Option(..., help="Timeline seconds"), label: str = "", color: Optional[str] = None):
+    """Mark a moment (a beat to hit, a chapter start, a note to self)."""
+    from .ops import editing
+
+    with edit(f"marker {label or at}") as tx:
+        m = editing.add_marker(tx.project, at, label, color)
+    emit({"marker": m.id, "t": m.t}, f"Marker {m.id} at {m.t:g}s {m.label}")
+
+
+@marker_app.command("list")
+def marker_list():
+    """All markers, in time order."""
+    p = load(pdir())
+    emit({"markers": [m.model_dump() for m in p.markers]},
+         "\n".join(f"  {m.id:<4} {m.t:7.2f}s  {m.label}" for m in p.markers) or "No markers")
+
+
+@marker_app.command("set")
+def marker_set(marker_id: str, at: Optional[float] = None, label: Optional[str] = None, color: Optional[str] = None):
+    """Move or rename a marker."""
+    from .ops import editing
+
+    with edit(f"marker {marker_id}") as tx:
+        m = editing.set_marker(tx.project, marker_id, at, label, color)
+    emit({"marker": m.id, "t": m.t, "label": m.label}, f"{m.id}: {m.t:g}s {m.label}")
+
+
+@marker_app.command("remove")
+def marker_remove(marker_id: str = typer.Argument(..., help="Marker id, or 'all'")):
+    """Remove a marker (or all)."""
+    from .ops import editing
+
+    with edit(f"remove marker {marker_id}") as tx:
+        if marker_id == "all":
+            tx.project.markers = []
+        else:
+            editing.remove_marker(tx.project, marker_id)
+    emit({"removed": marker_id}, f"Removed {marker_id}")
+
+
+@marker_app.command("chapters")
+def marker_chapters():
+    """YouTube chapter lines from the labelled markers (paste into the description)."""
+    from .ops import editing
+
+    lines, issues = editing.chapters(load(pdir()))
+    emit({"chapters": lines, "issues": issues}, "\n".join(lines + [f"! {i}" for i in issues]))
+
+
+@sound_app.command("fade")
+def sound_fade(clip: Optional[str] = typer.Option(None, help="Clip id (default: every clip)"),
+               in_: Optional[float] = typer.Option(None, "--in", help="Fade-in seconds"),
+               out: Optional[float] = typer.Option(None, help="Fade-out seconds")):
+    """Fade a clip's sound in / out (no click at hard cuts). The picture is unchanged."""
+    with edit("sound fade") as tx:
+        targets = [tx.project.clip(clip)] if clip else tx.project.clips
+        for c in targets:
+            if in_ is not None:
+                c.fade_in = max(0.0, min(in_, c.duration / 2))
+            if out is not None:
+                c.fade_out = max(0.0, min(out, c.duration / 2))
+    emit({"clips": [c.id for c in targets]}, f"Sound fades on {len(targets)} clip(s)")
+
+
+@sound_app.command("voice")
+def sound_voice(mode: str = typer.Argument(..., help="clean | studio | off"),
+                clip: Optional[str] = typer.Option(None, help="Clip id (default: every clip)")):
+    """Clean up speech: clean = remove rumble / hiss and even the level; studio = also warmer, clearer, de-essed."""
+    if mode not in ("clean", "studio", "off"):
+        raise VeditError("mode must be clean, studio or off")
+    with edit(f"voice {mode}") as tx:
+        targets = [tx.project.clip(clip)] if clip else tx.project.clips
+        for c in targets:
+            c.voice = mode  # type: ignore[assignment]
+    emit({"clips": [c.id for c in targets], "voice": mode}, f"Voice {mode} on {len(targets)} clip(s)")
+
+
+@sound_app.command("report")
+def sound_report():
+    """Each clip's own sound (level, speech score, volume) and the sound findings of the audit."""
+    from . import sound
+
+    d = pdir()
+    p = load(d)
+    rows, findings = sound.report(p, d), sound.check_sound(p, d)
+    lines = [f"  {r['clip']} @{r['at']:g}s: " + (f"{'speech' if r['speech'] else 'no speech'}, {r['db']} dB (speech score {r['voice']}), volume {r['volume']:g}"
+                                               if r["db"] is not None else "no audio") + (f" [{r['mode']}]" if r["mode"] else "") for r in rows]
+    lines += [f"  [{f['severity']}] {f['message']}" + (f"  fix: {f['fix']}" if f["fix"] else "") for f in findings]
+    emit({"clips": rows, "findings": findings}, "\n".join(lines) or "No clips")
+
+
+@sound_app.command("auto")
+def sound_auto():
+    """Keep speech, mute background-only footage under the music, duck the music under speech."""
+    from . import sound
+
+    d = pdir()
+    with edit("sound auto") as tx:
+        changes = sound.auto(tx.project, d)
+        if not changes:
+            tx.cancelled = True
+    emit({"changes": changes}, "\n".join(changes) or "Nothing to change")
+
+
+@app.command("audit-settings")
+def audit_settings_cmd(threshold: Optional[int] = typer.Option(None, help="Pass mark 0-100: edits below it go back to the editor"),
+                       max_rounds: Optional[int] = typer.Option(None, help="Max revision rounds (0-8) before the user decides")):
+    """Show or change when an edit is good enough (used by generation and the desktop editor's auditor)."""
+    from .review import save_settings, settings
+
+    cur = save_settings(threshold, max_rounds) if threshold is not None or max_rounds is not None else settings()
+    emit(cur, f"Pass mark {cur['threshold']}/100, at most {cur['max_rounds']} revision round(s)")
+
+
+@app.command("taste")
+def taste_cmd(clear: bool = typer.Option(False, help="Forget everything learned from Keep / Discard"),
+              clear_marks: bool = typer.Option(False, help="Forget what the auditor learned about your footage segments")):
+    """What generation has learned: from the videos you kept and discarded, and about your footage."""
+    from .generate import taste
+
+    if clear_marks:
+        from .generate import footage
+
+        n = footage.clear_marks()
+        return emit({"cleared_marks": n}, f"Cleared reviewer marks on {n} footage file(s)")
+    if clear:
+        taste.clear()
+        return emit({"cleared": True}, "Taste memory cleared")
+    rows = taste.load()
+    emit({"rows": rows[-40:], "prompt": taste.examples()}, taste.examples() or "Nothing learned yet: keep or discard some generated videos.")
+
+
+@app.command("ai-models")
+def ai_models_cmd(vision: Optional[str] = None, planner: Optional[str] = None, editor: Optional[str] = None,
+                  auditor: Optional[str] = typer.Option(None, help="Model for the independent reviewer (default: the editor's)"),
+                  clear: bool = typer.Option(False, help="Remove all overrides")):
+    """Show or override which model each AI task tier uses ('<provider>/<model>', see Manage models)."""
+    from .ai import client as ai
+
+    cur = {} if clear else ai.settings()
+    for k, v in dict(vision=vision, planner=planner, editor=editor, auditor=auditor).items():
+        if v is not None:
+            cur[k] = v
+    if clear or any(v is not None for v in (vision, planner, editor, auditor)):
+        cur = ai.save_settings(cur)
+    roles = ai.roles()
+    emit({"overrides": cur, "effective": {r["tier"]: r["effective"] for r in roles}, "roles": roles},
+         "\n".join(f"  {r['label']:<18} ({r['tier']:<7}) {r['effective']}" + ("  (your default)" if r["saved"] else "  (quality default)")
+                   + f"\n      {r['about']}" for r in roles))
+
+
+@app.command("why")
+def why_cmd(
+    item: str = typer.Argument(..., help="Clip id (c3) or layer id (t1)"),
+    reason: str = typer.Argument(..., help="Why it is here: what it shows and what it does for the viewer (max ~15 words)"),
+    role: Optional[str] = typer.Option(None, help="hook | problem | setup | demo | proof | benefit | payoff | cta | other"),
+    beat: Optional[str] = typer.Option(None, help="Beat id from the edit's beat sheet (b1, b2...)"),
+):
+    """Record why a clip or overlay is in the edit (shown in the inspector, checked by the audit)."""
+    from .project import ROLES, ClipMeta
+
+    if role is not None and role not in ROLES:
+        raise VeditError(f"role must be one of {', '.join(ROLES)}")
+    reason = reason.strip()
+    if not reason:
+        raise VeditError("Give a reason")
+    with edit(f"why {item}") as tx:
+        p = tx.project
+        if any(c.id == item for c in p.clips):
+            c = p.clip(item)
+            c.meta = (c.meta or ClipMeta()).model_copy(update={k: v for k, v in dict(why=reason[:200], role=role, beat=beat).items()
+                                                                if v is not None})
+        else:
+            p.layer(item).why = reason[:200]
+    emit({"item": item, "why": reason, "role": role, "beat": beat}, f"{item}: {reason}")
+
+
+# ---- colour -------------------------------------------------------------------------
+
+def _clip_list(clip: Optional[list[str]]) -> Optional[list[str]]:
+    return list(clip) if clip else None
+
+
+@color_app.command("looks")
+def color_looks():
+    """Named colour looks."""
+    from .ops import color
+
+    emit({"looks": {k: v["about"] for k, v in color.LOOKS.items()}},
+         "\n".join(f"  {k:<14} {v['about']}" for k, v in color.LOOKS.items()))
+
+
+@color_app.command("stats")
+def color_stats():
+    """Measured colour of every clip, and how consistent the edit is (spread: lower = more uniform)."""
+    from .ops import color
+
+    d = pdir()
+    p = load(d)
+    r = color.consistency(p, d)
+    r["grades"] = {c.id: color.describe(c.grade) for c in p.clips}
+    human = "\n".join(f"  {cid}: luma {s['luma']:.2f}  sat {s['sat']:.2f}  warmth {s['warmth']:+.3f}  tint {s['tint']:+.3f}  | {r['grades'][cid]}"
+                      for cid, s in r.get("per_clip", {}).items())
+    emit(r, human + f"\nSpread: {r.get('spread_before', 0)} measured -> {r.get('spread_after', 0)} after grading")
+
+
+@color_app.command("match")
+def color_match(
+    to: Optional[str] = typer.Option(None, "--to", help="Hero clip id: match every other clip to this one"),
+    ref: Optional[int] = typer.Option(None, "--ref", help="Reference id (`vedit ref list`): match to that video's colour"),
+    video: Optional[str] = typer.Option(None, "--video", help="Any video file: match to its colour"),
+    strength: float = typer.Option(0.8, help="0..1, how far to move each clip toward the target"),
+    clip: Optional[list[str]] = typer.Option(None, help="Only these clips (repeatable)"),
+):
+    """Make clips look like one shoot. Default target: the average of all clips."""
+    from .ops import color
+
+    target, label = None, None
+    if ref is not None:
+        from .references import store
+
+        target = store.color_of(ref)
+        if not target:
+            raise VeditError(f"Could not measure the colour of reference {ref}")
+        label = f"ref {ref}"
+    elif video:
+        path = Path(video).expanduser()
+        if not path.exists():
+            raise VeditError(f"Video not found: {path}")
+        target = color.stats(path, 0.0, media.probe(path)["duration"], samples=12)
+        label = path.name
+    d = pdir()
+    with edit("colour match" + (f" to {label or to}" if (label or to) else "")) as tx:
+        r = color.match_clips(tx.project, d, target=target, hero=to, strength=strength, clip_ids=_clip_list(clip), label=label)
+    after = color.consistency(load(d), d)
+    r.update({k: after.get(k) for k in ("spread_before", "spread_after")})
+    emit(r, f"Matched {len(r['clips'])} clips to {r['matched_to']}. Colour spread {r['spread_before']} -> {r['spread_after']}")
+
+
+@color_app.command("look")
+def color_look(name: str, intensity: float = typer.Option(1.0, help="0..1"),
+               clip: Optional[list[str]] = typer.Option(None, help="Only these clips (default: all, for a consistent grade)"),
+               layer: Optional[str] = typer.Option(None, help="A video overlay or adjustment layer instead of clips")):
+    """Apply a creative colour look on top of the correction. `natural` removes it."""
+    from .ops import color
+
+    if layer:
+        from .ops import tracks
+
+        with edit(f"colour look {name} on {layer}") as tx:
+            tracks.grade_layer(tx.project, layer, {"intensity": intensity}, name)
+        return emit({"layer": layer, "look": name, "intensity": intensity}, f"Look {name} on {layer}")
+    with edit(f"colour look {name}") as tx:
+        ids = color.set_look(tx.project, name, intensity, _clip_list(clip))
+    emit({"clips": ids, "look": name, "intensity": intensity}, f"Look {name} on {len(ids)} clip(s)")
+
+
+@color_app.command("set")
+def color_set(
+    clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)"),
+    brightness: Optional[float] = typer.Option(None, help="-0.3..0.3"), contrast: Optional[float] = typer.Option(None, help="0.5..1.6"),
+    saturation: Optional[float] = typer.Option(None, help="0 (B&W)..2"), temperature: Optional[float] = typer.Option(None, help="-1 cool..1 warm"),
+    tint: Optional[float] = typer.Option(None, help="-1 green..1 magenta"),
+    layer: Optional[str] = typer.Option(None, help="A video overlay or adjustment layer instead of clips"),
+):
+    """Set correction values by hand (replaces what `match` measured for those values)."""
+    from .project import Grade
+
+    vals = {k: v for k, v in dict(brightness=brightness, contrast=contrast, saturation=saturation, temperature=temperature, tint=tint).items() if v is not None}
+    if not vals:
+        raise VeditError("Give at least one of --brightness --contrast --saturation --temperature --tint")
+    if layer:
+        from .ops import tracks
+
+        with edit(f"colour set on {layer}") as tx:
+            tracks.grade_layer(tx.project, layer, vals)
+        return emit({"layer": layer, **vals}, f"Colour set on {layer}")
+    with edit("colour set " + " ".join(f"{k}={v}" for k, v in vals.items())) as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = (c.grade or Grade()).model_copy(update=vals)
+    emit({"clips": [c.id for c in targets], **vals}, f"Colour set on {len(targets)} clip(s)")
+
+
+@color_app.command("lut")
+def color_lut(file: str, clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)")):
+    """Apply a .cube LUT (e.g. a camera's log-to-rec709 LUT, or a purchased film look)."""
+    from .project import Grade
+
+    path = Path(file).expanduser()
+    if path.suffix.lower() != ".cube" or not path.exists():
+        raise VeditError(f"Need an existing .cube file, got {file}")
+    d = pdir()
+    with edit(f"colour LUT {path.name}") as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = (c.grade or Grade()).model_copy(update={"lut": store_media_path(d, path)})
+    emit({"clips": [c.id for c in targets], "lut": str(path)}, f"LUT {path.name} on {len(targets)} clip(s)")
+
+
+@color_app.command("clear")
+def color_clear(clip: Optional[list[str]] = typer.Option(None, help="Clip id (repeatable; default all)"),
+                layer: Optional[str] = typer.Option(None, help="A video overlay or adjustment layer instead of clips")):
+    """Remove grading (correction, look and LUT)."""
+    if layer:
+        from .ops import tracks
+
+        with edit(f"colour clear {layer}") as tx:
+            tracks.grade_layer(tx.project, layer, clear=True)
+        return emit({"layer": layer}, f"Cleared colour on {layer}")
+    with edit("colour clear") as tx:
+        targets = [tx.project.clip(i) for i in clip] if clip else tx.project.clips
+        for c in targets:
+            c.grade = None
+    emit({"clips": [c.id for c in targets]}, f"Cleared colour on {len(targets)} clip(s)")
+
 
 @music_app.command("add")
 def music_add(file: str, volume: float = 0.2, start: float = 0.0, offset: float = typer.Option(0.0, help="Start position inside the song"),
@@ -863,18 +1955,16 @@ def music_remove(music_id: str):
 
 
 @music_app.command("set")
-def music_set(music_id: str, volume: Optional[float] = None, duck: Optional[bool] = None, start: Optional[float] = None):
-    """Change music volume / ducking / start."""
+def music_set(music_id: str, volume: Optional[float] = None, duck: Optional[bool] = None, start: Optional[float] = None,
+              offset: Optional[float] = typer.Option(None, help="Where in the song it starts (trim the song's head)"),
+              end: Optional[str] = typer.Option(None, help="Timeline second the music stops, or 'none' to play to the end"),
+              loop: Optional[bool] = typer.Option(None, "--loop/--no-loop")):
+    """Change music volume / ducking / start, or trim it (--offset into the song, --end on the timeline)."""
+    from .ops import tracks
+
     with edit(f"music {music_id}") as tx:
-        m = next((m for m in tx.project.music if m.id == music_id), None)
-        if not m:
-            raise VeditError(f"No music track {music_id}")
-        if volume is not None:
-            m.volume = volume
-        if duck is not None:
-            m.duck = duck
-        if start is not None:
-            m.start = start
+        e: Any = tracks._KEEP if end is None else None if end.lower() in ("none", "") else float(end)
+        m = tracks.set_music(tx.project, music_id, volume, start, offset, e, duck, loop)
     emit({"music": m.model_dump(by_alias=True)}, f"Updated {music_id}")
 
 
@@ -965,19 +2055,46 @@ def sheet(count: int = 12, cols: int = 4, width: int = 240):
 
 
 @app.command()
-def export(out: Optional[str] = typer.Argument(None, help="Output .mp4 (default exports/<name>.mp4)"),
-           scale: float = typer.Option(1.0, help="Resolution scale (0.5 = half)"),
+def export(out: Optional[str] = typer.Argument(None, help="Output file (the extension picks the type: .mp4 .mov .webm .gif). "
+                                                          "Default: <folder>/<project name>.<ext>"),
+           fmt: Optional[str] = typer.Option(None, "--format", help="mp4 (H.264) | hevc | prores | webm | gif"),
+           fps: Optional[float] = typer.Option(None, help="Frames per second (default: the project's)"),
+           scale: Optional[float] = typer.Option(None, help="Resolution: 0.5 half, 1 full, 2 double"),
+           quality: Optional[str] = typer.Option(None, help="high | standard | small"),
+           folder: Optional[str] = typer.Option(None, help="Folder to save into (default: the project's exports/)"),
+           name: Optional[str] = typer.Option(None, help="File name without extension (default: the project name)"),
+           audio: Optional[bool] = typer.Option(None, "--audio/--no-audio", help="Include sound"),
            open_: bool = typer.Option(False, "--open")):
-    """Render the final high-quality MP4."""
-    from .render.runner import render
+    """Render the final video. Unset options reuse this project's last export settings; never overwrites a file."""
+    from .render import export as ex
 
     d = pdir()
     p = load(d)
-    dest = Path(out).expanduser().resolve() if out else d / "exports" / f"{p.name}.mp4"
-    res = render(p, d, dest, scale, "export", progress=not STATE["json"])
+    st = ex.load_settings(d).model_dump()
+    if out:
+        target = Path(out).expanduser().resolve()
+        st["folder"], st["filename"] = str(target.parent), target.stem
+        by_ext = {".gif": "gif", ".mov": "prores", ".webm": "webm"}
+        if not fmt and target.suffix.lower() in by_ext:
+            fmt = by_ext[target.suffix.lower()]
+        elif not fmt and target.suffix.lower() == ".mp4":
+            fmt = "mp4"
+    for k, v in dict(format=fmt, fps=fps, scale=scale, quality=quality, folder=folder, filename=name, audio=audio).items():
+        if v is not None:
+            st[k] = v
+    try:
+        settings = ex.ExportSettings.model_validate(st)
+    except ValueError as e:
+        raise VeditError(f"Bad export option: {e}") from None
+    ex.save_settings(d, settings)
+    bar = None if STATE["json"] else (lambda f, stage: sys.stderr.write(f"\r{stage}: {f * 100:5.1f}%"))
+    res = ex.run(p, d, settings, on_progress=bar)
+    if bar:
+        sys.stderr.write("\n")
     if open_:
-        media.open_file(dest)
-    emit(res, f"Exported {res['output']}  {res['width']}x{res['height']}  {res['duration']}s  (took {res['seconds']}s)")
+        media.open_file(Path(res["output"]))
+    emit(res, f"Exported {res['output']}  {res['width']}x{res['height']} {res['fps']}fps {res['label']}  "
+              f"{res['bytes'] / 1048576:.1f} MB  (took {res['seconds']}s)")
 
 
 @app.command("app")
@@ -986,7 +2103,7 @@ def app_cmd(
     browser: bool = typer.Option(False, "--browser", help="Open in the web browser instead of a native window"),
     port: Optional[int] = None,
 ):
-    """Open claude-cut: home screen with your projects, then the 4-pane editor."""
+    """Open aiklips: home screen with your projects, then the 4-pane editor."""
     from .editor.window import launch
 
     d = None
@@ -1013,15 +2130,20 @@ def projects():
 
 
 @app.command()
-def serve(port: int = 5173, host: str = "127.0.0.1", browser: bool = True):
-    """Open claude-cut in your browser on a fixed port (same as `vedit app --browser`)."""
+def serve(
+    port: int = 5173,
+    host: str = "127.0.0.1",
+    browser: bool = True,
+    dev: bool = typer.Option(False, "--dev", help="Auto-reload: restart on Python changes, refresh the page on HTML/JS changes"),
+):
+    """Open aiklips in your browser on a fixed port (same as `vedit app --browser`)."""
     from .preview_server.app import run
 
     try:
         d = pdir()
     except VeditError:
         d = None  # no active project: start on the home screen
-    run(d, host, port, browser)
+    run(d, host, port, browser, dev)
 
 
 # ---- references + generation ------------------------------------------------------------
@@ -1063,8 +2185,21 @@ def ref_show(ref_id: int):
     from .references import store
 
     r = store.get(ref_id, full=True)
-    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error")}},
-         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", [])))
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps")}},
+         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+         + (f"\n  Rebuild it: vedit ref recipe {r['id']}" if r.get("recipe") else ""))
+
+
+@ref_app.command("recipe")
+def ref_recipe(ref_id: int):
+    """How to rebuild this reference's edit with vedit: ordered commands, plus what vedit can't do exactly."""
+    from .references import recipe, store
+
+    r = store.get(ref_id, full=True)
+    if not r.get("has_dna"):
+        raise VeditError(f"Reference #{ref_id} isn't studied yet ({r['status']})")
+    emit({"reference": ref_id, "recipe": r["recipe"], "gaps": r["gaps"]},
+         f"#{r['id']} {r['name']}: rebuild in vedit (<...> = fill in)\n\n" + recipe.as_text(r["recipe"], r["gaps"]))
 
 
 @ref_app.command("set")
@@ -1091,10 +2226,23 @@ def ref_remove(ref_id: int):
     emit({"removed": ref_id}, f"Removed reference #{ref_id}")
 
 
+def _role_models(items: list[str] | None) -> dict[str, str]:
+    alias = {"watcher": "vision", "vision": "vision", "director": "planner", "planner": "planner", "creative": "planner",
+             "editor": "editor", "auditor": "auditor", "reviewer": "auditor"}
+    out = {}
+    for it in items or []:
+        role, sep, key = it.partition("=")
+        if not sep or role.strip().lower() not in alias:
+            raise VeditError(f"--model takes role=<provider>/<model> with role one of watcher, director, editor, auditor (got {it!r})")
+        out[alias[role.strip().lower()]] = key.strip()
+    return out
+
+
 @gen_app.command("run")
 def gen_run(
     ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
     footage: list[str] = typer.Option(..., "--footage", "-f", help="Your video / music / image file (repeatable)"),
+    sound: Optional[list[str]] = typer.Option(None, "--sound", "-s", help="Audio or video used ONLY for its sound (repeatable; the videos take turns)"),
     count: int = typer.Option(3, help="How many different videos (1-10)"),
     about: str = typer.Option("", help="What the video is about"),
     hook: str = typer.Option("", help="Hook line (empty: AI writes one per video)"),
@@ -1103,8 +2251,12 @@ def gen_run(
     fmt: str = typer.Option("reels", "--format", help="reels | portrait45 | square | landscape"),
     language: str = typer.Option("en"),
     quality: str = typer.Option("balanced", help="best | balanced | economy"),
-    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section"),
-    review: bool = typer.Option(True, help="AI reviews each result once"),
+    vary: Optional[list[str]] = typer.Option(None, help="Axes that may change (default all): hook, order, pacing, caption_style, text_animation, transitions, music_section, color_look, font, structure"),
+    review: bool = typer.Option(True, help="AI auditor reviews each result and fixes what it finds (up to 2 rounds)"),
+    explore: bool = typer.Option(True, help="Write 3 concepts per video and keep the best (+1 call per video, +1 per batch)"),
+    threshold: Optional[int] = typer.Option(None, help="Audit pass mark; below it the editor revises (default: audit-settings)"),
+    max_rounds: Optional[int] = typer.Option(None, help="Max editor revisions per video (default: audit-settings)"),
+    model: Optional[list[str]] = typer.Option(None, "--model", help="Model for a role in this generation: watcher|vision, director|planner, editor, auditor = '<provider>/<model>', e.g. --model auditor=anthropic/claude-opus-5-5 (repeatable)"),
     lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
 ):
     """Generate COUNT videos from your footage in the style of the references (waits until done)."""
@@ -1114,7 +2266,9 @@ def gen_run(
 
     jobs.AUTOSTART = False
     ups = [foot.add(Path(f))["id"] for f in footage]
-    spec = BatchSpec(refs=ref, lead=lead, footage=ups, count=count, axes=vary or list(AXES), quality=quality, review=review,
+    snd = [foot.add(Path(s))["id"] for s in sound or []]
+    spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review, explore=explore,
+                     audit_threshold=threshold, audit_rounds=max_rounds, models=_role_models(model),
                      brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
     est = batch.estimate(spec)
     if not STATE["json"]:
@@ -1126,6 +2280,26 @@ def gen_run(
         f"  v{v['idx']} {v['status']:<7} “{v['hook_text']}”  {v['output'] or v['error'] or ''}" for v in b["variations"]))
 
 
+@gen_app.command("improve")
+def gen_improve(variation: str = typer.Argument(..., help="Variation id, e.g. b20261116-185100-ab12-v01 (see `gen list`)"),
+                rounds: Optional[int] = typer.Option(None, help="At most this many more revisions (default: audit-settings)"),
+                wait: bool = typer.Option(True, help="Wait for it to finish")):
+    """Keep improving one generated video: the editor revises its best version from the last review until it passes."""
+    from . import jobs
+    from .generate import batch
+
+    if wait:
+        jobs.AUTOSTART = False  # run it here: a background thread would die with this process
+    v = batch.improve(variation, rounds)
+    if wait:
+        jobs.drain(timeout=3600, wait=True)
+        bid = batch._var(variation)["batch_id"]
+        v = next(x for x in batch.get(bid)["variations"] if x["id"] == variation)
+    a = v.get("audit") or {}
+    emit({"variation": v}, f"{variation}: {v['status']}" + (f" · audit {a.get('score')}/100 (pass {a.get('threshold')})"
+                                                           + (" · passed" if a.get("reached") else " · still below") if a else ""))
+
+
 @gen_app.command("list")
 def gen_list():
     """List generation batches."""
@@ -1133,6 +2307,66 @@ def gen_list():
 
     rows = batch.list_batches()
     emit({"batches": rows}, "\n".join(f"{b['id']}  {b['status']:<9} {b['done']}/{b['count']}  {b['name']}" for b in rows) or "No batches yet")
+
+
+update_app = typer.Typer(help="App updates (installed desktop app; in a git checkout use `git pull`)")
+app.add_typer(update_app, name="update")
+
+
+def _update_line(st: dict) -> str:
+    if not st["enabled"]:
+        return f"aiklips {st['current']} (source checkout: update with `git pull`)"
+    if st.get("staged"):
+        return f"aiklips {st['current']}; {st['staged']} is downloaded and installs when you restart the app"
+    if st["available"]:
+        return f"aiklips {st['current']}; {st['latest']} is available: `vedit update apply`"
+    return f"aiklips {st['current']} is up to date" + (f" (checked {time.strftime('%Y-%m-%d %H:%M', time.localtime(st['checked_at']))})"
+                                                         if st.get("checked_at") else "")
+
+
+@update_app.command("status")
+def update_status():
+    """Current version, and whether an update is available or downloaded."""
+    from . import updater
+
+    st = updater.status()
+    emit(st, _update_line(st))
+
+
+@update_app.command("check")
+def update_check():
+    """Ask GitHub for the newest release now."""
+    from . import updater
+
+    st = updater.check(force=True)
+    emit(st, _update_line(st))
+
+
+@update_app.command("apply")
+def update_apply():
+    """Download the newest release; it is verified and installed when the app restarts."""
+    from . import updater
+
+    st = updater.stage()
+    emit(st, f"Downloaded {st['staged']}. Restart aiklips to install it (your projects are not touched).")
+
+
+@update_app.command("rollback")
+def update_rollback():
+    """Go back to the previously installed version (on the next restart)."""
+    from . import updater
+
+    st = updater.rollback()
+    emit(st, f"Restart aiklips to go back to {st['current_after_restart']}.")
+
+
+@update_app.command("auto")
+def update_auto(on: bool = typer.Argument(..., help="true / false")):
+    """Turn the automatic update check (every 6 hours) on or off."""
+    from . import updater
+
+    updater.set_auto(on)
+    emit({"auto": on}, f"Automatic update check {'on' if on else 'off'}")
 
 
 def main() -> None:

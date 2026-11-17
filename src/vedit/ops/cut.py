@@ -6,6 +6,7 @@ Overlay layers, captions and music are remapped so they stay in sync after cuts.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 from ..project import Clip, Project, VeditError
@@ -21,6 +22,33 @@ def _check_range(project: Project, a: float, b: float) -> tuple[float, float]:
     return a, b
 
 
+def _split_windows(left: Clip, right: Clip, at: float) -> None:
+    """Filters timed to part of a clip stay on the same moments after a split: the right half's windows shift by the
+    left half's length, and each half drops the filters whose window is entirely in the other half."""
+    def timed(e):
+        return e.type == "fx" and (e.params.get("start") or e.params.get("end") not in (None, ""))
+
+    keep = []
+    for e in left.effects:
+        if timed(e) and float(e.params.get("start") or 0) >= at - EPS:
+            continue
+        if timed(e) and e.params.get("end") not in (None, "") and float(e.params["end"]) > at:
+            e.params["end"] = None  # runs to the (new) end of the left half
+        keep.append(e)
+    left.effects = keep
+    keep = []
+    for e in right.effects:
+        if timed(e):
+            end = e.params.get("end")
+            if end not in (None, "") and float(end) <= at + EPS:
+                continue
+            e.params["start"] = round(max(0.0, float(e.params.get("start") or 0) - at), 3)
+            if end not in (None, ""):
+                e.params["end"] = round(float(end) - at, 3)
+        keep.append(e)
+    right.effects = keep
+
+
 def split_at(project: Project, t: float) -> int:
     """Split the clip under timeline time `t`. Returns the index of the first clip starting at `t`."""
     clips = project.clips
@@ -34,6 +62,13 @@ def split_at(project: Project, t: float) -> int:
             left = c.model_copy(update={"out": src_t}, deep=True)
             right = c.model_copy(update={"in_": src_t, "id": project.new_id("c"), "transition": None}, deep=True)
             clips[i : i + 1] = [left, right]
+            from .fx_filters import _new_id
+
+            for eff in right.effects:  # each half gets its own filter ids so they can be edited separately
+                if eff.type == "fx":
+                    eff.params["id"] = "?"
+                    eff.params["id"] = _new_id(project)
+            _split_windows(left, right, t - s)
             return i + 1
         if abs(t - e) < EPS:
             return i + 1
@@ -41,7 +76,7 @@ def split_at(project: Project, t: float) -> int:
 
 
 def remap_overlays(project: Project, fn: Callable[[float], float]) -> list[str]:
-    """Apply a timeline remap to layers, caption words and music. Returns removed layer ids."""
+    """Apply a timeline remap to layers, caption words, music and markers. Returns removed layer ids."""
     removed = []
     keep = []
     for layer in project.layers:
@@ -66,6 +101,8 @@ def remap_overlays(project: Project, fn: Callable[[float], float]) -> list[str]:
     project.layers = keep
     for m in project.music:
         m.start = round(fn(m.start), 3)
+    for mk in project.markers:  # markers stay on the same moment of footage
+        mk.t = round(fn(mk.t), 3)
     return removed
 
 
@@ -140,6 +177,77 @@ def move_clip(project: Project, clip_id: str, to_index: int) -> None:
     project.clips.remove(c)
     to_index = max(0, min(len(project.clips), to_index))
     project.clips.insert(to_index, c)
+
+
+GAP_SECONDS = 600.0  # one generated file covers any gap up to this long (longer ones use several gap clips)
+
+
+def gap_source(project: Project, pdir: Path) -> str:
+    """The source gap clips play: GAP_SECONDS of the canvas background colour, tiny, no sound (made once per project)."""
+    from .. import media
+    from ..project import Source, store_media_path
+
+    hexc = project.canvas.background.lstrip("#").lower()[:6] or "000000"
+    path = pdir / "media" / f".gap-{hexc}.mp4"
+    stored = store_media_path(pdir, path)
+    for sid, s in project.sources.items():
+        if s.path == stored and path.exists():
+            return sid
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        media.run([media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", f"color=c=0x{hexc}:s=16x16:r=30:d={GAP_SECONDS:g}", "-c:v", "libx264", "-preset", "ultrafast",
+                   "-tune", "stillimage", "-pix_fmt", "yuv420p", str(path)], "make gap")
+    sid = next((k for k, s in project.sources.items() if s.path == stored), None) or project.new_id("s")
+    project.sources[sid] = Source(path=stored, **media.probe(path))
+    return sid
+
+
+def _gap_clips(project: Project, sid: str, length: float) -> list[Clip]:
+    out = []
+    while length > 0.01:
+        part = min(length, project.sources[sid].duration)
+        out.append(Clip(id=project.new_id("gap"), source=sid, in_=0.0, out=round(part, 3), gap=True))
+        length -= part
+    return out
+
+
+def place_clip(project: Project, pdir: Path, clip_id: str, start: float) -> float:
+    """Move a main-track clip to a timeline time (dragging it). Dropped on empty space it stays there and the space
+    before it becomes a gap; dropped over another clip it goes before that clip (pointer in its first half) or after
+    it, and the clips after move along to make room. Other overlays keep their times. Returns the clip's new start."""
+    moving = project.clip(clip_id)
+    if moving.gap:
+        raise VeditError("Drag the clips around a gap, or trim / delete the gap itself")
+    starts = project.clip_starts()
+    items = [[s, c] for s, c in zip(starts, project.clips) if not c.gap and c is not moving]
+    start = max(0.0, float(start))
+    end = start + moving.duration
+    key = start
+    for s, c in items:
+        if start < s + c.duration - EPS and s < end - EPS:  # overlaps c
+            if start < s + c.duration / 2:
+                start = key = s
+                key -= 1e-6  # before c
+            else:
+                start = key = s + c.duration
+            break
+    items.append([key, moving])
+    items.sort(key=lambda x: x[0])
+    clips: list[Clip] = []
+    t, sid, placed = 0.0, None, 0.0
+    for s, c in items:
+        s = start if c is moving else s
+        if s > t + 0.01:
+            sid = sid or gap_source(project, pdir)
+            clips += _gap_clips(project, sid, s - t)
+            t = s
+        if c is moving:
+            placed = t
+        clips.append(c)
+        t += c.duration
+    project.clips = clips
+    return round(placed, 3)
 
 
 def remove_clip(project: Project, clip_id: str) -> dict:

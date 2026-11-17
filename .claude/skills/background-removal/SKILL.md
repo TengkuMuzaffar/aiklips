@@ -5,6 +5,30 @@ description: Remove or replace the background behind people in a video with vedi
 
 # Background removal
 
+**Shot on a green or blue screen? Use `--mode chroma`.** It keys the screen colour inside the render itself: no extra
+install, no model, no one-time computation, real time, and every setting can be tuned instantly. Only use the AI
+modes (`fast` / `quality`) for footage that was **not** shot on a screen.
+
+## Green / blue screen (chroma)
+
+```
+uv run vedit --json bg remove --mode chroma --replace image:/path/office.jpg     # key colour sampled from each clip
+uv run vedit --json bg remove --mode chroma --key "#2BC24F" --replace blur:30     # give the colour yourself
+uv run vedit --json bg tune --similarity 0.16          # screen still showing through
+uv run vedit --json bg tune --similarity 0.09          # edges of the person eaten away / green clothing vanishing
+uv run vedit --json bg tune --spill 0.9 --shrink 2     # green rim / green cast on hair and skin
+uv run vedit --json bg tune --key auto                 # re-sample the screen colour
+```
+
+- `--key auto` (default) takes the median of the clearly green (or blue) pixels in each clip, half a second in. The
+  JSON output lists the key per clip; if it errors ("Couldn't find a green or blue screen"), it isn't screen footage.
+- Defaults: similarity 0.12, blend (edge softness) 0.08, spill 0.6, shrink 1 px. Tune in small steps (±0.02-0.04).
+- `bg replace` and `bg clear` work the same as for the AI modes. In the editor: clip inspector → **Background**
+  (Pick = eyedropper on the original footage).
+- Check edges with `frame --at` on a moment with hair or fast motion, and Read the image.
+
+## AI cut-out (no screen)
+
 Needs the extra (one time):
 ```
 uv sync --extra ai

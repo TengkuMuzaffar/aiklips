@@ -69,8 +69,23 @@ uv run vedit --json animate keyframes t1 '[
 
 ## Styling text
 
-- **Options:** `--size`, `--color`, `--stroke` (outline colour), `--stroke-width`, `--bg "#RRGGBBAA"` (rounded box), `--font`, `--uppercase`, `--max-width`
-- **Fonts:** pass a font file path, a system font name ("Impact", "Arial Rounded Bold"), or drop a `.ttf` into `assets/fonts/`.
+- **Start from a look.** `text add "HOOK" --look viral-hook` sets font, colours, outline and animation in one go.
+  `text look list` shows them all (viral-hook, bold-yellow, clean-white, boxed-label, dark-box, editorial, luxury,
+  cinematic, marker-note, neon, retro-sunset, comic-pop, playful, tech, minimal-caption, plus the user's saved ones).
+  Any explicit option (`--size 90`, `--preset ...`) overrides the look.
+- **Keep it consistent.** One look for every title in an edit: `text look apply <name>` restyles every text layer
+  (`--layer t2` for one, `--captions` to include captions). At most two fonts per video: the title font plus one
+  accent (e.g. `dm-serif-italic` for a single emphasis word).
+- **Reuse.** `text look save my-brand --from t1 --about "..."` saves a layer's style + animation for every future
+  project. Offer this when the user likes a style.
+- **Options:** `--size`, `--color`, `--stroke` (outline colour), `--stroke-width`, `--bg "#RRGGBBAA"` (rounded box),
+  `--font`, `--uppercase`, `--max-width`, `--letter-spacing 8` (wide cinematic caps), `--glow "#FF2BD6"` (neon),
+  `--gradient "#FFE259,#FF4E50"` (top → bottom fill). `text edit` takes the same, plus `--glow none` / `--gradient none`.
+- **Fonts:** 24 fonts are bundled and look the same on every machine. `vedit fonts` lists them with their feel and
+  use (`--feel serif` to filter, `--sheet` renders a sample image to Read). Pick by feel:
+  condensed (anton, bebas) for hooks, clean (poppins-bold, kanit) for tutorials, serif (dm-serif, abril) for premium,
+  handwritten (marker, kalam) for personal, rounded (titan, lilita) for playful, display (bangers, bungee) for punch
+  words. A font file path or system font name also works.
 - **Changing existing text:** `text edit <id> --text "new" --color "#FFE600"`
 - **Timing and position:** `layer set <id> --start 1 --end 4 --y 40%`
 

@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · aiklips</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
+  --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25;
+  --danger: #f87171; --ok: #4ade80; --warn: #fbbf24;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+body.embed { background: var(--pane); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--pane3); border: 1px solid var(--line2); border-radius: 7px; padding: 5px 10px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+button.icon { padding: 5px; width: 28px; height: 28px; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+button.ghost:hover { color: var(--text); border-color: var(--line2); }
+button.danger:hover { border-color: var(--danger); color: var(--danger); }
+button:disabled { opacity: .45; cursor: default; }
+input, select, textarea { background: var(--bg); border: 1px solid var(--line2); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+a { color: var(--accent); }
+.ic { display: inline-flex; width: 16px; height: 16px; flex: none; }
+.ic svg { width: 100%; height: 100%; display: block; }
+.hint { color: var(--faint); font-size: 12px; }
+.spacer { flex: 1; }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--line2); border-top-color: var(--accent); border-radius: 50%; animation: rot .8s linear infinite; flex: none; }
+.spin.big { width: 22px; height: 22px; border-width: 3px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: .2; } }
+#toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--pane3); border: 1px solid var(--line2); padding: 8px 14px; border-radius: 9px; display: none; z-index: 50; max-width: 80vw; box-shadow: 0 8px 30px #000a; }
+#toast.err { border-color: var(--danger); color: #fecaca; }
+
+/* ---- frame ---- */
+header { height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); background: var(--pane); }
+header h1 { margin: 0; font-size: 15px; }
+.logo { font-weight: 700; } .logo span { color: var(--accent); }
+body.embed .logo { display: none; }
+#wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+main { min-width: 0; }
+nav { border-right: 1px solid var(--line); background: var(--pane); padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; }
+nav button { justify-content: flex-start; gap: 10px; background: transparent; border-color: transparent; color: var(--muted); padding: 8px 10px; border-radius: 8px; }
+nav button:hover { color: var(--text); border-color: transparent; background: var(--pane2); }
+nav button.on { color: var(--text); background: var(--pane3); }
+nav button.on .ic { color: var(--accent); }
+nav .n { margin-left: auto; font-size: 11px; color: var(--warn); }
+main { overflow: auto; padding: 22px 26px 40px; }
+.page { max-width: 760px; display: flex; flex-direction: column; gap: 22px; }
+.page > p.lede { margin: -12px 0 0; color: var(--muted); }
+h2 { margin: 0; font-size: 18px; }
+section { display: flex; flex-direction: column; gap: 10px; }
+section > h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+section > .sub { margin: -6px 0 0; color: var(--faint); font-size: 12px; }
+.card { border: 1px solid var(--line); border-radius: 12px; background: var(--pane2); }
+@media (max-width: 680px) {
+  #wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+  nav button { flex: none; }
+  main { padding: 16px 16px 32px; }
+}
+
+/* ---- models ---- */
+.role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 280px); gap: 6px 16px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); }
+.role:first-child { border-top: 0; }
+.role .rt { display: flex; flex-direction: column; min-width: 0; }
+.role .rt b { display: flex; gap: 8px; align-items: center; }
+.role .rt span { color: var(--muted); font-size: 12px; }
+.role select { width: 100%; }
+.role .src { grid-column: 2; font-size: 11px; color: var(--faint); }
+.role .src.saved { color: var(--accent); }
+.tag { font-size: 10.5px; font-weight: 500; border-radius: 999px; padding: 0 7px; border: 1px solid var(--line2); color: var(--muted); }
+.nums { display: flex; gap: 16px; flex-wrap: wrap; padding: 12px 14px; }
+.nums label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.nums input { width: 110px; }
+@media (max-width: 560px) { .role { grid-template-columns: 1fr; } .role .src { grid-column: 1; } }
+
+/* ---- providers (moved from the editor's "Manage models" dialog) ---- */
+.pv { border: 1px solid var(--line); border-radius: 12px; background: var(--pane2); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pv-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pv-t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pv-t .url { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av { width: 30px; height: 30px; border-radius: 8px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #0b0d10; background: var(--c); }
+.st-chip { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line2); color: var(--muted); flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.st-chip.ok { color: var(--ok); border-color: #1f5135; } .st-chip.bad { color: var(--warn); border-color: #5a4512; }
+.mchips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 6px 3px 9px; border-radius: 999px; background: var(--pane3); border: 1px solid var(--line2); cursor: pointer; }
+.mchip .ic { width: 12px; height: 12px; color: var(--faint); }
+.mchip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.mchip.ok .dot { background: var(--ok); } .mchip.bad .dot { background: var(--danger); } .mchip.busy .dot { background: var(--warn); animation: blink 1s infinite; }
+.mchip .x { padding: 0; width: 16px; height: 16px; border: none; background: transparent; color: var(--faint); border-radius: 50%; }
+.mchip .x:hover { color: var(--danger); background: #0005; }
+.mchip.add { background: transparent; border-style: dashed; color: var(--muted); padding-right: 9px; }
+.mchip.add:hover { color: var(--text); border-color: var(--accent); }
+.addm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+.addm input[type=text] { flex: 1; min-width: 160px; }
+.addm label { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
+.addm-err { width: 100%; display: flex; gap: 8px; align-items: center; color: var(--danger); font-size: 12px; }
+.addm-err span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addprov { justify-content: flex-start; gap: 12px; padding: 12px; border: 1px dashed var(--line2); border-radius: 12px; background: transparent; text-align: left; }
+.addprov > .ic { width: 30px; height: 30px; padding: 7px; border-radius: 8px; background: var(--pane3); }
+.addprov > span { display: flex; flex-direction: column; white-space: normal; }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.tpl { justify-content: flex-start; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; background: var(--pane2); border: 1px solid var(--line); text-align: left; white-space: normal; }
+.tpl:hover { border-color: var(--accent); background: var(--pane3); }
+.tpl-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tpl-t b { display: flex; align-items: center; gap: 8px; }
+.tpl-t > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.stp { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid var(--line); }
+.stp i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; background: var(--pane3); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.stp i .ic { width: 11px; height: 11px; }
+.stp.on { color: var(--text); border-color: var(--accent); } .stp.on i { background: var(--accent); color: var(--accent-ink); }
+.stp.done { color: var(--muted); } .stp.done i { background: #15322e; color: var(--accent); }
+.wiz { display: flex; flex-direction: column; gap: 14px; }
+.wiz h4 { margin: 0; font-size: 14px; }
+.wiz-head { display: flex; gap: 12px; align-items: center; }
+.wiz-head p { margin: 2px 0 0; }
+.fields { display: grid; grid-template-columns: minmax(80px, 30%) minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+.fields > label { color: var(--muted); font-size: 12px; }
+.fields .full { grid-column: 1 / 3; }
+.fields input, .fields textarea { width: 100%; }
+.keyrow { display: flex; gap: 10px; align-items: center; }
+.keyrow input { flex: 1; }
+.adv summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.adv textarea { font: 11px ui-monospace, monospace; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.btnrow.end { justify-content: flex-end; }
+.wlist { display: flex; flex-direction: column; gap: 6px; }
+.wlist.scroll { max-height: 320px; overflow: auto; padding-right: 2px; }
+.wrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--pane2); cursor: pointer; }
+.wrow.on { border-color: var(--line2); }
+.wrow .wn { display: flex; flex-direction: column; min-width: 0; }
+.wrow .wn code { font: 11px ui-monospace, monospace; color: var(--faint); }
+.wrow .vis { padding: 2px 8px; font-size: 11px; border-radius: 999px; color: var(--faint); background: transparent; }
+.wrow .vis .ic { width: 12px; height: 12px; }
+.wrow .vis.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.wrow .res { flex: 1; min-width: 0; text-align: right; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.wrow .res .ic { width: 12px; height: 12px; }
+.wrow .res.ok { color: var(--ok); } .wrow .res.bad { color: var(--danger); }
+.found { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--pane2); }
+.found .ic { width: 14px; height: 14px; }
+.found.ok { color: var(--ok); } .found.ok .hint { color: var(--muted); }
+.found.bad { color: var(--warn); } .found.bad span { flex: 1; }
+.usenow { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.ext { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; text-decoration: none; }
+.ext .ic { width: 12px; height: 12px; }
+.codeline { display: flex; align-items: center; gap: 4px; background: var(--bg); border: 1px solid var(--line2); border-radius: 7px; padding: 3px 3px 3px 10px; }
+.codeline code { flex: 1; min-width: 0; font: 11px ui-monospace, monospace; overflow-x: auto; white-space: nowrap; }
+.waitbox { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line2); }
+.waitbox .row { display: flex; gap: 10px; align-items: center; }
+
+/* ---- permissions ---- */
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seg button { flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--pane2); border-color: var(--line); text-align: left; white-space: normal; }
+.seg button span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.seg button.on { border-color: var(--accent); background: #10302b; }
+.seg button.on b { color: var(--accent); }
+.rules { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rules .card { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.rules h4 { margin: 0; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.rules h4 .ic { width: 15px; height: 15px; }
+.rules .yes h4 .ic { color: var(--ok); } .rules .no h4 .ic { color: var(--warn); }
+.rule b { display: block; font-weight: 500; }
+.rule span { color: var(--faint); font-size: 12px; word-break: break-word; }
+.allow { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.allow + .allow { border-top: 1px solid var(--line); }
+.allow-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.allow-h .hint { margin-left: auto; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 12px ui-monospace, monospace; padding: 2px 4px 2px 9px; border-radius: 999px; background: var(--pane3); border: 1px solid var(--line2); }
+.chip button { padding: 0; width: 18px; height: 18px; border: 0; background: transparent; color: var(--faint); border-radius: 50%; }
+.chip button:hover { color: var(--text); background: #0005; }
+.chip button.rm:hover { color: var(--danger); }
+.chip button .ic { width: 12px; height: 12px; }
+.addrow { display: flex; gap: 6px; }
+.addrow input { flex: 1; max-width: 260px; font-family: ui-monospace, monospace; }
+.decl { padding: 4px 14px; }
+.decl .rule { padding: 10px 0; border-top: 1px solid var(--line); }
+.decl .rule:first-child { border-top: 0; }
+@media (max-width: 620px) { .rules, .seg { grid-template-columns: 1fr; } }
+
+/* ---- usage ---- */
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tile { padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.tile span { color: var(--muted); font-size: 12px; }
+.tile b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.tile small { color: var(--faint); font-size: 11px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 8px 14px; border-top: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; border-top: 0; }
+th:first-child, td:first-child { text-align: left; white-space: normal; }
+td .bar { display: block; height: 3px; margin-top: 5px; border-radius: 2px; background: var(--accent); opacity: .7; }
+td small { display: block; color: var(--faint); font: 11px ui-monospace, monospace; }
+.tablewrap { overflow-x: auto; }
+@media (max-width: 620px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">ai<span>klips</span></div>
+  <h1>Settings</h1>
+  <div class="spacer"></div>
+  <button class="ghost" id="b-close"></button>
+</header>
+<div id="wrap">
+  <nav id="nav"></nav>
+  <main><div class="page" id="page"></div></main>
+</div>
+<div id="toast"></div>
+<script>
+"use strict";
+// Settings: which model does what, provider registration (API keys), what the AI may do, and usage.
+// Opened full-page from the home screen, or inside the editor in an overlay (?embed=1, talks to it via postMessage).
+const $ = (s, el = document) => el.querySelector(s);
+const EMBED = new URLSearchParams(location.search).has("embed");
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (k === "style" && typeof v === "object") { for (const [sk, sv] of Object.entries(v)) sk.startsWith("--") ? el.style.setProperty(sk, sv) : (el.style[sk] = sv); }
+    else if (k in el && k !== "list") el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return el;
+}
+const ICONS = {
+  cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/>',
+  plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  "shield-check": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M8 17V9"/><path d="M13 17V5"/><path d="M18 17v-3"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+};
+function icon(name) {
+  const el = document.createElement("span"); el.className = "ic";
+  el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
+  return el;
+}
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = err ? "err" : ""; t.style.display = "block";
+  clearTimeout(toast.tm); toast.tm = setTimeout(() => (t.style.display = "none"), err ? 5000 : 2200);
+}
+async function api(url, body) {
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
+    return r.json();
+  } catch { toast("Can't reach aiklips — is it still running?", true); return null; }
+}
+const get = async (url) => { try { const r = await fetch(url, { cache: "no-store" }); return r.ok ? r.json() : null; } catch { return null; } };
+const num = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
+const usd = (n) => "$" + (n < 1 ? n.toFixed(3) : n.toFixed(2));
+const field = (label, el) => [h("label", {}, label), el];
+const ext = (href, text) => h("a", { class: "ext", href, target: "_blank", rel: "noopener" }, text, icon("external"));
+async function copyText(t) { try { await navigator.clipboard.writeText(t); toast("Copied"); } catch { toast("Couldn't copy", true); } }
+const codeLine = (cmd) => h("div", { class: "codeline" }, h("code", {}, cmd), h("button", { class: "ghost icon", title: "Copy", onclick: () => copyText(cmd) }, icon("copy")));
+const PROVIDER_COLORS = { anthropic: "#d97757", deepseek: "#4d6bfe", opencode: "#a3a3a3" };
+function avatar(id, name) {
+  let c = PROVIDER_COLORS[id];
+  if (!c) { let hsh = 0; for (const ch of id) hsh = (hsh * 31 + ch.charCodeAt(0)) % 360; c = `hsl(${hsh} 55% 58%)`; }
+  return h("span", { class: "av", style: { "--c": c } }, (name || id || "?").trim()[0].toUpperCase());
+}
+
+// ---------- state + routing ----------
+const TABS = [
+  ["models", "Models", "cpu"], ["providers", "Providers & keys", "plug"], ["permissions", "Permissions", "shield"], ["usage", "Usage", "chart"], ["updates", "Updates", "download"]];
+let TAB = "models";
+let PUB = null, AI = null, SET = null, ROLES = null, AUDIT = null, PERM = null, USAGE = null, USAGE_DAYS = 30, UPD = null, UPD_BUSY = "";
+let WIZ = null, ADDM = null, LOGIN = null, POLL = null;
+const TESTS = {};
+
+// switching tabs replaces the URL instead of adding history, so Back leaves Settings in one step
+function go(hash) { if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash); route(); }
+function route() {
+  const [tab, sub, arg] = location.hash.slice(1).split("/");
+  TAB = TABS.some((t) => t[0] === tab) ? tab : "models";
+  if (TAB === "providers" && sub === "add" && !WIZ) WIZ = { step: 1 };
+  if (TAB === "providers" && sub === "edit" && PUB) { const pv = PUB.providers.find((p) => p.id === decodeURIComponent(arg || "")); if (pv && !pv.builtin) editProvider(pv, false); }
+  if (TAB === "usage" && !USAGE) loadUsage();
+  if (TAB === "permissions" && !PERM) loadPerm();
+  if (TAB === "updates" && !UPD) loadUpdates();
+  render();
+}
+window.addEventListener("hashchange", route);
+
+// where Back goes: the aiklips page that opened Settings (home or a tab of it), else the home screen
+const RETURN_TO = (() => {
+  try { const u = new URL(document.referrer); if (u.origin === location.origin && u.pathname !== "/settings") return u.pathname + u.search + u.hash; } catch {}
+  return "/";
+})();
+function close() {
+  if (EMBED) parent.postMessage({ type: "settings:close" }, location.origin);
+  else location.href = RETURN_TO;
+}
+$("#b-close").replaceChildren(EMBED ? icon("x") : icon("back"), EMBED ? "Close" : "Back");
+$("#b-close").title = EMBED ? "Close settings (Esc)" : "Back";
+$("#b-close").onclick = close;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && EMBED && !document.querySelector("input:focus, textarea:focus")) close(); });
+if (EMBED) document.body.classList.add("embed");
+// tell the editor something changed, so its model picker / auditor line can refresh
+const changed = (what) => EMBED && parent.postMessage({ type: "settings:changed", what }, location.origin);
+
+async function loadAll() {
+  [PUB, AI, SET, ROLES, AUDIT] = await Promise.all([get("/api/models"), get("/api/ai/status"), get("/api/settings"), get("/api/ai/roles"), get("/api/audit/settings")]);
+  route();
+}
+async function refreshModels(pub) { PUB = pub || await get("/api/models"); ROLES = await get("/api/ai/roles"); changed("models"); render(); }
+async function checkAI() { AI = await get("/api/ai/status"); if (LOGIN && readyBuiltin()) { LOGIN = null; stopPoll(); toast("Signed in — Claude is ready"); } render(); }
+const readyBuiltin = () => AI?.claude?.installed && AI?.claude?.loggedIn;
+
+function render() {
+  const unready = PUB ? PUB.providers.filter((p) => !p.ready).length + (AI && !readyBuiltin() ? 1 : 0) : 0;
+  $("#nav").replaceChildren(...TABS.map(([id, label, ic]) => h("button", { class: TAB === id ? "on" : "", onclick: () => { if (id !== "providers") WIZ = null; go(id); } },
+    icon(ic), label, id === "providers" && unready ? h("span", { class: "n", title: "Some providers need sign-in or a key" }, "●") : "")));
+  const page = $("#page");
+  if (!PUB) return page.replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…"));
+  page.replaceChildren(...{ models: pageModels, providers: pageProviders, permissions: pagePermissions, usage: pageUsage, updates: pageUpdates }[TAB]());
+}
+
+// ---------- Models ----------
+function modelOptions(cur, { vision = false, dflt = null } = {}) {
+  const out = dflt ? [h("option", { value: "", selected: !cur }, dflt)] : [];
+  for (const pv of PUB.providers) {
+    const ms = PUB.models.filter((m) => m.provider === pv.id && (!vision || m.vision !== false));
+    if (!ms.length) continue;
+    out.push(h("optgroup", { label: pv.name + (pv.ready ? "" : " · needs sign-in or key") },
+      ms.map((m) => h("option", { value: m.key, selected: m.key === cur, disabled: !pv.ready && m.key !== cur }, m.label + (m.vision ? "" : " · no vision")))));
+  }
+  return out;
+}
+const labelOf = (k) => { const m = PUB.models.find((x) => x.key === k); return m ? m.label : k; };
+function pageModels() {
+  const cur = SET?.chat_model || SET?.chat_default;
+  const chat = h("select", { onchange: async (e) => {
+    const r = await api("/api/settings/chat-model", { model: e.target.value });
+    if (r) { SET = r; changed("chat"); toast(`AI editor now uses ${labelOf(e.target.value)}`); render(); } else render();
+  } }, modelOptions(cur));
+  const chatNote = SET?.project
+    ? (SET.chat_model && SET.chat_model !== SET.chat_default ? `“${SET.project}” uses ${labelOf(SET.chat_model)}; new projects start on ${labelOf(SET.chat_default)}. Changing it here sets both.`
+      : `Used now in “${SET.project}”, and by every new project.`)
+    : "The model new projects start with. You can still switch per project from the chat pane.";
+
+  const roleRow = (r) => {
+    const sel = h("select", { onchange: async (e) => {
+      const res = await api("/api/ai/roles", { [r.tier]: e.target.value });
+      if (res) { ROLES.roles = res.roles; changed("roles"); toast(e.target.value ? `${r.label}: ${labelOf(e.target.value)}` : `${r.label}: back to the default`); }
+      render();
+    } }, modelOptions(r.saved, { vision: r.vision, dflt: `Default · ${labelOf(r.tier_default)}` }));
+    return h("div", { class: "role" },
+      h("div", { class: "rt" }, h("b", {}, r.label, r.vision ? h("span", { class: "tag", title: "Looks at video frames, so only models with vision are listed" }, "needs vision") : ""), h("span", {}, r.about)),
+      sel, h("span", { class: "src" + (r.saved ? " saved" : "") }, r.saved ? "Your choice" : "Default for the Balanced quality level"));
+  };
+  const numIn = (k, min, max) => h("input", { type: "number", min, max, value: AUDIT?.[k], onchange: async (e) => {
+    const r = await api("/api/audit/settings", { [k]: Number(e.target.value) }); if (r) { AUDIT = r; changed("audit"); toast("Saved"); }
+  } });
+  return [
+    h("h2", {}, "Models"),
+    h("p", { class: "lede" }, "Choose which AI does each job. Only models from connected providers can be picked."),
+    h("section", {}, h("h3", {}, "AI editor"), h("p", { class: "sub" }, "The assistant in the editor's chat pane that edits your video."),
+      h("div", { class: "card role" }, h("div", { class: "rt" }, h("b", {}, "Chat model"), h("span", {}, chatNote)), chat)),
+    h("section", {}, h("h3", {}, "Generation & review team"),
+      h("p", { class: "sub" }, "Used by Generate and by the auditor. A choice made for one generation in the wizard still wins over these."),
+      h("div", { class: "card" }, (ROLES?.roles || []).map(roleRow))),
+    h("section", {}, h("h3", {}, "Auditor"), h("p", { class: "sub" }, "When an edit scores below the pass mark it goes back to the editor, up to the round limit."),
+      h("div", { class: "card nums" },
+        h("label", {}, "Pass mark (0–100)", numIn("threshold", 0, 100)),
+        h("label", {}, "Revision rounds", numIn("max_rounds", 0, 8)))),
+    h("p", { class: "hint" }, "Missing a model? ", h("a", { href: "#providers/add", onclick: (e) => { e.preventDefault(); go("providers/add"); } }, "Connect a provider"), "."),
+  ];
+}
+
+// ---------- Providers & keys (registration) ----------
+async function modelsApi(url, body) {
+  const r = await api(url, body);
+  if (r) await refreshModels(r.models);
+  return r;
+}
+async function testModel(pid, id) { return (await api("/api/models/test", { provider: pid, id })) || { ok: false, text: "Request failed" }; }
+function stopPoll() { clearInterval(POLL); POLL = null; }
+async function signIn(kind, method = "claudeai") {
+  const r = await api(kind === "install" ? "/api/ai/install" : "/api/ai/login", kind === "install" ? undefined : { method });
+  if (!r) return;
+  LOGIN = { kind, ...r }; render();
+  stopPoll(); const t0 = Date.now();
+  POLL = setInterval(() => { if (Date.now() - t0 > 10 * 60e3) { stopPoll(); LOGIN = null; render(); } else checkAI(); }, 2500);
+}
+const planLabel = (c) => { const p = c.subscriptionType || ""; return p ? ` · ${p[0].toUpperCase() + p.slice(1)} plan` : c.authMethod && c.authMethod !== "claude.ai" ? ` · ${c.authMethod}` : ""; };
+function modelChip(m, pv) {
+  const t = TESTS[m.key];
+  const st = t ? (t.busy ? "busy" : t.ok ? "ok" : "bad") : "";
+  return h("span", { class: `mchip ${st}`, title: `${m.id}${m.vision ? " · can see images" : " · no vision"}${t && !t.busy ? "\n" + t.text : pv.builtin ? "" : "\nClick to test"}`,
+    onclick: pv.builtin ? null : async () => { TESTS[m.key] = { busy: true }; render(); TESTS[m.key] = await testModel(pv.id, m.id); render(); } },
+    h("i", { class: "dot" }), m.label, m.vision ? icon("eye") : "",
+    m.builtin ? "" : h("button", { class: "x", title: "Remove model", onclick: (e) => { e.stopPropagation(); modelsApi("/api/models/model/remove", { key: m.key }); } }, icon("x")));
+}
+function addModelInline(pv) {
+  if (ADDM?.pid !== pv.id) return h("button", { class: "mchip add", onclick: async () => {
+    ADDM = { pid: pv.id, id: "", vision: false, options: [] }; render();
+    const r = await api("/api/models/discover", { provider: pv.id });
+    if (ADDM?.pid === pv.id && r?.ok) { const have = new Set(PUB.models.map((m) => m.key)); ADDM.options = r.models.filter((m) => !have.has(`${pv.id}/${m.id}`)); render(); }
+  } }, icon("plus"), "Add model");
+  const tpl = PUB.templates.find((t) => t.id === pv.id);
+  const listId = `sugg-${pv.id}`;
+  const add = async (force) => {
+    if (!ADDM.id) return toast("Enter a model id", true);
+    if (!force) { ADDM.test = { busy: true }; render(); ADDM.test = await testModel(pv.id, ADDM.id); if (!ADDM.test.ok) return render(); }
+    const r = await modelsApi("/api/models/model", { provider: pv.id, id: ADDM.id, label: ADDM.label || undefined, vision: ADDM.vision });
+    if (r) { TESTS[`${pv.id}/${ADDM.id}`] = ADDM.test; ADDM = null; render(); }
+  };
+  return h("div", { class: "addm" },
+    h("input", { type: "text", placeholder: ADDM.options.length ? `pick from ${ADDM.options.length} models or type an id` : "model id", value: ADDM.id, list: listId, autofocus: true,
+      oninput: (e) => { ADDM.id = e.target.value.trim(); const o = ADDM.options.find((x) => x.id === ADDM.id); ADDM.label = o?.label; if (o) { ADDM.vision = !!o.vision; const vb = e.target.parentNode.querySelector(".vcb"); if (vb) vb.checked = ADDM.vision; } },
+      onkeydown: (e) => e.key === "Enter" && add(false) }),
+    h("datalist", { id: listId }, (ADDM.options.length ? ADDM.options : tpl?.suggested || []).map((s) => h("option", { value: s.id }, s.label))),
+    h("label", { title: "Tick if the model accepts images, so the AI can check rendered frames" }, h("input", { type: "checkbox", class: "vcb", checked: ADDM.vision, onchange: (e) => (ADDM.vision = e.target.checked) }), "vision"),
+    h("button", { class: "primary", onclick: () => add(false), disabled: ADDM.test?.busy }, ADDM.test?.busy ? h("span", { class: "spin" }) : "", "Test & add"),
+    h("button", { class: "ghost", onclick: () => { ADDM = null; render(); } }, "Cancel"),
+    ADDM.test && !ADDM.test.busy && !ADDM.test.ok ? h("div", { class: "addm-err" }, h("span", {}, ADDM.test.text), h("button", { class: "ghost", onclick: () => add(true) }, "Add anyway")) : "");
+}
+function loginBox() {
+  if (!LOGIN) return "";
+  return h("div", { class: "waitbox" },
+    h("div", { class: "row" }, h("span", { class: "spin big" }), h("div", {},
+      h("b", {}, LOGIN.kind === "install" ? "Installing Claude Code…" : "Waiting for you to sign in…"),
+      h("div", { class: "hint" }, LOGIN.opened ? (LOGIN.kind === "install" ? "A Terminal window is running the installer." : "A Terminal window opened. Follow its link to sign in in your browser; this page updates on its own.")
+        : "Couldn't open a terminal window. Run this yourself:"))),
+    codeLine(LOGIN.command),
+    h("div", { class: "btnrow" }, h("button", { class: "ghost", onclick: () => { LOGIN = null; stopPoll(); render(); } }, "Cancel"), h("button", { class: "ghost", onclick: checkAI }, "Check again")));
+}
+function providerCard(pv) {
+  const ms = PUB.models.filter((m) => m.provider === pv.id);
+  let sub, chip, actions = [];
+  if (pv.builtin) {
+    const c = AI?.claude;
+    sub = !c ? "Checking sign-in…" : !c.installed ? "Claude Code isn't installed" : c.loggedIn ? `Signed in${planLabel(c)}` : "Not signed in";
+    chip = !c ? ["", "…"] : c.installed && c.loggedIn ? ["ok", "Ready"] : ["bad", c.installed ? "Sign in needed" : "Not installed"];
+    if (c && !(c.installed && c.loggedIn) && !LOGIN) {
+      if (c.installed) actions.push(h("button", { class: "primary", onclick: () => signIn("login", "claudeai") }, icon("login"), "Sign in with Claude"),
+        h("button", { class: "ghost", title: "Pay per use with API billing", onclick: () => signIn("login", "console") }, icon("key"), "Console account"));
+      else actions.push(h("button", { class: "primary", onclick: () => signIn("install") }, "Install Claude Code"));
+    }
+  } else {
+    sub = pv.base_url;
+    chip = pv.ready ? ["ok", pv.key_stored ? "Key saved" : `Key from $${pv.api_key_env}`] : ["bad", "Needs API key"];
+    actions.push(h("button", { class: "ghost", onclick: () => editProvider(pv) }, pv.ready ? "Edit" : "Add key"),
+      h("button", { class: "ghost danger icon", title: "Remove provider and its models", onclick: () => confirm(`Remove ${pv.name} and its ${ms.length} model(s)?`) && modelsApi(`/api/models/provider/${encodeURIComponent(pv.id)}/remove`) }, icon("trash")));
+  }
+  return h("div", { class: "pv" },
+    h("div", { class: "pv-h" }, avatar(pv.id, pv.name), h("div", { class: "pv-t" }, h("b", {}, pv.name), h("span", { class: "url", title: sub }, sub)),
+      h("span", { class: "st-chip " + chip[0] }, chip[1]), actions),
+    pv.builtin ? loginBox() : "",
+    h("div", { class: "mchips" }, ms.map((m) => modelChip(m, pv)), pv.builtin ? "" : addModelInline(pv)));
+}
+function editProvider(pv, rerender = true) {
+  const tpl = PUB.templates.find((t) => t.id === pv.id) || PUB.templates.find((t) => t.id === "custom");
+  WIZ = { step: 2, edit: pv, tpl, form: { name: pv.name, base_url: pv.base_url, api_key: "", api_key_env: pv.api_key_env, env: JSON.stringify(pv.env || {}) } };
+  if (rerender) render();
+}
+function pickTemplate(t) {
+  const taken = PUB.providers.find((p) => p.id === t.id);
+  if (taken) return editProvider(taken);
+  WIZ = { step: 2, tpl: { ...t, fromWizard: true }, form: { name: t.name, base_url: t.base_url, api_key: "", api_key_env: t.api_key_env, env: "{}" } };
+  render();
+}
+const endWiz = () => { WIZ = null; if (location.hash !== "#providers") history.replaceState(null, "", "#providers"); render(); };
+function wizSteps() {
+  const names = WIZ.edit ? ["Connect"] : ["Choose provider", "Connect", "Add models"];
+  const cur = WIZ.edit ? 1 : WIZ.step;
+  return h("div", { class: "steps" }, names.map((t, i) => h("span", { class: "stp" + (i + 1 === cur ? " on" : i + 1 < cur ? " done" : "") },
+    h("i", {}, i + 1 < cur ? icon("check") : String(i + 1)), t)));
+}
+function wizStep1() {
+  const card = (id, name, blurb, onclick, badge) => h("button", { class: "tpl", onclick }, avatar(id, name),
+    h("span", { class: "tpl-t" }, h("b", {}, name, badge ? h("span", { class: "st-chip ok" }, badge) : ""), h("span", {}, blurb)));
+  return [h("h4", {}, "Where should the AI get its models?"),
+    h("div", { class: "tpl-grid" },
+      card("anthropic", "Claude", readyBuiltin() ? "Signed in — already set up." : "Sign in with your Claude Pro/Max plan or Console account. Recommended.",
+        () => { endWiz(); if (!readyBuiltin()) signIn(AI?.claude?.installed === false ? "install" : "login"); }, readyBuiltin() ? "Ready" : "Recommended"),
+      PUB.templates.map((t) => card(t.id, t.name || "Custom provider", t.blurb, () => pickTemplate(t), PUB.providers.some((p) => p.id === t.id) ? "Added" : ""))),
+    h("div", { class: "btnrow" }, h("button", { class: "ghost", onclick: endWiz }, "Cancel"))];
+}
+function wizStep2() {
+  const f = WIZ.form, t = WIZ.tpl, custom = t.id === "custom", ed = WIZ.edit;
+  const inp = (k, attrs = {}) => h("input", { type: "text", value: f[k], ...attrs, oninput: (e) => (f[k] = e.target.value) });
+  const save = async () => {
+    let env; try { env = JSON.parse(f.env || "{}"); } catch { return toast("Extra environment must be valid JSON", true); }
+    const body = { id: ed?.id, name: f.name, base_url: f.base_url, api_key_env: f.api_key_env, env };
+    if (f.api_key) body.api_key = f.api_key;
+    const r = await modelsApi("/api/models/provider", body);
+    if (!r) return;
+    if (ed && !WIZ.tpl.fromWizard) { toast(`${f.name} saved`); return endWiz(); }
+    WIZ.pid = r.result.id; WIZ.use = true; WIZ.step = 3; discoverModels();
+  };
+  return [
+    h("div", { class: "wiz-head" }, avatar(custom && !ed ? "custom" : ed?.id || t.id, f.name || "Custom"), h("div", {},
+      h("h4", {}, ed ? `${ed.name} settings` : custom ? "Connect a custom provider" : `Connect ${t.name}`),
+      h("p", { class: "hint" }, t.blurb))),
+    h("div", { class: "fields" },
+      custom || ed ? [field("Name", inp("name", { placeholder: "e.g. OpenRouter", disabled: !!ed })),
+        field("Base URL", inp("base_url", { placeholder: "https://…  (without /v1)" }))] : [],
+      field("API key", h("div", { class: "keyrow" },
+        h("input", { type: "password", autocomplete: "off", value: f.api_key, oninput: (e) => (f.api_key = e.target.value),
+          placeholder: ed?.key_stored ? "•••••••• saved — leave blank to keep" : "Paste your API key", onkeydown: (e) => e.key === "Enter" && save() }),
+        t.key_url ? ext(t.key_url, "Get a key") : "")),
+      h("p", { class: "full hint", style: { margin: 0 } }, icon("lock"), " Saved only on this computer (~/.aiklips/models.json, readable by you only). Never shown again."),
+      h("details", { class: "full adv" }, h("summary", {}, "Advanced"),
+        h("div", { class: "fields", style: { marginTop: "8px" } },
+          custom || ed ? [] : field("Base URL", inp("base_url")),
+          field("Key from env var", inp("api_key_env", { placeholder: "e.g. DEEPSEEK_API_KEY — used when no key is saved" })),
+          field("Extra env", h("textarea", { rows: 2, value: f.env, oninput: (e) => (f.env = e.target.value), placeholder: '{"API_TIMEOUT_MS": "600000"}' })),
+          ed?.key_stored ? field("", h("button", { class: "ghost danger", onclick: async () => {
+            const r = await modelsApi("/api/models/provider", { id: ed.id, name: ed.name, base_url: f.base_url, api_key_env: f.api_key_env, env: ed.env, api_key: "" });
+            if (r) { toast("Saved key removed"); editProvider(r.models.providers.find((p) => p.id === ed.id)); } } }, "Forget saved key")) : []))),
+    h("div", { class: "btnrow end" },
+      h("button", { class: "ghost", onclick: () => { if (ed) endWiz(); else { WIZ = { step: 1 }; render(); } } }, ed ? "Cancel" : "Back"),
+      h("button", { class: "primary", onclick: save }, ed ? "Save" : "Continue"))];
+}
+async function discoverModels() {
+  const t = WIZ.tpl, pid = WIZ.pid;
+  WIZ.found = { busy: true }; WIZ.models = []; render();
+  const r = await api("/api/models/discover", { provider: pid }) || { ok: false, text: "Request failed", models: [] };
+  if (!WIZ || WIZ.pid !== pid) return;
+  WIZ.found = r;
+  const want = new Set((t.suggested || []).map((m) => m.id));
+  WIZ.models = r.ok ? r.models.map((m) => ({ ...m, sel: want.has(m.id) })) : (t.suggested || []).map((m) => ({ ...m, sel: false }));
+  if (WIZ.models.length && !WIZ.models.some((m) => m.sel)) WIZ.models[0].sel = true;
+  WIZ.q = ""; render();
+}
+function wizStep3() {
+  const t = WIZ.tpl, f = WIZ.found || {};
+  let custom = "";
+  const addCustom = () => {
+    if (!custom) return;
+    const ex = WIZ.models.find((m) => m.id === custom);
+    if (ex) ex.sel = true; else WIZ.models.unshift({ id: custom, label: custom, vision: null, sel: true });
+    render();
+  };
+  const finish = async (force) => {
+    const pick = WIZ.models.filter((m) => m.sel);
+    if (!pick.length) return toast("Pick at least one model", true);
+    if (!force) {
+      for (const m of pick) { m.test = { busy: true }; render(); m.test = await testModel(WIZ.pid, m.id); }
+      render();
+      if (pick.some((m) => !m.test.ok)) return;
+    }
+    for (const m of pick) { await api("/api/models/model", { provider: WIZ.pid, id: m.id, label: m.label, vision: !!m.vision }); if (m.test) TESTS[`${WIZ.pid}/${m.id}`] = m.test; }
+    const use = WIZ.use ? `${WIZ.pid}/${pick[0].id}` : null;
+    await refreshModels();
+    if (use) { const r = await api("/api/settings/chat-model", { model: use }); if (r) { SET = r; changed("chat"); } }
+    toast(`Added ${pick.length} model${pick.length > 1 ? "s" : ""}${use ? ` — the AI editor now uses ${pick[0].label}` : ""}`);
+    endWiz();
+  };
+  const sel = WIZ.models.filter((m) => m.sel);
+  const failed = sel.some((m) => m.test && !m.test.busy && !m.test.ok);
+  const testing = WIZ.models.some((m) => m.test?.busy);
+  const count = h("span", { class: "hint" }, `${sel.length} selected`);
+  const visLabel = (v) => (v === true ? "vision" : v === false ? "no vision" : "vision?");
+  const row = (m) => {
+    const cb = h("input", { type: "checkbox", checked: m.sel });
+    const el = h("label", { class: "wrow" + (m.sel ? " on" : ""), "data-q": `${m.id} ${m.label}`.toLowerCase() },
+      cb, h("span", { class: "wn" }, h("b", {}, m.label), h("code", {}, m.id)),
+      h("button", { class: "vis" + (m.vision ? " on" : ""), title: m.vision == null ? "The provider doesn't say whether this model takes images — click to set" : "Click to change",
+        onclick: (e) => { e.preventDefault(); m.vision = !m.vision; e.currentTarget.className = "vis" + (m.vision ? " on" : ""); e.currentTarget.lastChild.textContent = visLabel(m.vision); } },
+        icon("eye"), visLabel(m.vision)),
+      h("span", { class: "res " + (m.test ? (m.test.busy ? "" : m.test.ok ? "ok" : "bad") : ""), title: m.test?.text || "" },
+        m.test?.busy ? h("span", { class: "spin" }) : m.test ? (m.test.ok ? [icon("check"), " works"] : m.test.text) : ""));
+    cb.onchange = () => { m.sel = cb.checked; el.classList.toggle("on", m.sel); count.textContent = `${WIZ.models.filter((x) => x.sel).length} selected`; };
+    return el;
+  };
+  const list = h("div", { class: "wlist" + (WIZ.models.length > 6 ? " scroll" : "") }, WIZ.models.map(row));
+  const filter = (q) => { WIZ.q = q; for (const el of list.children) el.hidden = !!q && !el.dataset.q.includes(q.toLowerCase()); };
+  if (WIZ.q) filter(WIZ.q);
+  let status;
+  if (f.busy) status = h("div", { class: "found" }, h("span", { class: "spin" }), `Asking ${t.name || "the provider"} which models it has…`);
+  else if (f.ok) status = h("div", { class: "found ok" }, icon("check"), `Found ${f.models.length} model${f.models.length === 1 ? "" : "s"}`, h("span", { class: "spacer" }), count);
+  else status = h("div", { class: "found bad" }, h("span", {}, `Couldn't load the model list: ${f.text || "unknown error"}`), t.docs_url ? ext(t.docs_url, "Model docs") : "");
+  return [
+    h("h4", {}, "Which models should be available?"),
+    status,
+    WIZ.models.length > 6 ? h("input", { type: "search", placeholder: `Search ${WIZ.models.length} models…`, value: WIZ.q || "", oninput: (e) => filter(e.target.value) }) : "",
+    f.busy ? "" : list,
+    h("div", { class: "addm" },
+      h("input", { type: "text", placeholder: f.ok ? "Not listed? Type a model id…" : "Type a model id…", oninput: (e) => (custom = e.target.value.trim()), onkeydown: (e) => e.key === "Enter" && addCustom() }),
+      h("button", { onclick: addCustom }, icon("plus"), "Add")),
+    h("label", { class: "usenow" }, h("input", { type: "checkbox", checked: WIZ.use, onchange: (e) => (WIZ.use = e.target.checked) }), "Switch the AI editor to the first selected model when done"),
+    h("div", { class: "btnrow end" },
+      h("button", { class: "ghost", onclick: () => { WIZ.step = 2; WIZ.edit = PUB.providers.find((p) => p.id === WIZ.pid); render(); } }, "Back"),
+      failed ? h("button", { class: "ghost", onclick: () => finish(true) }, "Add anyway") : "",
+      h("button", { class: "primary", disabled: testing || f.busy, onclick: () => finish(false) }, testing ? [h("span", { class: "spin" }), "Testing…"] : failed ? "Test again" : "Test & finish"))];
+}
+function pageProviders() {
+  if (WIZ) return [h("h2", {}, WIZ.edit ? "Provider settings" : "Connect a provider"),
+    h("div", { class: "wiz" }, wizSteps(), WIZ.step === 1 ? wizStep1() : WIZ.step === 2 ? wizStep2() : wizStep3())];
+  return [
+    h("h2", {}, "Providers & keys"),
+    h("p", { class: "lede" }, "Where the models come from. Claude uses your Claude Code sign-in; any Anthropic-compatible service works with an API key. Click a model to test it."),
+    ...PUB.providers.map(providerCard),
+    h("button", { class: "addprov", onclick: () => go("providers/add") }, icon("plus"),
+      h("span", {}, h("b", {}, "Add provider"), h("span", { class: "hint" }, "DeepSeek, OpenCode, OpenRouter, a local proxy — anything Anthropic-compatible"))),
+  ];
+}
+
+// ---------- Permissions ----------
+async function loadPerm() { PERM = await get("/api/settings/permissions"); render(); }
+async function permApi(body) { const r = await api("/api/settings/permissions", body); if (r) { PERM = r; render(); } return r; }
+function allowList(scope, items, title, note) {
+  let val = "";
+  const add = async (inp) => { if (!val) return; if (await permApi({ scope, add: val })) { toast(`Always allowing ${val}`); inp.value = ""; } };
+  const inp = h("input", { type: "text", placeholder: "program or tool, e.g. ffmpeg", spellcheck: false, oninput: (e) => (val = e.target.value.trim()), onkeydown: (e) => e.key === "Enter" && add(e.target) });
+  return h("div", { class: "allow" },
+    h("div", { class: "allow-h" }, h("b", {}, title), h("span", { class: "hint" }, note)),
+    items.length ? h("div", { class: "chips" }, items.map((x) => h("span", { class: "chip" }, x,
+      scope === "project" && !PERM.always_allow.includes(x) ? h("button", { title: "Allow in every project", onclick: () => permApi({ scope: "global", add: x }).then((r) => r && permApi({ scope: "project", remove: x })) }, icon("up")) : "",
+      h("button", { class: "rm", title: "Ask again", onclick: () => permApi({ scope, remove: x }) }, icon("x")))))
+      : h("span", { class: "hint" }, "Nothing yet."),
+    h("div", { class: "addrow" }, inp, h("button", { onclick: () => add(inp) }, icon("plus"), "Allow")));
+}
+function pagePermissions() {
+  if (!PERM) return [h("h2", {}, "Permissions"), h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…")];
+  const R = PERM.rules;
+  const rule = (r) => h("div", { class: "rule" }, h("b", {}, r.title), h("span", {}, r.detail));
+  const mode = (v, t, d) => h("button", { class: PERM.unlisted === v ? "on" : "", onclick: () => PERM.unlisted !== v && permApi({ unlisted: v }).then((r) => r && toast("Saved")) }, h("b", {}, t), h("span", {}, d));
+  return [
+    h("h2", {}, "Permissions"),
+    h("p", { class: "lede" }, "What the AI editor may do on your computer without asking you first."),
+    h("section", {}, h("h3", {}, "When the AI wants something not allowed below"),
+      h("div", { class: "seg" },
+        mode("ask", "Ask me in the chat", "You get Allow / Deny / Always allow. Recommended."),
+        mode("deny", "Block without asking", "The AI is told no and tries a vedit command instead. Good for leaving it to work alone."))),
+    h("section", {}, h("h3", {}, "Your always-allow list"),
+      h("p", { class: "sub" }, "Programs or tools you've said yes to for good. “Always allow” in the chat adds to this project's list."),
+      h("div", { class: "card" },
+        allowList("global", PERM.always_allow, "All projects", "~/.aiklips/permissions.json"),
+        PERM.project != null ? allowList("project", PERM.project_allow || [], `This project · ${PERM.project}`, "only while it's open") : "")),
+    h("section", {}, h("h3", {}, "Built-in rules"), h("p", { class: "sub" }, "These can't be changed, so the AI can never delete your footage or run arbitrary code unasked."),
+      h("div", { class: "rules" },
+        h("div", { class: "card yes" }, h("h4", {}, icon("shield-check"), "Always allowed"), R.allowed.map(rule)),
+        h("div", { class: "card no" }, h("h4", {}, icon("hand"), "Always asks"), R.always_ask.map(rule)))),
+    h("section", {}, h("h3", {}, "Your data and the AI"),
+      h("div", { class: "card decl" }, R.data.map(rule))),
+  ];
+}
+
+// ---------- Usage ----------
+const TASKS = { chat: "AI editor chat", study: "Watcher · references", footage: "Watcher · footage", classify: "Watcher · sound check",
+  planner: "Creative director · plan", concepts: "Creative director · concepts", rank: "Creative director · ranking", editor: "Editor", auditor: "Auditor",
+  critic: "Auditor (older version)", fixer: "Editor · fixes (older version)" };
+async function loadUsage() { USAGE = await get(`/api/settings/usage?days=${USAGE_DAYS}`); render(); }
+function pageUsage() {
+  const period = h("select", { onchange: (e) => { USAGE_DAYS = Number(e.target.value); USAGE = null; loadUsage(); render(); } },
+    [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"], [365, "Last year"]].map(([v, l]) => h("option", { value: v, selected: v === USAGE_DAYS }, l)));
+  const head = [h("div", { style: { display: "flex", alignItems: "center", gap: "12px" } }, h("h2", {}, "Usage"), h("span", { class: "spacer" }), period),
+    h("p", { class: "lede" }, "AI calls made from this computer. Token counts come from each provider; cost only when the provider reports it.")];
+  if (!USAGE) return [...head, h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…")];
+  const T = USAGE.total;
+  if (!T.calls) return [...head, h("div", { class: "card", style: { padding: "18px" } }, h("b", {}, "No AI calls yet in this period."),
+    h("p", { class: "hint", style: { margin: "4px 0 0" } }, "Chat with the AI editor or run a generation and it shows up here."))];
+  const tile = (label, value, small) => h("div", { class: "card tile" }, h("span", {}, label), h("b", {}, value), small ? h("small", {}, small) : "");
+  const max = Math.max(...USAGE.models.map((m) => m.calls), 1);
+  const costCell = (r) => (r.cost_known ? usd(r.cost_usd) + (r.cost_known < r.calls ? "*" : "") : "—");
+  const table = (rows, first, name) => h("div", { class: "card tablewrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, first), h("th", {}, "Calls"), h("th", {}, "Tokens in"), h("th", {}, "Tokens out"), h("th", {}, "Cost"))),
+    h("tbody", {}, rows.map((r) => h("tr", {}, h("td", {}, name(r)), h("td", {}, r.calls), h("td", {}, num(r.input_tokens)), h("td", {}, num(r.output_tokens)), h("td", {}, costCell(r)))))));
+  const partial = [...USAGE.models].some((r) => r.cost_known && r.cost_known < r.calls);
+  return [...head,
+    h("div", { class: "tiles" },
+      tile("AI calls", num(T.calls)), tile("Tokens in", num(T.input_tokens), "incl. cached"), tile("Tokens out", num(T.output_tokens)),
+      tile("Reported cost", T.cost_known ? usd(T.cost_usd) : "—", T.cost_known < T.calls ? `${T.calls - T.cost_known} calls without a price` : "")),
+    h("section", {}, h("h3", {}, "By model"), table(USAGE.models, "Model", (r) => [r.label, h("small", {}, r.key), h("i", { class: "bar", style: { width: `${(r.calls / max) * 100}%` } })])),
+    h("section", {}, h("h3", {}, "By job"), table(USAGE.tasks, "Job", (r) => TASKS[r.key] || r.key)),
+    partial ? h("p", { class: "hint" }, "* some calls in this row had no reported price.") : "",
+  ];
+}
+
+// ---------- Updates ----------
+async function loadUpdates() { UPD = await get("/api/update"); render(); }
+async function updAction(label, url, body) {
+  UPD_BUSY = label; render();
+  const r = await api(url, body);
+  UPD_BUSY = "";
+  if (r) UPD = r;
+  render();
+  return r;
+}
+async function restartApp() {
+  UPD_BUSY = "Restarting…"; render();
+  if (await api("/api/update/restart")) {
+    $("#page").replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Restarting aiklips — this window reopens in a moment."));
+  } else { UPD_BUSY = ""; render(); }
+}
+function pageUpdates() {
+  const head = [h("h2", {}, "Updates"), h("p", { class: "lede" }, "New versions come from the project's GitHub releases. They're signed, checked before installing, and your projects are never touched.")];
+  if (!UPD) return [...head, h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…")];
+  const U = UPD;
+  if (!U.enabled) return [...head, h("div", { class: "card", style: { padding: "18px" } },
+    h("b", {}, `aiklips ${U.current} (running from source)`),
+    h("p", { class: "hint", style: { margin: "6px 0 10px" } }, "This copy runs from a source checkout, so it updates with git instead:"), codeLine("git pull && uv sync"))];
+  const when = U.checked_at ? new Date(U.checked_at * 1000).toLocaleString() : "never";
+  const busy = !!UPD_BUSY;
+  let main;
+  if (U.staged) main = [h("b", {}, `Version ${U.staged} is downloaded`), h("p", { class: "hint" }, "Restart to install it. If it doesn't start properly, aiklips goes back to this version on its own."),
+    h("button", { class: "primary", disabled: busy, onclick: restartApp }, "Restart to update")];
+  else if (U.available) main = [h("b", {}, `Version ${U.latest} is available`), h("p", { class: "hint" }, `You have ${U.current}.`),
+    h("button", { class: "primary", disabled: busy, onclick: () => updAction("Downloading…", "/api/update/apply").then((r) => r && toast(`Downloaded ${r.staged}`)) }, icon("download"), "Download update")];
+  else main = [h("b", {}, `aiklips ${U.current} is up to date`), h("p", { class: "hint" }, `Last checked: ${when}`)];
+  return [...head,
+    h("div", { class: "card", style: { padding: "18px", display: "grid", gap: "8px", justifyItems: "start" } }, ...main,
+      busy ? h("p", { class: "hint" }, h("span", { class: "spin" }), " ", UPD_BUSY) : ""),
+    U.available && U.notes ? h("section", {}, h("h3", {}, `What's new in ${U.latest}`), h("pre", { class: "card", style: { padding: "12px", whiteSpace: "pre-wrap", margin: 0 } }, U.notes)) : "",
+    h("section", {}, h("h3", {}, "Options"), h("div", { class: "card", style: { padding: "14px", display: "grid", gap: "10px", justifyItems: "start" } },
+      h("label", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+        h("input", { type: "checkbox", checked: U.auto, onchange: (e) => updAction("", "/api/update/auto", { on: e.target.checked }) }), "Check for updates automatically"),
+      h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
+        h("button", { disabled: busy, onclick: () => updAction("Checking…", "/api/update/check") }, "Check now"),
+        U.previous ? h("button", { class: "ghost", disabled: busy, title: "Use the version you had before; takes effect on restart",
+          onclick: async () => { if (confirm(`Go back to version ${U.previous}?`) && await updAction("", "/api/update/rollback")) restartApp(); } }, `Go back to ${U.previous}`) : "",
+        U.url ? ext(U.url, "Release notes") : ""))),
+  ];
+}
+
+loadAll();
+</script>
+</body>
+</html>

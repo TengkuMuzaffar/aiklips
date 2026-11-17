@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claude-cut</title>
+<title>aiklips</title>
 <link rel="icon" href="data:,">
 <style>
 :root {
@@ -18,6 +18,8 @@ button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 button.ghost:hover { color: var(--text); border-color: var(--line2); }
+.settings-link { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 7px; border: 1px solid transparent; color: var(--muted); text-decoration: none; }
+.settings-link:hover { color: var(--text); border-color: var(--line2); }
 button.danger { background: #3a1717; border-color: #6b2a2a; color: #fecaca; }
 button.danger:hover { border-color: var(--danger); }
 input, select { background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
@@ -31,7 +33,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .top { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .top h1 { font-size: 22px; margin: 0; font-weight: 650; }
 .top .count { color: var(--faint); font-size: 14px; }
-#search { width: 220px; }
+#search, #ref-search { width: 220px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
 .card { background: var(--pane); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; cursor: pointer; position: relative; transition: border-color .12s, transform .12s; }
@@ -86,7 +88,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .lede { color: var(--muted); margin: -12px 0 22px; max-width: 760px; }
 
 /* ---- references ---- */
-.thumb.tall { height: 260px; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--pane3); color: var(--muted); border: 1px solid var(--line2); }
 .chip.on { background: #0f2a26; color: var(--accent); border-color: #1d5a50; }
@@ -96,11 +97,17 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 @keyframes sp { to { transform: rotate(360deg); } }
 .drop { border: 2px dashed var(--line2); border-radius: 14px; padding: 34px 20px; text-align: center; color: var(--muted); }
 .drop.over, .dropzone.over { border-color: var(--accent); background: #0f2a2622; }
-.summary { color: var(--muted); font-size: 12px; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .dialog.wide { width: min(1040px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
-.refgrid { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
-.refgrid video { width: 100%; max-height: 520px; background: #000; border-radius: 10px; }
+.refgrid { display: grid; grid-template-columns: 360px 1fr; gap: 28px; align-items: start; }
+.refgrid > .refside { position: sticky; top: 132px; }
+.refgrid video { width: 100%; max-height: calc(100vh - 300px); background: #000; border-radius: 10px; display: block; }
+.refbar { position: sticky; top: 56px; z-index: 4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--bg); padding: 12px 0; margin: -12px 0 18px; border-bottom: 1px solid var(--line); }
+.refbar .crumb { color: var(--muted); }
+.refbar .crumb:hover { color: var(--text); }
+.refbar input.title { flex: 1; min-width: 160px; font-size: 18px; font-weight: 600; background: transparent; border-color: transparent; }
+.refbar input.title:hover { border-color: var(--line2); }
+.refbar input.title:focus { border-color: var(--accent); background: var(--bg); }
 .traits { width: 100%; border-collapse: collapse; font-size: 13px; }
 .traits td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
 .traits td:first-child { color: var(--muted); width: 120px; white-space: nowrap; }
@@ -128,18 +135,84 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .vcard { background: var(--pane2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .vcard.keep { border-color: var(--accent); }
 .vcard.discard { opacity: .45; }
+/* variation cards: score ring on the thumbnail, one issue line, actions always visible */
+.vgrid { --warn: #f5b041; }
+.vcard.is-top { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.vthumb .top { position: absolute; left: 8px; top: 32px; font-size: 11px; font-weight: 600; background: var(--accent); color: var(--accent-ink);
+  padding: 2px 8px; border-radius: 6px; z-index: 2; }
+.vthumb .num, .vthumb .ring, .vthumb .concept { z-index: 2; }
+.ring { --c: var(--accent); position: absolute; right: 8px; top: 8px; width: 46px; height: 46px; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--v) * 1%), #ffffff26 0); display: grid; place-items: center;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.ring::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: #0b0d10e0; }
+.ring::after { content: ""; position: absolute; left: 50%; top: 0; width: 2px; height: 7px; margin-left: -1px; background: #fff;
+  transform-origin: 1px 23px; transform: rotate(calc(var(--pass) * 3.6deg)); border-radius: 1px; } /* the pass mark */
+.ring b { position: relative; font-size: 17px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.ring.near { --c: var(--warn); } .ring.far { --c: var(--danger); }
+.ring.near b { color: var(--warn); } .ring.far b { color: #fca5a5; } .ring.ok b { color: var(--accent); }
+.vthumb .concept { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 10px 8px; font-size: 12px; color: #f1f3f6;
+  background: linear-gradient(transparent, #000c 60%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vbody .hook { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vbody .issue { display: flex; gap: 7px; align-items: baseline; text-align: left; background: none; border: 0; padding: 2px 0; margin: 0;
+  font-size: 12px; color: var(--muted); cursor: pointer; min-width: 0; }
+.vbody .issue span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vbody .issue:hover span { color: var(--text); }
+.vbody .issue i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); transform: translateY(-1px); }
+.vbody .issue.far i { background: var(--danger); } .vbody .issue.ok i { background: var(--accent); }
+.vbody .issue.as-text { cursor: default; }
+.vacts .keep { flex: 1; font-weight: 600; } .vacts .keep.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.vacts button.icon { padding: 4px 9px; }
+.vcard { container-type: inline-size; }
+.vacts { flex-wrap: wrap; }
+@container (max-width: 230px) { .vacts .keep { flex-basis: 100%; } .vacts button:not(.keep) { flex: 1; } }
+/* player: video beside the reasons */
+#play-body { position: relative; }
+.pclose { position: absolute; right: 12px; top: 12px; z-index: 2; }
+.pgrid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 22px; align-items: start; }
+.pvideo { position: sticky; top: 0; }
+.pvideo .vplayer { max-height: calc(100vh - 90px); aspect-ratio: 9 / 16; object-fit: contain; }
+.pcol { display: flex; flex-direction: column; min-height: 100%; }
+.pside { flex: 1; }
+.pside .pnum { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-bottom: 4px; }
+.pside h2 { font-size: 22px; line-height: 1.2; margin: 0 28px 8px 0; }
+.pside section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+.pside h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.pside p { margin: 6px 0 0; }
+.pside .faint { color: var(--faint); font-size: 12px; }
+.pconcept { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pscore { display: flex; gap: 12px; align-items: center; }
+.pscore .ring { position: relative; right: auto; top: auto; flex: none; }
+.pscore b.ok { color: var(--accent); } .pscore b.near { color: #f5b041; } .pscore b.far { color: #fca5a5; }
+.pfind li.fixed { opacity: .55; } .pfind li.fixed div { text-decoration: line-through; text-decoration-color: #ffffff40; }
+.pfind li.worse .sev { color: #fca5a5; }
+.pfixed summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.fhint { margin: 10px 0 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid #5c4511; background: #2a210c; color: #f3d9a0; font-size: 13px; line-height: 1.45; }
+.fhint b { color: #f5b041; }
+.improve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--pane2); }
+.improve select { width: auto; }
+.improve .faint { flex-basis: 100%; }
+.pfind { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.pfind li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; font-size: 13px; line-height: 1.45; }
+.pfind .t { font: 12px ui-monospace, monospace; padding: 2px 0; border-radius: 6px; height: fit-content; color: var(--accent); background: #0f2a26; border-color: #1d5a50; }
+.pfind .t.none { background: none; color: var(--faint); text-align: center; }
+.pfind .sev { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.pfind li.must-fix .sev { color: #fca5a5; } .pfind li.should-fix .sev { color: #f5b041; }
+.pcol .actions { position: sticky; bottom: 0; background: var(--pane); padding-top: 14px; margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+@media (max-width: 760px) { .pgrid { grid-template-columns: 1fr; } .pvideo { position: static; } .pvideo .vplayer { max-height: 60vh; } }
 .vthumb { aspect-ratio: 9 / 14; background: #000; position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; }
 .vthumb img { width: 100%; height: 100%; object-fit: cover; }
 .vthumb .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 34px; color: #fff; opacity: 0; background: #0006; transition: opacity .12s; }
 .vthumb:hover .play { opacity: 1; }
-.vthumb .wait { color: var(--muted); font-size: 12px; padding: 14px; text-align: center; }
+.vthumb .wait { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 18px; text-align: center; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.vthumb img + .wait, .vthumb .wait.over { background: #0b0d10c4; color: #e6e9ef; -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .vthumb .num { position: absolute; left: 8px; top: 8px; font-size: 11px; background: #000a; padding: 1px 7px; border-radius: 6px; color: #ddd; }
-.vbody { padding: 9px 10px 10px; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.vbody { padding: 10px 12px 12px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .vbody .hook { font-weight: 600; font-size: 13px; line-height: 1.3; }
 .vbody .angle { color: var(--muted); font-size: 12px; }
 .vbody .err { color: #fca5a5; font-size: 12px; }
-.vacts { display: flex; gap: 4px; margin-top: auto; padding-top: 8px; }
-.vacts button { padding: 4px 8px; font-size: 12px; }
+.vacts { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; }
+.vacts button { padding: 7px 10px; font-size: 13px; min-height: 36px; }
 .vacts .grow { flex: 1; }
 button.on-keep { border-color: var(--accent); color: var(--accent); }
 .mini { padding: 5px 10px; font-size: 12px; }
@@ -166,6 +239,8 @@ button.on-keep { border-color: var(--accent); color: var(--accent); }
 .file .fn { flex: 1; min-width: 0; }
 .file .fn b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
 .file .fn small { color: var(--muted); }
+.file .role { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 5px; background: #1d5a50; color: #c8f3ea; }
+.file .role.wait { background: var(--line2); color: var(--muted); }
 .dropzone { border: 2px dashed var(--line2); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); }
 .count { display: flex; align-items: center; gap: 16px; }
 .count input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -173,6 +248,17 @@ button.on-keep { border-color: var(--accent); color: var(--accent); }
 .checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; }
 .checks label, .radios label { display: flex !important; align-items: center; gap: 8px; color: var(--text) !important; font-size: 13px !important; margin: 4px 0 !important; cursor: pointer; }
 .radios { display: flex; gap: 18px; flex-wrap: wrap; }
+.team-pick { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.team-pick .role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 260px); gap: 12px; align-items: center; padding: 10px 12px; background: var(--pane2); }
+.team-pick .role b { font-size: 13px; }
+.team-pick .role .hint { font-size: 12px; margin-top: 2px; }
+.team-pick .vis { margin-left: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); border: 1px solid #1d5a50; border-radius: 999px; padding: 0 6px; }
+.team-pick select { width: 100%; }
+.team-pick .team-acts { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--pane); }
+.team-pick .team-acts .hint { font-size: 12px; }
+@media (max-width: 560px) { .team-pick .role { grid-template-columns: 1fr; } }
+.batch-head .team { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.batch-head .team i { font-style: normal; color: var(--faint); margin-right: 5px; }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; }
 .estimate { background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 16px; font-size: 13px; }
 .estimate b { color: var(--accent); }
@@ -181,14 +267,14 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
 .review-list dt { color: var(--muted); }
 .review-list dd { margin: 0; }
 .vplayer { width: 100%; max-height: 72vh; background: #000; border-radius: 10px; display: block; }
-@media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } .form-grid, .checks { grid-template-columns: 1fr; } .tabs { margin-left: 4px; } .tab { padding: 0 8px; } .hide-sm { display: none; } header { padding: 0 12px; gap: 6px; } .logo { white-space: nowrap; } main { padding: 20px 16px 48px; } }
+@media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } .refgrid > .refside { position: static; } .refgrid video { max-height: 60vh; } .form-grid, .checks { grid-template-columns: 1fr; } .tabs { margin-left: 4px; } .tab { padding: 0 8px; } .hide-sm { display: none; } header { padding: 0 12px; gap: 6px; } .logo { white-space: nowrap; } main { padding: 20px 16px 48px; } }
 @media (max-width: 560px) { .logo { display: none; } .tabs { margin-left: 0; } header button.primary { font-size: 0; padding: 6px 12px; } header button.primary::first-letter { font-size: 18px; } .vgrid { grid-template-columns: repeat(2, 1fr); } .steps .stp { font-size: 0; } .steps .stp.on { font-size: 12px; white-space: nowrap; } }
-@media (max-width: 560px) { #search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { #search, #ref-search { width: 100%; } .formats { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">claude<span>-</span>cut</div>
+  <div class="logo">ai<span>klips</span></div>
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="projects" title="Your editing projects">Projects</button>
     <button class="tab" role="tab" data-tab="references" title="Videos the AI studies for style">References<span class="n" id="n-refs"></span></button>
@@ -199,8 +285,11 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <button class="primary" id="b-new" data-for="projects" title="Create a new video project">＋ New project</button>
   <button class="primary" id="b-ref-add" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
   <button class="primary" id="b-gen-new" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <a class="ghost settings-link" id="b-update" href="/settings#updates" hidden title="A new version of aiklips is ready">Update available</a>
+  <a class="ghost settings-link" id="b-settings" href="/settings" title="Settings: AI models, providers &amp; keys, permissions, usage" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="hide-sm">Settings</span></a>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
+  <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
 </header>
 <main id="view-projects">
   <div class="top">
@@ -213,9 +302,17 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <div class="foot" id="foot"></div>
 </main>
 <main id="view-references" hidden>
-  <div class="top"><h1>References</h1><span class="count" id="ref-count"></span></div>
+  <div id="ref-index">
+  <div class="top">
+    <h1>References</h1><span class="count" id="ref-count"></span>
+    <div class="spacer"></div>
+    <input id="ref-search" type="search" placeholder="Search references  ( / )">
+    <select id="ref-sort"><option value="recent">Recently updated</option><option value="name">Name</option><option value="created">Newest</option></select>
+  </div>
   <p class="lede">Videos whose style you like. The AI studies each one: pacing and cuts, the hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat). It learns the pattern and never copies their footage or music.</p>
   <div id="ref-list"></div>
+  </div>
+  <div id="ref-detail" hidden></div>
 </main>
 <main id="view-generate" hidden>
   <div class="top"><h1>Generate</h1></div>
@@ -248,7 +345,6 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <div class="actions"><button type="button" class="ghost" data-close title="Close without changes">Cancel</button><button class="danger" id="c-ok" title="Delete permanently">Delete</button></div>
 </div></div>
 
-<div class="veil" id="dlg-ref"><div class="dialog wide" id="ref-body"></div></div>
 <div class="veil" id="dlg-wiz"><div class="dialog wide" id="wiz-body"></div></div>
 <div class="veil" id="dlg-play"><div class="dialog wide" id="play-body"></div></div>
 
@@ -271,7 +367,7 @@ function h(tag, attrs = {}, ...kids) {
     if (v == null || v === false) continue;
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "class") el.className = v;
-    else if (k === "style") Object.assign(el.style, v);
+    else if (k === "style") for (const [sk, sv] of Object.entries(v)) sk.startsWith("--") ? el.style.setProperty(sk, String(sv)) : (el.style[sk] = sv);
     else el.setAttribute(k, v);
   }
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
@@ -319,7 +415,7 @@ function render() {
   $("#foot").textContent = `New projects are saved in ${DATA.root}`;
   if (!DATA.projects.length) {
     list.append(h("div", { class: "empty" },
-      h("h2", {}, "Welcome to claude-cut"),
+      h("h2", {}, "Welcome to aiklips"),
       h("p", {}, "Create your first project, drop in a raw video, and edit by dragging or by asking the AI."),
       h("button", { class: "primary", title: "Create a new video project", onclick: openNew }, "＋ New project")));
     return;
@@ -365,6 +461,10 @@ function showMenu(e, p) {
     item("Copy folder path", "Copy the project folder location", () => navigator.clipboard?.writeText(p.path).then(() => toast("Path copied"))), h("hr"));
   m.append(item("Remove from list", "Hide from this list; files stay on disk", () => removeProject(p, false)));
   if (!p.missing) m.append(item("Delete project…", "Delete the project folder (asks first)", () => removeProject(p, true), "red"));
+  placeMenu(e);
+}
+function placeMenu(e) {
+  const m = $("#menu");
   m.style.display = "block";
   const r = e.target.getBoundingClientRect();
   m.style.left = `${Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)}px`;
@@ -438,10 +538,12 @@ const spinner = () => h("span", { class: "spin" });
 
 // ============================================================ tabs
 const TABS = ["projects", "references", "generate"];
-let TAB = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "projects";
+const [HASH_TAB, HASH_REF] = location.hash.slice(1).split("/");
+let TAB = TABS.includes(HASH_TAB) ? HASH_TAB : "projects";
 function setTab(t) {
   TAB = t;
   history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
+  if (REF_OPEN) closeRef(false);
   for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("header [data-for]").forEach((b) => (b.hidden = b.dataset.for !== t));
@@ -469,34 +571,70 @@ function refBadge(r) {
   const txt = r.progress || (r.job && r.job.note) || (r.status === "queued" ? "Queued" : "Studying…");
   return h("span", { class: "badge busy" }, spinner(), txt);
 }
+function deleteRef(r) {
+  confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => {
+    const ok = await call("DELETE", `/api/references/${r.id}`);
+    if (!ok) return;
+    toast("Reference deleted");
+    if (REF_OPEN === r.id) closeRef();
+    loadRefs();
+  });
+}
+function sortedRefs() {
+  const q = $("#ref-search").value.trim().toLowerCase();
+  const rs = REFS.filter((r) => !q || [r.name, r.summary, ...(r.auto_tags || []), ...(r.tags || [])].some((x) => x && x.toLowerCase().includes(q)));
+  const mode = $("#ref-sort").value;
+  if (mode === "recent") rs.sort((a, b) => b.updated_at - a.updated_at);
+  if (mode === "name") rs.sort((a, b) => a.name.localeCompare(b.name));
+  if (mode === "created") rs.sort((a, b) => b.created_at - a.created_at);
+  return rs;
+}
 function renderRefs() {
   const list = $("#ref-list"); list.innerHTML = "";
   $("#ref-count").textContent = REFS.length ? String(REFS.length) : "";
   if (!REFS.length) {
-    list.append(h("div", { class: "drop", id: "ref-drop" },
-      h("h2", { style: { color: "var(--text)", margin: "0 0 6px" } }, "Add videos you want to learn from"),
+    list.append(h("div", { class: "empty" },
+      h("h2", {}, "Add videos you want to learn from"),
       h("p", {}, "Drop TikToks, Reels or ads here (as video files). The AI studies each one in about a minute."),
       h("button", { class: "primary", onclick: () => $("#ref-file").click(), title: "Choose video files" }, "＋ Add videos")));
     return;
   }
   const grid = h("div", { class: "grid" });
   grid.append(h("div", { class: "card new", tabindex: 0, onclick: () => $("#ref-file").click(), onkeydown: (e) => e.key === "Enter" && $("#ref-file").click() },
-    h("div", { class: "plus" }, "＋"), h("div", {}, "Add videos"), h("small", { style: { color: "var(--faint)" } }, "or drop them here")));
-  for (const r of REFS) grid.append(refCard(r));
+    h("div", { class: "plus" }, "＋"), h("div", {}, "Add videos")));
+  for (const r of sortedRefs()) grid.append(refCard(r));
   list.append(grid);
+}
+function refMeta(r) {
+  const what = r.status === "failed" ? "Couldn't be studied" : refBusy(r) ? "Being studied" : (r.auto_tags || [])[0];
+  return [r.duration ? dur(r.duration) : null, what, `added ${ago(r.created_at)}`].filter(Boolean).join(" · ");
 }
 function refCard(r) {
   const url = `/api/references/${r.id}/thumb.jpg?v=${Math.round(r.updated_at)}`;
-  const thumb = h("div", { class: "thumb tall" }, h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
+  const thumb = h("div", { class: "thumb" }, h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }),
     h("img", { src: url, alt: "", onerror: (e) => e.target.remove() }));
   const b = refBadge(r); if (b) thumb.append(b);
   if (r.duration) thumb.append(h("span", { class: "fmt" }, dur(r.duration)));
-  const tags = [...(r.auto_tags || []), ...(r.tags || [])].slice(0, 5);
-  return h("div", { class: "card", tabindex: 0, title: r.summary || r.name, onclick: () => openRef(r.id), onkeydown: (e) => e.key === "Enter" && openRef(r.id) },
-    thumb, h("div", { class: "info" }, h("div", { class: "name" }, r.name),
-      h("div", { class: "summary" }, r.status === "failed" ? (r.error || "Could not be studied") : (r.summary || (refBusy(r) ? "Being studied…" : ""))),
-      tags.length ? h("div", { class: "chips" }, tags.map((t) => h("span", { class: "chip" }, t))) : null));
+  return h("div", { class: "card", tabindex: 0, title: r.status === "failed" ? (r.error || r.name) : (r.summary || r.name), onclick: () => openRef(r.id), onkeydown: (e) => e.key === "Enter" && openRef(r.id) },
+    thumb, h("div", { class: "info" }, h("div", { class: "name" }, r.name), h("div", { class: "meta" }, refMeta(r))),
+    h("button", { class: "ghost more", title: "More", onclick: (e) => { e.stopPropagation(); showRefMenu(e, r); } }, "⋯"));
 }
+function renameRef(r) {
+  ask("Rename reference", "Only the name changes; what the AI learned stays.", r.name, "Rename", async (v) => {
+    const res = await call("PATCH", `/api/references/${r.id}`, { name: v }); if (!res) return false; loadRefs();
+  });
+}
+function showRefMenu(e, r) {
+  const m = $("#menu"); m.innerHTML = "";
+  const item = (label, tip, fn, cls) => h("button", { class: cls || "", title: tip, onclick: () => { hideMenu(); fn(); } }, label);
+  m.append(item("Open", "See the style it learned", () => openRef(r.id)), item("Rename…", "Change the reference name", () => renameRef(r)));
+  if (r.status === "ready" || r.status === "failed") m.append(item("Re-study", "Measure and study again", async () => { await call("POST", `/api/references/${r.id}/restudy`); toast("Studying again…"); loadRefs(); }));
+  if (r.dna) m.append(item("Edit traits…", "Correct what the AI got wrong", () => openRef(r.id, true)));
+  m.append(h("hr"), item("Delete reference…", "Delete it and what the AI learned (asks first)", () => deleteRef(r), "red"));
+  placeMenu(e);
+}
+$("#ref-search").oninput = renderRefs;
+$("#ref-sort").onchange = renderRefs;
 async function uploadRefs(files) {
   files = [...files].filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(f.name));
   if (!files.length) return toast("Drop video files", true);
@@ -533,13 +671,31 @@ function timelineSvg(m) {
   return svg;
 }
 const confColor = (c) => (c == null ? "transparent" : c >= 0.7 ? "#5eead4" : c >= 0.4 ? "#fbbf24" : "#f87171");
+let REF_OPEN = null;
+function closeRef(updateHash = true) {
+  REF_OPEN = null; clearTimeout(openRef.t);
+  $("#ref-detail").hidden = true; $("#ref-detail").innerHTML = "";
+  $("#ref-index").hidden = false;
+  if (updateHash && TAB === "references") history.replaceState(null, "", "#references");
+}
 async function openRef(id, editing = false) {
-  const r = await (await fetch(`/api/references/${id}`)).json();
-  const body = $("#ref-body"); body.innerHTML = "";
+  const res = await fetch(`/api/references/${id}`);
+  if (!res.ok) { toast("Reference not found", true); return closeRef(); }
+  const r = await res.json();
+  const first = REF_OPEN !== id;
+  REF_OPEN = id;
+  history.replaceState(null, "", `#references/${id}`);
+  const body = $("#ref-detail");
   const m = r.metrics;
-  const nameIn = h("input", { type: "text", value: r.name, maxlength: 120, style: { fontSize: "18px", fontWeight: 600, width: "100%" }, title: "Rename" });
+  const nameIn = h("input", { type: "text", class: "title", value: r.name, maxlength: 120, title: "Click to rename", "aria-label": "Reference name" });
   nameIn.onchange = async () => { await call("PATCH", `/api/references/${id}`, { name: nameIn.value }); loadRefs(); };
-  const left = h("div", {}, h("video", { src: `/api/references/${id}/video`, controls: true, playsinline: true, muted: true, loop: true }));
+  const bar = h("div", { class: "refbar" },
+    h("button", { class: "ghost crumb", onclick: () => closeRef(), title: "Back to all references (Esc)" }, "← References"),
+    nameIn,
+    r.status === "ready" || r.status === "failed" ? h("button", { title: "Measure and study again", onclick: async () => { await call("POST", `/api/references/${id}/restudy`); toast("Studying again…"); loadRefs(); openRef(id); } }, "Re-study") : null,
+    r.dna && !editing ? h("button", { title: "Correct what the AI got wrong", onclick: () => openRef(id, true) }, "Edit traits") : null,
+    h("button", { class: "danger", title: "Delete this reference", onclick: () => deleteRef(r) }, "Delete"));
+  const left = h("div", { class: "refside" }, h("video", { src: `/api/references/${id}/video`, controls: true, playsinline: true, muted: true, loop: true }));
   if (m) {
     const a = m.audio || {};
     left.append(h("div", { class: "sect" }, "Measured"),
@@ -551,8 +707,8 @@ async function openRef(id, editing = false) {
         ["First cut", m.first_cut_s != null ? `${m.first_cut_s}s` : "no cuts"],
       ].map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", {}, v)))));
   }
-  const right = h("div", {}, nameIn);
-  if (r.summary) right.append(h("p", { style: { color: "var(--muted)", margin: "8px 0 0" } }, r.summary));
+  const right = h("div", {});
+  if (r.summary) right.append(h("p", { style: { color: "var(--muted)", margin: "0" } }, r.summary));
   if (r.status !== "ready") right.append(h("div", { class: r.status === "failed" ? "note err" : "note" }, r.status === "failed" ? (r.error || "Failed") : [spinner(), r.progress || "Waiting to be studied"]));
   else if (r.error) right.append(h("div", { class: "note" }, r.error));
   if (r.stale) right.append(h("div", { class: "note" }, "The study prompt has improved since this was studied. Re-study for better results."));
@@ -562,20 +718,36 @@ async function openRef(id, editing = false) {
     right.append(h("div", { class: "sect" }, "Style DNA", Object.keys(r.overrides || {}).length ? h("span", { class: "chip on", style: { marginLeft: "8px" } }, `${Object.keys(r.overrides).length} edited by you`) : null),
       h("table", { class: "traits" }, r.card.map((t) => h("tr", {}, h("td", {}, t.label, t.confidence != null ? h("span", { class: "conf", title: `AI confidence ${pct(t.confidence)}`, style: { background: confColor(t.confidence) } }) : null), h("td", {}, t.value)))));
     if (r.dna && r.dna.notes) right.append(h("p", { style: { color: "var(--faint)", fontSize: "12px" } }, r.dna.notes));
+    if (r.recipe && r.recipe.length) right.append(recipeBlock(r));
   }
   if (editing && r.dna) right.append(await traitForm(r));
   if (m && m.sheets && m.sheets.length && !editing)
     right.append(h("div", { class: "sect" }, "What the AI looked at"), h("div", { class: "sheets" }, m.sheets.map((_, i) => h("img", { src: `/api/references/${id}/sheet/${i + 1}.jpg`, alt: "" }))));
-  const acts = h("div", { class: "actions" },
-    h("button", { class: "danger", title: "Delete this reference", onclick: () => confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => { await call("DELETE", `/api/references/${id}`); hide("#dlg-ref"); loadRefs(); }) }, "Delete"),
-    h("div", { class: "spacer" }),
-    r.status === "ready" || r.status === "failed" ? h("button", { title: "Measure and study again", onclick: async () => { await call("POST", `/api/references/${id}/restudy`); toast("Studying again…"); loadRefs(); openRef(id); } }, "Re-study") : null,
-    r.dna && !editing ? h("button", { title: "Correct what the AI got wrong", onclick: () => openRef(id, true) }, "Edit traits") : null,
-    h("button", { class: "primary", "data-close": "", onclick: () => hide("#dlg-ref"), title: "Close" }, "Done"));
-  body.append(h("div", { class: "refgrid" }, left, right), acts);
-  show("#dlg-ref");
+  if (REF_OPEN !== id) return; // closed while loading
+  body.innerHTML = "";
+  body.append(bar, h("div", { class: "refgrid" }, left, right));
+  $("#ref-index").hidden = true; body.hidden = false;
+  if (first) window.scrollTo(0, 0);
   clearTimeout(openRef.t);
-  if (refBusy(r)) openRef.t = setTimeout(() => $("#dlg-ref").style.display === "flex" && openRef(id), 2500);
+  if (refBusy(r) && !editing) openRef.t = setTimeout(() => REF_OPEN === id && openRef(id), 2500);
+}
+function recipeBlock(r) {
+  const copy = (btn, text) => { navigator.clipboard?.writeText(text).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1200); }); };
+  const all = h("button", { style: { marginLeft: "8px", padding: "1px 8px", fontSize: "11px" } }, "Copy all");
+  all.onclick = () => copy(all, r.recipe.map((s) => s.command).join("\n"));
+  const rows = r.recipe.map((s, i) => {
+    const b = h("button", { style: { padding: "1px 8px", fontSize: "11px" } }, "Copy");
+    b.onclick = () => copy(b, s.command);
+    return h("tr", {}, h("td", {}, `${i + 1}. ${s.area}`),
+      h("td", {}, h("code", { style: { display: "block", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px" } }, s.command),
+        h("div", { style: { color: "var(--faint)", fontSize: "12px", marginTop: "3px" } }, s.why)), h("td", { style: { width: "1%" } }, b));
+  });
+  const out = h("div", {}, h("div", { class: "sect" }, "Rebuild in vedit", all),
+    h("p", { style: { color: "var(--faint)", fontSize: "12px", margin: "0 0 4px" } }, "Run these on your own footage, in order. Fill in the <…> parts."),
+    h("table", { class: "traits" }, rows));
+  if (r.gaps && r.gaps.length) out.append(h("div", { class: "sect" }, "Not exactly possible in vedit"),
+    h("table", { class: "traits" }, r.gaps.map((g) => h("tr", {}, h("td", {}, g.what), h("td", {}, g.closest ? ["Closest: ", h("code", {}, g.closest)] : "—")))));
+  return out;
 }
 function getPath(o, p) { return p.split(".").reduce((a, k) => (a == null ? a : a[k]), o); }
 async function traitForm(r) {
@@ -625,6 +797,7 @@ let BATCHES = [], genTimer = null;
 const ACTIVE = ["queued", "preparing", "running"];
 const VACTIVE = ["queued", "planning", "building", "rendering", "reviewing", "exporting"];
 async function loadBatches() {
+  if (!MODELS_INFO) await loadRoles("balanced");  // model names for the "AI team" line on each batch
   BATCHES = (await (await fetch("/api/batches")).json()).batches;
   const running = BATCHES.filter((b) => ACTIVE.includes(b.status)).length;
   $("#n-gen").textContent = running ? `● ${running}` : "";
@@ -636,7 +809,7 @@ function renderBatches() {
   const list = $("#gen-list"); list.innerHTML = "";
   if (!BATCHES.length) {
     list.append(h("div", { class: "empty" }, h("h2", {}, "Generate your first batch"),
-      h("p", {}, "1. Pick reference videos  ·  2. Add your footage  ·  3. Choose how many different videos you want"),
+      h("p", {}, "1. Pick reference videos  ·  2. Add your footage and sound  ·  3. Choose how many different videos you want"),
       h("button", { class: "primary", onclick: openWizard, title: "Start the wizard" }, "＋ New generation")));
     return;
   }
@@ -651,7 +824,8 @@ function batchPanel(b) {
   const head = h("div", { class: "batch-head" },
     h("div", { style: { flex: 1, minWidth: "220px" } }, h("h3", {}, b.name),
       h("div", { class: "meta" }, `${b.count} video${b.count > 1 ? "s" : ""} · ${b.brief.length_s}s · style of ${b.refs.join(", ")} · ${ago(b.created_at)}`
-        + (b.usage && b.usage.calls ? ` · ${b.usage.calls} AI calls` : ""))),
+        + (b.usage && b.usage.calls ? ` · ${b.usage.calls} AI calls` : "")),
+      b.models ? h("div", { class: "team" }, ROLE_ORDER.map(([t, label]) => b.models[t] ? h("span", {}, h("i", {}, label), modelName(b.models[t])) : null)) : null),
     statusChip(b.status, b.status === "running" ? `${b.done}/${b.count} done` : b.status === "preparing" ? "preparing" : null),
     active ? h("button", { class: "mini", title: "Stop this batch", onclick: async () => { await call("POST", `/api/batches/${b.id}/cancel`); loadBatches(); } }, "Cancel") : null,
     ["failed", "cancelled"].includes(b.status) ? h("button", { class: "mini", title: "Retry what didn't finish", onclick: async () => { await call("POST", `/api/batches/${b.id}/resume`); loadBatches(); } }, "Resume") : null,
@@ -664,47 +838,172 @@ function batchPanel(b) {
     h("div", { class: "vcard" }, h("div", { class: "vthumb" }, h("span", { class: "num" }, `v${i + 1}`), h("div", { class: "wait" }, spinner(), "Waiting for the plan"))))));
   return panel;
 }
+// ---- variation cards: only what you need to choose; the detail lives in the player ----
+function auditState(v) {
+  const a = v.audit;
+  if (!a || a.score == null) return null;
+  const pass = a.threshold ?? 80;
+  const ok = a.reached ?? (a.passed && a.score >= pass);
+  return { a, pass, ok, tone: ok ? "ok" : a.score >= pass - 15 ? "near" : "far" };
+}
+function topPick(b) {  // the best-scoring finished video, when there is a real choice
+  const done = (b.variations || []).filter((v) => v.status === "done" && v.audit && v.audit.score != null && v.verdict !== "discard");
+  if (done.length < 2) return null;
+  return done.reduce((x, y) => (y.audit.score > x.audit.score ? y : x)).id;
+}
+function scoreRing(st) {
+  const hist = (st.a.rounds || []).map((r) => r.score);
+  return h("div", { class: `ring ${st.tone}`, style: { "--v": st.a.score, "--pass": st.pass },
+    title: `Audit ${st.a.score}/100 · pass mark ${st.pass}` + (hist.length > 1 ? `\nRevisions: ${hist.join(" → ")}` : "") },
+    h("b", {}, st.a.score));
+}
+function firstIssue(v) {
+  const a = v.audit || {};
+  const f = (a.top || []).find((x) => x.severity === "must-fix") || (a.top || [])[0];
+  if (f) return f.message;
+  return v.review && v.review.issues && v.review.issues[0];
+}
 function varCard(b, v) {
   const busy = VACTIVE.includes(v.status);
-  const thumb = h("div", { class: "vthumb", title: v.status === "done" ? "Play" : "" }, h("span", { class: "num" }, `v${v.idx}`));
+  const st = auditState(v);
+  const top = v.id === topPick(b);
+  const thumb = h("div", { class: "vthumb", role: v.status === "done" ? "button" : null, tabindex: v.status === "done" ? 0 : null,
+    title: v.status === "done" ? "Play and see why" : "" },
+    h("span", { class: "num" }, `v${v.idx}`), top ? h("span", { class: "top" }, "★ Top pick") : null);
   if (v.has_poster) thumb.append(h("img", { src: `/api/variations/${v.id}/poster.jpg?v=${Math.round(v.updated_at)}`, alt: "" }));
-  if (v.status === "done") { thumb.append(h("div", { class: "play" }, "▶")); thumb.onclick = () => play(v); }
-  else thumb.append(h("div", { class: "wait" }, busy ? [spinner(), v.progress || "Queued"] : v.status === "failed" ? "Failed" : "Cancelled"));
-  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && !["order", "music_section"].includes(k)).map(([, x]) => x.replace(/_/g, " "));
+  if (v.status === "done") {
+    thumb.append(h("div", { class: "play" }, "▶"));
+    thumb.onclick = () => play(v);
+    thumb.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); play(v); } };
+    if (st) thumb.append(scoreRing(st));
+    if (v.concept) thumb.append(h("div", { class: "concept", title: v.concept.arc || "" },
+      v.concept.title + (v.concept.signature_move ? ` · ${v.concept.signature_move.replace(/_/g, " ")}` : "")));
+  } else {
+    // still working (or improving): keep the poster and current score visible, progress on top
+    thumb.append(h("div", { class: "wait" + (v.has_poster ? " over" : "") }, busy ? [spinner(), h("span", {}, v.progress || "Queued")] : v.status === "failed" ? "Failed" : "Cancelled"));
+    if (busy && st) thumb.append(scoreRing(st));
+  }
+
+  const issue = v.status === "done" && st && !st.ok ? firstIssue(v) : null;
   const body = h("div", { class: "vbody" },
-    h("div", { class: "hook" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
-    v.angle ? h("div", { class: "angle" }, v.angle) : null,
-    axes.length ? h("div", { class: "chips" }, axes.slice(0, 4).map((a) => h("span", { class: "chip" }, a))) : h("div", { class: "chips" }, h("span", { class: "chip on" }, "closest to reference")),
+    h("div", { class: "hook", title: v.hook_text || "" }, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
     v.error ? h("div", { class: "err", title: v.error }, v.error.split("\n")[0].slice(0, 140)) : null,
-    v.review && v.review.fixed && v.review.fixed.length ? h("div", { class: "angle", title: (v.review.issues || []).join("\n") }, `AI review fixed ${v.review.fixed.length} thing${v.review.fixed.length > 1 ? "s" : ""}`) : null);
+    issue ? h("button", { class: `issue ${st.tone}`, title: issue, onclick: () => play(v) },
+      h("i", {}), h("span", {}, st.a.counts && st.a.counts["must-fix"] ? `${st.a.counts["must-fix"]} must-fix · ` : `below ${st.pass} · `, issue)) : null,
+    st && st.ok ? h("div", { class: "issue ok as-text" }, h("i", {}), h("span", {}, `Passed the audit (${st.pass})`)) : null);
+
   const acts = h("div", { class: "vacts" });
   if (v.status === "done") acts.append(
-    h("button", { class: "grow", title: "Open in the editor to keep editing", onclick: () => openVar(v) }, "Edit"),
-    h("button", { class: v.verdict === "keep" ? "on-keep" : "", title: "Keep: adds it to Projects", onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); loadBatches(); } } }, "✓"),
-    h("button", { title: "Discard", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); loadBatches(); } }, "✕"));
-  if (!busy) acts.append(h("button", { title: "Make this variation again, differently", onclick: async () => { await call("POST", `/api/variations/${v.id}/regenerate`); loadBatches(); } }, "↻"));
+    h("button", { class: v.verdict === "keep" ? "keep on" : "keep", title: "Keep: adds it to Projects",
+      onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); loadBatches(); } } },
+      v.verdict === "keep" ? "✓ Kept" : "Keep"),
+    h("button", { title: "Open in the editor to keep editing", onclick: () => openVar(v) }, "Edit"),
+    h("button", { class: "ghost icon", title: "Discard", "aria-label": "Discard", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); loadBatches(); } }, "✕"));
+  if (!busy) acts.append(h("button", { class: "ghost icon", title: "Make this variation again, differently", "aria-label": "Regenerate",
+    onclick: async () => { await call("POST", `/api/variations/${v.id}/regenerate`); loadBatches(); } }, "↻"));
   body.append(acts);
-  return h("div", { class: `vcard ${v.verdict || ""}` }, thumb, body);
+  return h("div", { class: `vcard ${v.verdict || ""} ${top ? "is-top" : ""}` }, thumb, body);
 }
 async function openVar(v) { const r = await call("POST", `/api/variations/${v.id}/open`); if (r) location.href = "/editor"; }
+
+function issueList(a, seek) {  // tracked issues: one problem keeps one id across rounds
+  const all = a.issues || [];
+  if (!all.length) return null;
+  const open = all.filter((i) => i.status !== "fixed");
+  const fixed = all.filter((i) => i.status === "fixed");
+  const row = (i) => h("li", { class: `${i.severity} ${i.status}` },
+    i.at != null ? h("button", { class: "t", title: "Play from here", onclick: () => seek(i.at) }, `${Number(i.at).toFixed(1)}s`) : h("span", { class: "t none" }, "—"),
+    h("div", {}, h("span", { class: "sev" }, `${i.id} · ${i.status === "worse" ? "got worse · " : i.status === "fixed" ? "fixed · " : ""}${i.severity} · ${i.category}`), i.message));
+  return h("div", {},
+    h("p", { class: "faint" }, `Issues: ${fixed.length} fixed · ${open.length} open`),
+    open.length ? h("ol", { class: "pfind" }, open.map(row)) : h("p", { class: "faint" }, "No open issues."),
+    fixed.length ? h("details", { class: "pfixed" }, h("summary", {}, `Show ${fixed.length} fixed`), h("ol", { class: "pfind" }, fixed.map(row))) : null);
+}
+function runNote(a) {  // why the last run ended where it did
+  const s = a.stopped;
+  if (!s) return null;
+  const ran = `${s.ran} of ${s.asked} round${s.asked === 1 ? "" : "s"}`;
+  const why = s.reason === "passed" ? "it passed" : s.reason === "plateau" ? `${s.stale} revisions in a row weren't better than the best version, so it stopped to save AI quota`
+    : "it used every round you gave it";
+  return h("p", { class: "faint" }, `Last run: ${ran}. Every revision was re-rendered and re-audited side by side with the best version; ${why}. The best version is the one shown.`);
+}
+const FOOTAGE_HINTS = {
+  hook: "a strong opening shot: steady, in focus, a face or the product clearly visible in the first second",
+  story: "shots that show each step of the story the brief asks for",
+  colour: "footage with cleaner, consistent light",
+  typography: "a calmer background area where titles can sit",
+  sound: "clean audio: speech without wind or background noise",
+};
+function footageHint(cat) {
+  const need = FOOTAGE_HINTS[cat] || "different footage for this part";
+  return h("div", { class: "fhint" }, h("b", {}, `The auditor flags the ${cat} every round.`),
+    ` More revisions are unlikely to fix it: the editor can only reuse your footage. Add ${need}, then regenerate, or lower the pass mark.`);
+}
+// "keep improving": more editor revisions from this video's best version, until it passes
+function improveBox(v, close) {
+  const rounds = h("select", { "aria-label": "Rounds", title: "At most this many more revisions; it stops as soon as the video passes" },
+    [1, 2, 3, 5].map((n) => h("option", { value: n, selected: n === 3 ? "" : null }, `${n} more round${n > 1 ? "s" : ""}`)));
+  const go = h("button", { class: "primary", title: "The editor revises this video from its best version and the review above, re-renders and re-audits until it passes" },
+    "Keep improving");
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = "Starting…";
+    const r = await call("POST", `/api/variations/${v.id}/improve`, { rounds: Number(rounds.value) });
+    if (r) { toast(`Improving v${v.idx}: it keeps going until it passes`); close(); loadBatches(); }
+    else { go.disabled = false; go.textContent = "Keep improving"; }
+  };
+  return h("div", { class: "improve" }, go, rounds,
+    h("span", { class: "faint" }, "About 2 AI calls a round. It stops as soon as the video passes, and always keeps the best version."));
+}
+// the player: the video next to everything that explains it; finding times seek the video
 function play(v) {
   const body = $("#play-body"); body.innerHTML = "";
-  body.append(h("h2", {}, v.hook_text ? `v${v.idx}: “${v.hook_text}”` : `Variation ${v.idx}`),
-    h("p", {}, v.angle || ""),
-    h("video", { class: "vplayer", src: `/api/variations/${v.id}/video.mp4`, controls: true, autoplay: true, playsinline: true }),
-    h("div", { class: "actions" }, h("button", { onclick: () => { hide("#dlg-play"); body.innerHTML = ""; }, title: "Close" }, "Close"),
-      h("button", { class: "primary", onclick: () => openVar(v), title: "Open in the editor" }, "Open in editor")));
+  const st = auditState(v);
+  const video = h("video", { class: "vplayer", src: `/api/variations/${v.id}/video.mp4`, controls: true, autoplay: true, playsinline: true });
+  const seek = (t) => { if (t == null) return; video.currentTime = Math.max(0, t - 0.3); video.play(); };
+  const close = () => { hide("#dlg-play"); body.innerHTML = ""; };
+  const axes = Object.entries(v.axes || {}).filter(([k, x]) => x !== "reference" && k !== "sound").map(([k, x]) => `${k.replace(/_/g, " ")}: ${x.replace(/_/g, " ")}`);
+  const a = st ? st.a : null;
+  const findings = a ? (a.top || []) : [];
+  const side = h("div", { class: "pside" },
+    h("div", { class: "pnum" }, `Variation ${v.idx}`),
+    h("h2", {}, v.hook_text ? `“${v.hook_text}”` : `Variation ${v.idx}`),
+    v.angle ? h("p", {}, v.angle) : null,
+    v.concept ? h("section", {}, h("h4", {}, "Concept"),
+      h("div", { class: "pconcept" }, h("b", {}, v.concept.title), v.concept.signature_move ? h("span", { class: "chip" }, v.concept.signature_move.replace(/_/g, " ")) : null),
+      v.concept.arc ? h("p", {}, v.concept.arc) : null,
+      v.concept_reason ? h("p", { class: "faint" }, `Picked because: ${v.concept_reason}`) : null) : null,
+    a ? h("section", {}, h("h4", {}, "Audit"),
+      h("div", { class: "pscore" }, scoreRing(st), h("div", {},
+        h("b", { class: st.tone }, st.ok ? "Passed" : "Below the pass mark", h("span", { class: "faint" }, ` · pass ${st.pass}`)),
+        (a.rounds || []).length > 1 ? h("div", { class: "faint" }, `Editor revised it ${a.rounds.length - 1}×: ${a.rounds.map((r) => r.score).join(" → ")}`) : null)),
+      runNote(a),
+      a.recurring && !st.ok ? footageHint(a.recurring) : null,
+      !st.ok ? improveBox(v, close) : null,
+      v.error ? h("p", { class: "faint" }, v.error) : null,
+      a.summary ? h("p", {}, a.summary) : null,
+      issueList(a, seek) || (findings.length ? h("ol", { class: "pfind" }, findings.map((f) => h("li", { class: f.severity },
+        f.at != null ? h("button", { class: "t", title: "Play from here", onclick: () => seek(f.at) }, `${Number(f.at).toFixed(1)}s`) : h("span", { class: "t none" }, "—"),
+        h("div", {}, h("span", { class: "sev" }, `${f.severity} · ${f.category}`), f.message)))) : h("p", { class: "faint" }, "No open findings."))) : null,
+    axes.length ? h("section", {}, h("h4", {}, "Variation settings"), h("div", { class: "chips" }, axes.map((x) => h("span", { class: "chip" }, x)))) : null);
+  const acts = h("div", { class: "actions" },
+    h("button", { class: "ghost", onclick: async () => { await call("POST", `/api/variations/${v.id}/discard`); close(); loadBatches(); } }, "Discard"),
+    h("button", { onclick: () => openVar(v) }, "Open in editor"),
+    h("button", { class: "primary", onclick: async () => { const r = await call("POST", `/api/variations/${v.id}/keep`); if (r) { toast("Kept. It's in Projects now."); close(); loadBatches(); } } },
+      v.verdict === "keep" ? "✓ Kept" : "Keep"));
+  body.append(h("button", { class: "ghost icon pclose", title: "Close", "aria-label": "Close", onclick: close }, "✕"),
+    h("div", { class: "pgrid" }, h("div", { class: "pvideo" }, video), h("div", { class: "pcol" }, side, acts)));
   show("#dlg-play");
 }
 $("#b-gen-new").onclick = () => openWizard();
 
 // ============================================================ generate: wizard
-const STEPS = ["References", "Footage", "Brief", "Variations", "Review"];
+const STEPS = ["References", "Footage", "Sound", "Brief", "Variations", "Review"];
 let W = null;
 function newWizard() {
-  return { step: 0, refs: new Set(), lead: null, footage: [], uploading: 0, est: null,
+  // footage: used for pictures · sound: used only for its audio (the videos take turns) · roles: AI's footage/sound call per upload
+  return { step: 0, refs: new Set(), lead: null, footage: [], sound: [], roles: {}, sorting: new Set(), manual: new Set(), uploading: 0, est: null,
     brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "" },
-    count: 3, axes: null, quality: "balanced", review: true };
+    count: 3, axes: null, quality: "balanced", review: true, explore: true };
 }
 async function openWizard() {
   const o = await options();
@@ -718,11 +1017,13 @@ async function openWizard() {
   show("#dlg-wiz");
 }
 const payload = () => ({ refs: [...W.refs], lead: W.refs.size > 1 ? W.lead : null, footage: W.footage.map((f) => f.id),
-  brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review });
+  sound: W.sound.map((f) => f.id), brief: W.brief, count: W.count, axes: [...W.axes], quality: W.quality, review: W.review, explore: W.explore,
+  audit_threshold: W.audit_threshold ?? null, audit_rounds: W.audit_rounds ?? null, models: W.models || {} });
 function stepOk(i) {
   if (i === 0) return W.refs.size > 0;
-  if (i === 1) return W.footage.some((f) => f.kind === "video") && W.footage.filter((f) => f.kind === "audio").length <= 1 && !W.uploading;
-  if (i === 2) return W.brief.length_s >= 5 && W.brief.length_s <= 90;
+  if (i === 1) return W.footage.some((f) => f.kind === "video") && !W.uploading;
+  if (i === 2) return W.sound.length <= 10 && !W.uploading;
+  if (i === 3) return W.brief.length_s >= 5 && W.brief.length_s <= 90;
   return W.count >= 1;
 }
 function renderWiz() {
@@ -730,7 +1031,7 @@ function renderWiz() {
   body.append(h("h2", {}, "New generation"),
     h("div", { class: "steps" }, STEPS.map((s, i) => h("div", { class: "stp" + (i === W.step ? " on" : i < W.step ? " done" : "") }, `${i + 1}. ${s}`))));
   const content = h("div", {});
-  [wizRefs, wizFootage, wizBrief, wizVariations, wizReview][W.step](content);
+  [wizRefs, wizFootage, wizSound, wizBrief, wizVariations, wizReview][W.step](content);
   body.append(content);
   const last = W.step === STEPS.length - 1;
   const next = h("button", { class: "primary", disabled: stepOk(W.step) ? null : "", title: last ? "Start generating" : "Next step",
@@ -767,39 +1068,104 @@ function wizRefs(el) {
       if (d.pending) merged.append(h("div", { class: "meta", style: { padding: "6px 8px" } }, `${d.pending} more still being studied.`));
     });
 }
-async function uploadFootage(files) {
+const canSound = (f) => f.kind === "audio" || (f.kind === "video" && f.has_audio);
+function placeAs(f, role, why) {
+  // Put an upload in Footage or Sound
+  W.footage = W.footage.filter((x) => x.id !== f.id);
+  W.sound = W.sound.filter((x) => x.id !== f.id);
+  if (role === "sound") W.sound.push(f);
+  else if (f.kind !== "audio") W.footage.push(f);
+  if (why) toast(why);
+}
+async function sortWithAI(files) {
+  // Ask the AI whether each video with sound is footage or "just a sound"; move it unless the user already chose
+  const ask = files.filter((f) => f.kind === "video" && f.has_audio && !W.roles[f.id]);
+  if (!ask.length) return;
+  ask.forEach((f) => W.sorting.add(f.id)); renderWizIfOpen();
+  const r = await fetch("/api/uploads/classify", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ask.map((f) => f.id), quality: W.quality }) }).catch(() => null);
+  const d = r && r.ok ? await r.json().catch(() => ({})) : {};
+  ask.forEach((f) => W.sorting.delete(f.id));
+  for (const f of ask) {
+    const role = (d.roles || {})[f.id];
+    if (!role) continue;
+    W.roles[f.id] = role;
+    const here = W.sound.some((x) => x.id === f.id) ? "sound" : "footage";
+    if (role.by === "ai" && role.role !== here && !W.manual.has(f.id))
+      placeAs(f, role.role, `AI moved “${f.name}” to ${role.role === "sound" ? "Sound" : "Footage"}: ${role.reason}`);
+  }
+  renderWizIfOpen();
+}
+function renderWizIfOpen() { if (W && $("#dlg-wiz").style.display === "flex") renderWiz(); }
+async function uploadFootage(files, target = "footage") {
   const fd = new FormData(); [...files].forEach((f) => fd.append("files", f));
   W.uploading++; renderWiz();
   const r = await fetch("/api/uploads", { method: "POST", body: fd });
   const d = await r.json().catch(() => ({}));
   W.uploading--;
+  let added = [];
   if (!r.ok) toast(d.detail || "Upload failed", true);
   else {
-    for (const f of d.added) if (!W.footage.some((x) => x.id === f.id)) W.footage.push(f);
+    added = d.added.filter((f) => !W.footage.some((x) => x.id === f.id) && !W.sound.some((x) => x.id === f.id));
+    for (const f of added) {
+      if (target === "sound") {
+        if (!canSound(f)) { toast(`“${f.name}” has no sound to use`, true); continue; }
+        W.manual.add(f.id); placeAs(f, "sound");
+      } else placeAs(f, f.kind === "audio" ? "sound" : "footage", f.kind === "audio" ? `“${f.name}” is audio, so it went to Sound` : null);
+    }
     if (d.errors.length) toast(d.errors.join("; "), true);
   }
-  if ($("#dlg-wiz").style.display === "flex") renderWiz();
+  renderWizIfOpen();
+  sortWithAI(added);
 }
 $("#foot-file").onchange = (e) => { uploadFootage(e.target.files); e.target.value = ""; };
+$("#snd-file").onchange = (e) => { uploadFootage(e.target.files, "sound"); e.target.value = ""; };
+function soundFor(i) {
+  // Which generated videos use sound #i (they take turns)
+  const n = W.sound.length, out = [];
+  for (let v = i; v < W.count; v += n) out.push(v + 1);
+  return out.length ? ` · used by video ${out.join(", ")}` : " · not used (more sounds than videos)";
+}
+function fileRow(f, where, i) {
+  const meta = f.kind === "video" ? `video · ${dur(f.duration)} · ${f.width}×${f.height}${where === "sound" ? " · only its sound is used" : ""}`
+    : f.kind === "audio" ? `sound · ${dur(f.duration)}${f.bpm ? ` · ${f.bpm} BPM` : ""}` : `image · ${f.width}×${f.height}`;
+  const turn = where === "sound" && W.sound.length > 1 ? soundFor(i) : "";
+  const role = W.roles[f.id];
+  const tag = W.sorting.has(f.id) ? h("span", { class: "role wait" }, "AI is sorting…")
+    : role && role.by === "ai" ? h("span", { class: "role", title: role.reason }, `AI: ${role.role}`) : null;
+  const other = where === "sound" ? "footage" : "sound";
+  const swap = f.kind === "video" && (other === "footage" || f.has_audio)
+    ? h("button", { class: "mini", title: other === "sound" ? "Use only this video's sound (as the music track)" : "Use this video's pictures instead",
+        onclick: () => { W.manual.add(f.id); placeAs(f, other); renderWiz(); } }, other === "sound" ? "Use as sound" : "Use as footage") : null;
+  return h("div", { class: "file" },
+    f.kind === "audio" ? h("div", { class: "ic" }, "🎵") : h("img", { src: `/api/uploads/${f.id}/thumb.jpg`, alt: "" }),
+    h("div", { class: "fn" }, h("b", {}, f.name), h("small", {}, meta, turn, tag)),
+    swap,
+    h("button", { class: "ghost mini", title: "Remove", onclick: () => { W.footage = W.footage.filter((x) => x !== f); W.sound = W.sound.filter((x) => x !== f); renderWiz(); } }, "✕"));
+}
 function wizFootage(el) {
-  el.append(h("p", {}, "Your own material. Videos are required; add one music track and images (logo, product shots) if you like. Only these files are used: never the reference's footage or music."));
-  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos, a music track or images here, or ",
+  el.append(h("p", {}, "Your own material: the pictures that get cut into the video. Videos are required; add images (logo, product shots) if you like. Videos keep their own audio. The AI checks each video: one that is really just a sound (a song over a still image, a trending sound) moves to the Sound step."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos or images here, or ",
     h("button", { class: "mini", onclick: () => $("#foot-file").click(), title: "Choose files" }, "choose files")]);
-  dropTarget(zone, uploadFootage);
+  dropTarget(zone, (files) => uploadFootage(files, "footage"));
   el.append(zone);
-  const icon = { video: "🎬", audio: "🎵", image: "🖼" };
-  const list = h("div", { class: "files" });
-  for (const f of W.footage) {
-    const meta = f.kind === "video" ? `video · ${dur(f.duration)} · ${f.width}×${f.height}` : f.kind === "audio" ? `music · ${dur(f.duration)}${f.bpm ? ` · ${f.bpm} BPM` : ""}` : `image · ${f.width}×${f.height}`;
-    list.append(h("div", { class: "file" },
-      f.kind === "audio" ? h("div", { class: "ic" }, icon.audio) : h("img", { src: `/api/uploads/${f.id}/thumb.jpg`, alt: "" }),
-      h("div", { class: "fn" }, h("b", {}, f.name), h("small", {}, meta)),
-      h("button", { class: "ghost mini", title: "Remove", onclick: () => { W.footage = W.footage.filter((x) => x !== f); renderWiz(); } }, "✕")));
-  }
-  el.append(list);
-  const audio = W.footage.filter((f) => f.kind === "audio").length;
-  if (audio > 1) el.append(h("div", { class: "note" }, "Use only one music track."));
+  el.append(h("div", { class: "files" }, W.footage.map((f) => fileRow(f, "footage"))));
   if (W.footage.length && !W.footage.some((f) => f.kind === "video")) el.append(h("div", { class: "note" }, "Add at least one video."));
+}
+function wizSound(el) {
+  el.append(h("p", {}, "Optional: music tracks or sounds. Drop audio files, or videos and only their sound is used (their pictures never appear). Each video gets one sound; with several, the videos take turns (video 1 gets the first, video 2 the second…). Cuts snap to the beat when the reference style does."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop songs, sounds or videos here, or ",
+    h("button", { class: "mini", onclick: () => $("#snd-file").click(), title: "Choose files" }, "choose files")]);
+  dropTarget(zone, (files) => uploadFootage(files, "sound"));
+  el.append(zone);
+  el.append(h("div", { class: "files" }, W.sound.map((f, i) => fileRow(f, "sound", i))));
+  if (W.sound.length > 10) el.append(h("div", { class: "note" }, "Use at most 10 sounds."));
+  else if (W.sound.length > W.count && W.count) el.append(h("div", { class: "meta", style: { marginTop: "8px" } }, `You're making ${W.count} video(s), so only the first ${W.count} sound(s) will be used. You can raise the count in Variations.`));
+  const fromFootage = W.footage.filter((f) => f.kind === "video" && f.has_audio);
+  if (!W.sound.length && fromFootage.length)
+    el.append(h("div", { class: "meta", style: { marginTop: "10px" } }, "No sound picked: the videos keep their own audio. Or use a footage video's sound: ",
+      ...fromFootage.slice(0, 4).map((f) => h("button", { class: "mini", style: { marginLeft: "6px" }, title: "Use this video only for its sound",
+        onclick: () => { W.manual.add(f.id); placeAs(f, "sound"); renderWiz(); } }, f.name))));
 }
 function field(label, input) { return h("div", {}, h("label", {}, label), input); }
 function wizBrief(el) {
@@ -850,9 +1216,57 @@ function wizVariations(el) {
   }
   const rv = h("input", { type: "checkbox", checked: W.review ? "" : null });
   rv.onchange = () => { W.review = rv.checked; refreshEstimate(est); };
-  el.append(h("label", {}, "AI quality"), radios, h("div", { class: "checks", style: { marginTop: "8px" } },
-    h("label", { title: "The AI looks at each result and fixes text placement once" }, rv, "AI reviews each video (one round of fixes)")), est);
+  const ex = h("input", { type: "checkbox", checked: W.explore !== false ? "" : null });
+  ex.onchange = () => { W.explore = ex.checked; refreshEstimate(est); };
+  const thr = h("input", { type: "number", min: 0, max: 100, step: 5, style: { width: "64px" }, value: W.audit_threshold ?? "" , placeholder: "80" });
+  const rnd = h("input", { type: "number", min: 0, max: 8, step: 1, style: { width: "52px" }, value: W.audit_rounds ?? "", placeholder: "3" });
+  fetch("/api/audit/settings").then((r) => r.json()).then((c) => { thr.placeholder = c.threshold; rnd.placeholder = c.max_rounds; }).catch(() => {});
+  thr.onchange = () => { W.audit_threshold = thr.value === "" ? null : Number(thr.value); };
+  rnd.onchange = () => { W.audit_rounds = rnd.value === "" ? null : Number(rnd.value); refreshEstimate(est); };
+  const team = h("div", { class: "team-pick" }, h("div", { class: "hint" }, "Loading models…"));
+  const drawTeam = () => renderTeam(team);
+  radios.querySelectorAll("input").forEach((rb) => rb.addEventListener("change", drawTeam));
+  drawTeam();
+  el.append(h("label", {}, "AI quality"), radios, h("label", {}, "AI team: which model does which job"), team, h("div", { class: "checks", style: { marginTop: "8px" } },
+    h("label", { title: "An independent AI reviewer watches each result; below the pass mark its review goes back to the editor. Code checks always run." }, rv, "Auditor reviews each video; the editor revises until it passes"),
+    h("label", { title: "The AI writes 3 different concepts per video and a judge picks the strongest, keeping the batch varied" }, ex, "Explore 3 concepts per video, keep the best"),
+    h("label", { title: "Below the pass mark the auditor's review goes back to the editor, which revises the whole edit and rebuilds it" },
+      "Pass mark ", thr, " · up to ", rnd, " revisions")), est);
   refreshEstimate(est);
+}
+// ---- AI team: pick the model for each role (this generation), optionally save as defaults ----
+const ROLE_ORDER = [["vision", "Watcher"], ["planner", "Creative director"], ["editor", "Editor"], ["auditor", "Auditor"]];
+let MODELS_INFO = null;
+function modelName(k) {
+  const m = (MODELS_INFO?.models || []).find((x) => x.key === k);
+  return m ? m.label.replace(/\s*\(.*\)$/, "") : (k || "").split("/").pop();
+}
+async function loadRoles(quality) {
+  try { MODELS_INFO = await (await fetch(`/api/ai/roles?quality=${encodeURIComponent(quality || "balanced")}`)).json(); } catch { MODELS_INFO = null; }
+  return MODELS_INFO;
+}
+async function renderTeam(box) {
+  const info = await loadRoles(W.quality);
+  box.innerHTML = "";
+  if (!info) { box.append(h("div", { class: "hint" }, "Couldn't load the model list.")); return; }
+  W.models = W.models || {};
+  for (const r of info.roles) {
+    const pick = W.models[r.tier] || "";
+    const opts = info.models.filter((m) => !r.vision || m.vision !== false);
+    const sel = h("select", { "aria-label": `${r.label} model` },
+      h("option", { value: "" }, `${r.saved ? "My default" : "Default"}: ${modelName(r.effective)}`),
+      opts.map((m) => { const o = h("option", { value: m.key }, `${m.label} · ${m.provider}${m.ready ? "" : " (no key)"}`); if (!m.ready) o.disabled = true; if (m.key === pick) o.selected = true; return o; }));
+    sel.onchange = () => { if (sel.value) W.models[r.tier] = sel.value; else delete W.models[r.tier]; };
+    box.append(h("div", { class: "role" },
+      h("div", {}, h("b", {}, r.label), r.vision ? h("span", { class: "vis", title: "Looks at video frames: only models with vision are listed" }, "sees frames") : null,
+        h("div", { class: "hint" }, r.about)),
+      sel));
+  }
+  box.append(h("div", { class: "team-acts" },
+    h("button", { class: "mini", title: "Use these choices for every future generation and for the editor's AI auditor",
+      onclick: async () => { const body = { _quality: W.quality }; for (const [t] of ROLE_ORDER) body[t] = W.models[t] || (info.roles.find((x) => x.tier === t) || {}).saved || ""; const r = await call("POST", "/api/ai/roles", body); if (r) { toast("Saved as your defaults"); W.models = {}; renderTeam(box); } } },
+      "Make these my defaults"),
+    h("span", { class: "hint" }, "References that are already studied keep their study. ", h("a", { href: "/settings#providers", target: "_blank" }, "Add models in Settings"))));
 }
 function wizReview(el) {
   const names = REFS.filter((r) => W.refs.has(r.id)).map((r) => r.name + (W.lead === r.id ? " ★" : ""));
@@ -860,11 +1274,13 @@ function wizReview(el) {
   const est = h("div", { class: "estimate" }, "Estimating…");
   el.append(h("dl", { class: "review-list" }, [
     ["Style of", names.join(", ")],
-    ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "audio") ? ", 1 music track" : ", no music") + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
+    ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
+    ["Sound", W.sound.length ? W.sound.map((x) => x.name + (x.kind === "video" ? " (from video)" : "")).join(", ") + (W.sound.length > 1 ? " · the videos take turns" : "") : "none (videos keep their own audio)"],
     ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"],
     ["Length / format", `${b.length_s}s · ${(FORMATS.find((x) => x.id === b.format) || {}).label}`],
     ["Videos", `${W.count}, varying: ${OPTS.axes.filter((a) => W.axes.has(a.id)).map((a) => a.label.toLowerCase()).join(", ") || "nothing"}`],
-    ["AI", `${W.quality}${W.review ? ", with review" : ""}`],
+    ["AI", `${W.quality}${W.review ? ", with auditor" : ""}${W.explore !== false ? ", exploring concepts" : ""}`],
+    ["AI team", ROLE_ORDER.map(([t, label]) => `${label}: ${modelName(W.models?.[t] || (MODELS_INFO?.roles || []).find((r) => r.tier === t)?.effective)}`).join(" · ")],
   ].map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]).flat()), est);
   refreshEstimate(est);
 }
@@ -880,15 +1296,21 @@ async function submitWiz() {
 // ============================================================ keys + start
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (e.key === "Escape" && !document.querySelector(".veil[style*=flex]") && REF_OPEN && !typing) { closeRef(); return; }
   if (e.key === "Escape") { document.querySelectorAll(".veil").forEach((v) => (v.style.display = "none")); hideMenu(); $("#play-body").innerHTML = ""; }
   if (typing || document.querySelector(".veil[style*=flex]")) return;
   if (e.key === "/" && TAB === "projects") { e.preventDefault(); $("#search").focus(); }
+  if (e.key === "/" && TAB === "references" && !REF_OPEN) { e.preventDefault(); $("#ref-search").focus(); }
   if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : openWizard(); }
   if (["1", "2", "3"].includes(e.key)) setTab(TABS[+e.key - 1]);
 });
 setTab(TAB);
+if (TAB === "references" && HASH_REF) openRef(HASH_REF);
 loadRefs();
 loadBatches();
+fetch("/api/update").then((r) => (r.ok ? r.json() : null)).then((u) => {
+  if (u?.enabled && (u.available || u.staged)) document.getElementById("b-update").hidden = false;
+}).catch(() => {});
 </script>
 </body>
 </html>

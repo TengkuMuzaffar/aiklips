@@ -1,6 +1,6 @@
 """Reference library: add videos, study them (measure + AI), keep the Style DNA.
 
-Files: ~/.claude-cut/references/<sha16>/
+Files: ~/.aiklips/references/<sha16>/
     source.<ext>   copy of the uploaded video (the user's original is never touched)
     metrics.json   measured by code (references.analysis)
     thumb.jpg, sheet-1.jpg, sheet-2.jpg
@@ -21,7 +21,7 @@ from .. import jobs, library
 from ..ai import client as ai
 from ..ai import prompts
 from ..project import VeditError
-from . import analysis, dna as dnamod
+from . import analysis, dna as dnamod, recipe as recipemod
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS refs (
@@ -142,6 +142,8 @@ def get(rid: int, full: bool = False) -> dict:
         if full:
             row["card"] = dnamod.card(style)
             row["base_dna"] = base
+            row["recipe"] = recipemod.build(style, m, rid)
+            row["gaps"] = recipemod.gaps(style)
     if full and m:
         a = m.get("audio") or {}
         row["metrics"] = {
@@ -149,11 +151,24 @@ def get(rid: int, full: bool = False) -> dict:
             "cuts": m["cuts"], "pacing": m["pacing"], "motion": m.get("motion"), "first_cut_s": m.get("first_cut_s"),
             "cuts_on_beat": m.get("cuts_on_beat"), "cuts_on_beat_chance": m.get("cuts_on_beat_chance"),
             "audio": None if not a else {k: a.get(k) for k in ("bpm", "tempo_confidence", "beats", "onsets", "rms", "rms_step", "silence_ratio")},
-            "transcript": m.get("transcript"), "sheets": m.get("sheets", []),
+            "transcript": m.get("transcript"), "sheets": m.get("sheets", []), "color": m.get("color"),
         }
     job = jobs.for_target(f"ref:{rid}")
     row["job"] = None if not job else {"status": job["status"], "note": job["note"]}
     return row
+
+
+def color_of(rid: int) -> dict:
+    """The reference's measured colour (analysis.color_profile). Older references are measured
+    now and saved, so they work without a re-study."""
+    row = _row(rid)
+    d = Path(row["dir"])
+    m = _load_json(d / "metrics.json") or {}
+    if not m.get("color"):
+        m["color"] = analysis.color_profile(source_path(row), float(m.get("duration") or 0) or None)
+        if (d / "metrics.json").exists():
+            (d / "metrics.json").write_text(json.dumps(m))
+    return m["color"]
 
 
 def list_refs() -> list[dict]:
@@ -234,6 +249,10 @@ def study(rid: int, job: jobs.Job | None = None, quality: str = "balanced") -> d
     metrics = _load_json(d / "metrics.json")
     if metrics is None or not (d / "sheet-1.jpg").exists():
         metrics = analysis.analyze(src, d, say)
+    elif not metrics.get("color"):  # studied before colour was measured
+        say("Measuring colour")
+        metrics["color"] = analysis.color_profile(src, metrics.get("duration"))
+        (d / "metrics.json").write_text(json.dumps(metrics))
     say("AI is studying the style")
     usage: dict = {}
     ai_used = 0

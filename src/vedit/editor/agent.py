@@ -18,8 +18,10 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from .. import history
 from ..project import load, state_dir
 from . import models as registry
+from . import permissions
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -32,7 +34,7 @@ with the Mask / Focus buttons under the preview.
 """.strip()
 
 SYSTEM_APPEND = """
-You are running inside the claude-cut desktop editor. The user sees four panes:
+You are running inside the aiklips desktop editor. The user sees four panes:
 an inspector (top-left), the video preview (top-right), this chat (bottom-left) and a
 drag-and-drop timeline (bottom-right). The preview and timeline refresh automatically
 after every vedit command, so never run `vedit serve`, `vedit app` or `--open`.
@@ -55,7 +57,22 @@ for privacy), never PNG / colour patches made with ffmpeg. For an exact shape, g
 boxes joined with ';'. For object focus use `vedit focus add`; for transitions
 `vedit transition`. Load the `masking-focus` / `transitions` skill first.
 The user can also box, brush or grid-paint a mask (Mask button under the preview) or draw a focus box.
+
+The timeline has a main track (clips; it can hold gaps) and overlay tracks above it (0 = bottom, higher =
+drawn on top). Everything you can drag there you can do with vedit: `place` (move a clip to a time / a layer to a
+track), `to-overlay` / `to-clip` (move between main and overlay tracks), `track list|hide|show`, `layer style
+--fit --flip-h`, `color set|look --layer`, `music set --offset --end`, and effects on part of a clip
+(`fx add ... --start --end --fade-in`, `fx set fxN start= end=`). `info` shows tracks, gaps and hidden tracks.
+
+Keep the edit consistent: one text look for all titles (`vedit text look apply <name>`, bundled
+fonts via `vedit fonts`, load the `animation` skill), and for colour run `vedit color match`
+then one `vedit color look <name>` on every clip (load the `color` skill). Say why you chose a look.
+
+Before you say an edit is done: record why each clip you chose is there (`vedit why <clip> "..." --role ...`),
+run `vedit --json audit`, fix every must-fix finding and re-run until it passes. Report the score.
 """.strip()
+
+AUDIT_TIMEOUT = 300  # seconds: a render + an AI review can take a while
 
 _ALLOWED_TOOLS = {"Read", "Glob", "Grep", "LS", "Skill", "TodoWrite", "ToolSearch", "BashOutput", "KillShell", "KillBash"}
 
@@ -68,6 +85,22 @@ _NEVER_ALWAYS = {"rm", "sudo", "sh", "bash", "zsh", "fish", "curl", "wget", "pyt
                  "git", "pip", "npm", "npx", "brew", "uv", "find", "sed", "awk", "perl", "ruby", "tee", "cp", "ln", "source", "."}
 _SAFE_VARS = {"VEDIT_PROJECT", "HOME", "PWD"}
 _VAR = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _chat_default() -> str | None:
+    from ..ai import client as ai
+
+    return ai.settings().get("chat")
+
+
+def _record_chat_usage(model: str, msg: Any) -> None:
+    """Chat turns go in the same usage log as generation calls, so Settings → Usage shows both."""
+    from ..ai import client as ai
+
+    u = getattr(msg, "usage", None) or {}
+    ai._record_usage("chat", model, {"input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                                     "cache_read": u.get("cache_read_input_tokens"), "cost_usd": getattr(msg, "total_cost_usd", None),
+                                     "seconds": round((getattr(msg, "duration_ms", 0) or 0) / 1000, 2)})
 
 
 class _Unsafe(Exception):
@@ -283,20 +316,26 @@ class ChatSession:
         self.chat_created: float = time.time()
         self.log: list[dict] = []
         self.session_id: str | None = None
-        self.model: str = registry.normalize_key(data.get("model"))
+        # a project remembers its own model; a new one starts on the default chosen in Settings → Models
+        self.model: str = registry.normalize_key(data.get("model") or _chat_default())
         try:
             registry.resolve(self.model)
         except registry.RegistryError:
             self.model = registry.DEFAULT_KEY
         self.pending: dict[str, tuple[asyncio.Future, dict]] = {}  # permission requests awaiting the user
         self.always: set[str] = set(data.get("always_allow", []))  # "Always allow" answers, per project
+        # auditor: code checks run whenever a turn changed the edit; the AI reviewer only when switched on
+        self.auto_audit_ai: bool = bool(data.get("auto_audit_ai", False))
+        self.turn_head: int | None = None
+        self.audited_head: int | None = None  # history step the last audit looked at
+        self.audit_rounds = 0
         if data.get("log"):  # older single-chat format: keep it as a saved chat (once)
             self._write_chat(self._new_chat_id(data["log"][0].get("time")), data["log"], data.get("session_id"))
             self._save()
 
     # ---- plumbing --------------------------------------------------------------
     def _save(self) -> None:
-        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always)}))
+        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always), "auto_audit_ai": self.auto_audit_ai}))
         if self.log:
             if self.chat_id is None:
                 self.chat_id = self._new_chat_id()
@@ -333,7 +372,7 @@ class ChatSession:
 
     def _history_event(self) -> dict:
         return {"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": registry.public(),
-                "chats": self.chats(), "chat_id": self.chat_id}
+                "chats": self.chats(), "chat_id": self.chat_id, "auto_audit_ai": self.auto_audit_ai}
 
     async def _broadcast(self, ev: dict) -> None:
         for ws in list(self.sockets):
@@ -393,13 +432,14 @@ class ChatSession:
 
         if tool in _ALLOWED_TOOLS:
             return PermissionResultAllow()
+        allowed = self.always | permissions.global_allow()  # this project's + Settings → Permissions
         always_key: str | None = None
         if tool == "Bash":
             ok, need = bash_check(str(data.get("command", "")), (REPO_ROOT, self.pdir))
             if ok:
                 return PermissionResultAllow()
             if need is not None and need and not (need & _NEVER_ALWAYS):
-                if need <= self.always:
+                if need <= allowed:
                     return PermissionResultAllow()
                 always_key = ",".join(sorted(need))
         elif tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
@@ -409,7 +449,7 @@ class ChatSession:
         elif tool.startswith("mcp__"):
             pass  # connectors are never auto-allowed
         else:
-            if tool in self.always:
+            if tool in allowed:
                 return PermissionResultAllow()
             always_key = tool
         if tool == "Bash":
@@ -418,6 +458,10 @@ class ChatSession:
             detail = str(data["file_path"])
         else:
             detail = json.dumps(data, default=str)
+        if permissions.unlisted() == "deny":
+            await self.emit({"type": "notice", "text": f"Blocked {tool} (Settings → Permissions is set to deny without asking): {detail[:120]}"})
+            return PermissionResultDeny(message="Blocked by the user's permission settings. Use a `uv run vedit ...` command "
+                                                "instead, or tell the user what you need and why.")
         rid = f"perm-{time.time_ns()}"
         ev = {"type": "permission", "id": rid, "tool": tool, "detail": detail[:2000], "time": time.time()}
         if always_key:
@@ -468,7 +512,7 @@ class ChatSession:
             pass
 
     async def _connect(self, resume: bool) -> None:
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
         root = REPO_ROOT if (REPO_ROOT / "CLAUDE.md").exists() else self.pdir
         provider, model = registry.resolve(self.model)
@@ -492,6 +536,8 @@ class ChatSession:
             resume=self.session_id if resume else None,
             max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
             stderr=self._cli_log,  # keep Claude Code's diagnostics out of the user's terminal
+            # the auditor: every time the agent says it's done, check the edit; must-fix findings send it back
+            hooks={"Stop": [HookMatcher(hooks=[self._on_stop], timeout=AUDIT_TIMEOUT)]},
         )
         self.client = ClaudeSDKClient(options=opts)
         await self.client.connect()
@@ -520,12 +566,33 @@ class ChatSession:
             if kind == "clip":
                 starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
                 c = p.clip(sid)
-                lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
-                             f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: {', '.join(e.type for e in c.effects) or 'none'})")
+                if c.gap:
+                    lines.append(f"selected: gap {c.id} (empty space on the main track) at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s")
+                else:
+                    lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
+                                 f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: "
+                                 f"{', '.join(str(e.params.get('id')) + ' ' + str(e.params.get('key')) if e.type == 'fx' else e.type for e in c.effects) or 'none'})")
             elif kind == "layer":
                 l = p.layer(sid)
                 label = l.text or l.image or " ".join(w.text for w in l.words[:8])
-                lines.append(f"selected: {l.type} layer {l.id} {l.start:.2f}-{(l.end if l.end is not None else p.duration):.2f}s \"{label[:60]}\"")
+                extra = f", track {l.track}" + (" (hidden)" if l.hidden else "")
+                if l.type == "video":
+                    extra += f", fit {l.fit}" + (", flipped" if l.flip_h or l.flip_v else "")
+                if l.type in ("video", "adjust") and l.effects:
+                    extra += ", effects: " + ", ".join(str(e.params.get("id")) + " " + str(e.params.get("key")) for e in l.effects if e.type == "fx")
+                lines.append(f"selected: {l.type} layer {l.id} {l.start:.2f}-{(l.end if l.end is not None else p.duration):.2f}s{extra} \"{label[:60]}\"")
+            elif kind == "fx":
+                from ..ops import fx_filters
+
+                holder, e = fx_filters.find(p, sid)
+                pr = e.params
+                e_end = "end" if pr.get("end") is None else f"{float(pr['end']):g}"
+                win = f"{float(pr.get('start') or 0):g}-{e_end}s"
+                lines.append(f"selected: effect {sid} ({pr.get('key')}) on {holder.id}, {win} of it, fade in {pr.get('fade_in') or 0}s / out {pr.get('fade_out') or 0}s"
+                             f"{'' if pr.get('on', True) else ', switched off'} (change with `vedit fx set {sid} ...`)")
+            elif kind == "marker":
+                m = next((m for m in p.markers if m.id == sid), None)
+                lines.append(f"selected: marker {sid} at {m.t:.2f}s \"{m.label or ''}\"" if m else f"selected: marker {sid}")
             elif kind == "music":
                 lines.append(f"selected: music track {sid}")
             elif kind == "source":
@@ -547,6 +614,7 @@ class ChatSession:
             await self.emit({"type": "status", "busy": True}, persist=False)
             try:
                 await self._ensure()
+                self.turn_head, self.audit_rounds, self.audited_head = self._head(), 0, None
                 await self.client.query(self.context_block(ctx) + "\n\n" + text)
                 await self._pump()
             except Exception as e:
@@ -561,6 +629,70 @@ class ChatSession:
             finally:
                 self.busy = False
                 await self.emit({"type": "status", "busy": False}, persist=False)
+
+    # ---- the auditor (Stop hook) -------------------------------------------------------
+    def _head(self) -> int | None:
+        try:
+            history.sync(self.pdir)
+            return history.head(self.pdir)
+        except Exception:
+            return None
+
+    def _run_audit(self) -> dict:
+        if self.auto_audit_ai:
+            from ..review import full_audit
+
+            return full_audit(self.pdir, use_ai=True)
+        from ..audit import audit
+
+        return audit(load(self.pdir), self.pdir, render=True)
+
+    async def _on_stop(self, data: Any, tool_use_id: str | None, context: Any) -> dict:
+        """Runs when the agent ends its turn. If the turn changed the edit, audit it. Below the pass mark (or with
+        must-fix findings) the stop is blocked and the findings go back to the agent, up to the round cap from the
+        audit settings; then the user decides."""
+        from .. import review
+
+        try:
+            head = self._head()
+            if head is None or head == self.turn_head:
+                return {}  # nothing was edited this turn (a question, a look at frames...)
+            if head == self.audited_head:
+                return {}  # the agent was sent back but chose not to change anything (it said why): let it stop
+            cfg = review.settings()
+            cap = max(1, cfg["max_rounds"])
+            if self.audit_rounds >= cap:
+                return {}
+            self.audit_rounds += 1
+            self.audited_head = head
+            await self.emit({"type": "status_step", "text": "Auditing the edit…"}, persist=False)
+            r = await asyncio.to_thread(self._run_audit)
+            ok = review.good_enough(r, cfg["threshold"])
+            last = self.audit_rounds >= cap
+            await self.emit({"type": "audit", "score": r["score"], "passed": r["passed"], "counts": r["counts"], "ai": bool(r.get("ai")),
+                             "threshold": cfg["threshold"], "reached": ok, "summary": r.get("summary"), "round": self.audit_rounds,
+                             "final": ok or last,
+                             "findings": [{k: f.get(k) for k in ("id", "severity", "category", "at", "message", "fix")}
+                                          for f in r["findings"] if f["severity"] != "note"][:8]})
+            if ok or last:
+                return {}
+            todo = [f for f in r["findings"] if f["severity"] != "note"]
+            lines = "\n".join(f"- {f['id']} [{f['severity']}] {f['category']}" + (f" @{f['at']}s" if f.get("at") is not None else "")
+                              + f": {f['message']}" + (f" (suggested: {f['fix']})" if f.get("fix") else "") for f in todo[:12])
+            return {"decision": "block", "reason":
+                    f"Automatic audit (round {self.audit_rounds}/{cap}): score {r['score']}/100, the pass mark is {cfg['threshold']}"
+                    + (f", with {r['counts']['must-fix']} must-fix" if r["counts"]["must-fix"] else "") + ".\n"
+                    + (f"Reviewer: {r['summary']}\n" if r.get("summary") else "") + f"{lines}\n"
+                    "Fix these with vedit commands (must-fix first), check with `vedit frame`, then finish with a short summary. "
+                    "If one can't or shouldn't be fixed, say why instead."}
+        except Exception as e:  # the auditor must never break the chat
+            await self.emit({"type": "notice", "text": f"Audit skipped: {e}"})
+            return {}
+
+    async def set_auto_audit(self, on: bool) -> None:
+        self.auto_audit_ai = bool(on)
+        self._save()
+        await self._broadcast({"type": "auto_audit", "on": self.auto_audit_ai})
 
     async def _pump(self) -> None:
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -592,6 +724,7 @@ class ChatSession:
                         await self.emit({"type": "tool_result", "id": b.tool_use_id, "ok": ok, "text": txt[:300]})
             elif isinstance(msg, ResultMessage):
                 self.session_id = msg.session_id or self.session_id
+                _record_chat_usage(self.model, msg)
                 await self.emit({"type": "done", "ok": not msg.is_error, "cost": msg.total_cost_usd if getattr(self, "provider", registry.BUILTIN) == registry.BUILTIN else None,
                                  "seconds": round((msg.duration_ms or 0) / 1000, 1),
                                  "error": None if not msg.is_error else (msg.result or msg.subtype)})
@@ -625,6 +758,11 @@ class ChatSession:
         if provider["id"] != old_provider:
             note += " · the AI starts a fresh context; the chat above stays for you"
         await self.emit({"type": "notice", "text": note})
+
+    async def set_always(self, items: list[str]) -> None:
+        """Replace this project's "Always allow" list (Settings → Permissions)."""
+        self.always = {permissions.check_item(x) for x in items}
+        self._save()
 
     async def models_changed(self) -> None:
         """Registry was edited in Manage models: push it to every open chat pane."""

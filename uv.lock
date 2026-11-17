@@ -16,6 +16,69 @@ wheels = [
 ]
 
 [[package]]
+name = "aiklips"
+version = "0.2.0"
+source = { editable = "." }
+dependencies = [
+    { name = "claude-agent-sdk" },
+    { name = "fastapi" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "python-multipart" },
+    { name = "pywebview" },
+    { name = "typer" },
+    { name = "uvicorn" },
+    { name = "watchfiles" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+ai = [
+    { name = "mediapipe" },
+    { name = "trimesh" },
+]
+bg-quality = [
+    { name = "rembg", extra = ["cpu"] },
+]
+captions = [
+    { name = "faster-whisper" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "claude-agent-sdk", specifier = ">=0.2.182" },
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "faster-whisper", marker = "extra == 'captions'", specifier = ">=1.0" },
+    { name = "mediapipe", marker = "extra == 'ai'", specifier = ">=0.10.14" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pillow", specifier = ">=10.3" },
+    { name = "pydantic", specifier = ">=2.6" },
+    { name = "python-multipart", specifier = ">=0.0.33" },
+    { name = "pywebview", specifier = ">=6.2.1" },
+    { name = "rembg", extras = ["cpu"], marker = "extra == 'bg-quality'", specifier = ">=2.0.55" },
+    { name = "trimesh", marker = "extra == 'ai'", specifier = ">=4.0" },
+    { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", specifier = ">=0.29" },
+    { name = "watchfiles", specifier = ">=0.21" },
+    { name = "websockets", specifier = ">=12" },
+]
+provides-extras = ["ai", "bg-quality", "captions"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -223,69 +286,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3c/47/bc5980bd0a026ac9d0e21a3348846b634e394c0a39a941ff70db77c3b11d/claude_agent_sdk-0.2.182-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:2c56dc3b9059e68df272977e85f314dce99b6c9680c313236ee31968c14a2b5b", size = 161147988, upload-time = "2026-11-13T21:38:46.281Z" },
     { url = "https://files.pythonhosted.org/packages/c7/02/fea494afaf5a8870217afe29b0e2cabe768375d8770f30742ba92b639dde/claude_agent_sdk-0.2.182-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:f15e140913c67f45a5eb09e5793f785a2d05613fc911c14bc3f8d818bedf9d09", size = 161767971, upload-time = "2026-11-13T21:38:51.865Z" },
     { url = "https://files.pythonhosted.org/packages/de/2b/e9ea64e4a3c624a3a9f94ab0408e6996c305529fbf35bd4a19fc313fefeb/claude_agent_sdk-0.2.182-py3-none-win_amd64.whl", hash = "sha256:dab32a5bbbe2c4199348bc12d5b92f6c7010458178d40964f1175221a8e61e97", size = 164252384, upload-time = "2026-11-13T21:38:58.291Z" },
-]
-
-[[package]]
-name = "claude-cut"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "claude-agent-sdk" },
-    { name = "fastapi" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "python-multipart" },
-    { name = "pywebview" },
-    { name = "typer" },
-    { name = "uvicorn" },
-    { name = "watchfiles" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-ai = [
-    { name = "mediapipe" },
-    { name = "trimesh" },
-]
-bg-quality = [
-    { name = "rembg", extra = ["cpu"] },
-]
-captions = [
-    { name = "faster-whisper" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "claude-agent-sdk", specifier = ">=0.2.182" },
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "faster-whisper", marker = "extra == 'captions'", specifier = ">=1.0" },
-    { name = "mediapipe", marker = "extra == 'ai'", specifier = ">=0.10.14" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=10.3" },
-    { name = "pydantic", specifier = ">=2.6" },
-    { name = "python-multipart", specifier = ">=0.0.33" },
-    { name = "pywebview", specifier = ">=6.2.1" },
-    { name = "rembg", extras = ["cpu"], marker = "extra == 'bg-quality'", specifier = ">=2.0.55" },
-    { name = "trimesh", marker = "extra == 'ai'", specifier = ">=4.0" },
-    { name = "typer", specifier = ">=0.12" },
-    { name = "uvicorn", specifier = ">=0.29" },
-    { name = "watchfiles", specifier = ">=0.21" },
-    { name = "websockets", specifier = ">=12" },
-]
-provides-extras = ["ai", "bg-quality", "captions"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", specifier = ">=8" },
 ]
 
 [[package]]

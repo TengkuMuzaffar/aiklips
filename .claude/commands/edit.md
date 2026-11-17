@@ -2,7 +2,7 @@
 description: Edit the active video project from a plain-language request
 argument-hint: <what you want, e.g. "remove pauses, add a hook title and captions">
 ---
-Edit the active claude-cut project: $ARGUMENTS
+Edit the active aiklips project: $ARGUMENTS
 
 Follow the workflow in CLAUDE.md:
 1. `uv run vedit --json info`

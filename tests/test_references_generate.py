@@ -43,13 +43,22 @@ def song(tmp_path_factory) -> Path:
     return out
 
 
+MODELS_USED: list = []
+PROMPTS: list = []
+NEVER_PASS = False
+
+
 @pytest.fixture
 def fake_ai(monkeypatch):
+    MODELS_USED.clear()
+    PROMPTS.clear()
     calls = []
     monkeypatch.setattr(jobs, "AUTOSTART", False)
 
     def backend(task, system, prompt, schema, images, model):
         calls.append(task)
+        MODELS_USED.append((task, model))
+        PROMPTS.append((task, prompt))
         if task == "study":
             return StyleDNA(summary="Fast beat-cut promo", tags=["fast-cut"]).model_dump() | {
                 "text": {"color": "#FFE600", "animation_in": ["pop_in"], "position_y": "22%"}}
@@ -60,15 +69,41 @@ def fake_ai(monkeypatch):
             n = int(re.search(r"VARIATIONS \((\d+)\)", prompt).group(1))
             return {"variations": [{"index": i + 1, "angle": f"angle {i + 1}", "hook_text": f"Hook number {i + 1}",
                                     "cta_text": "Try it"} for i in range(n)]}
+        if task == "editor" and "Return a PATCH" in prompt:  # a targeted fix: move the hook title up
+            assert "FIX THESE ISSUES" in prompt and "T1:" in prompt
+            ids = re.findall(r"^- (I\d+) ", prompt, re.M)
+            return {"fixes": ids[:1], "ops": [{"op": "edit_text", "target": "T1", "y": "20%"}], "note": "hook title up"}
         if task == "editor":
-            segs = re.findall(r"(f\d+)\.s\d+ \(([\d.]+)-([\d.]+)s", prompt)
+            segs = re.findall(r"((f\d+)\.s\d+) \(([\d.]+)-([\d.]+)s", prompt)
             hook = re.search(r"hook line: (.+)", prompt).group(1)
-            ops = [{"op": "clip", "file": f, "start": float(a), "end": float(b)} for f, a, b in segs[:4]]
-            ops.append({"op": "text", "text": hook, "start": 0, "end": 1.5})
+            beats = [{"id": "b1", "role": "hook", "purpose": "stop the scroll"}, {"id": "b2", "role": "demo", "purpose": "show it"}]
+            ops = [{"op": "clip", "file": f, "segment": sid, "start": float(a), "end": float(b), "beat": "b1" if i == 0 else "b2",
+                    "why": f"shot {sid} shows the product"} for i, (sid, f, a, b) in enumerate(segs[:4])]
+            revising = "INDEPENDENT REVIEW" in prompt  # a full revision (fallback when a patch is unusable)
+            if revising:
+                assert "hook too low" in prompt and "no evidence: dropped" not in prompt
+            ops.append({"op": "text", "text": hook, "start": 0, "end": 1.5, "beat": "b1", "why": "hook line",
+                        **({"y": "20%"} if revising else {})})
             ops.append({"op": "transition", "type": "fade", "into": 1, "duration": 0.3})
-            return {"title": hook, "ops": ops}
-        if task == "critic":
-            return {"ok": False, "issues": ["hook too low"], "fixes": [{"layer": "t1", "y": "20%"}]}
+            ops.append({"op": "move", "type": "flash_cut", "into": 1, "why": "the concept's signature move"})
+            return {"title": hook, "beats": beats, "ops": ops, "rationale": "open on the product"}
+        if task == "classify":
+            ids = re.findall(r"^(m\d+): '([^']*)'", prompt, re.M)
+            return {"files": [{"id": i, "role": "sound" if "sound" in n else "footage", "reason": "fake"} for i, n in ids]}
+        if task == "concepts":
+            n = re.search(r"THIS VARIATION \(#(\d+)\)", prompt).group(1)
+            return {"concepts": [{"title": f"Idea {n}.{j}", "arc": "doubt -> delight", "opening": "product close-up",
+                                  "signature_move": ["punch_in", "flash_cut", "zoom_out_reveal"][j - 1]} for j in (1, 2, 3)]}
+        if task == "rank":
+            vs = [int(x) for x in re.findall(r"^VARIATION (\d+)", prompt, re.M)]
+            return {"picks": [{"variation": v, "concept": 3 if v == 1 else 2, "reason": "boldest"} for v in vs]}
+        if task == "auditor":
+            if ("(20%" in prompt or ", 20%)" in prompt) and not NEVER_PASS:  # already fixed: clean bill
+                return {"summary": "fine", "scores": {k: 5 for k in ("hook", "story", "pacing", "typography", "colour", "audio", "creativity")},
+                        "findings": []}
+            return {"summary": "hook title sits low", "scores": {k: 3 for k in ("hook", "story", "pacing", "typography", "colour", "audio", "creativity")},
+                    "findings": [{"severity": "must-fix", "category": "hook", "frame": 0, "at": 0.5, "message": "hook too low", "fix": "move t1 up"},
+                                 {"severity": "should-fix", "category": "story", "frame": 99, "at": 1, "message": "no evidence: dropped"}]}
         raise AssertionError(task)
 
     ai.set_backend(backend)
@@ -201,13 +236,15 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
 
     r = store.add(beat_ref)
     ups = [footage.add(test_clip)["id"], footage.add(song)["id"]]
-    spec = BatchSpec(refs=[r["id"]], footage=ups, count=2, brief={"product": "Test app", "length_s": 5, "cta": "Try it"})
+    spec = BatchSpec(refs=[r["id"]], footage=ups, count=2, brief={"product": "Test app", "length_s": 5, "cta": "Try it"},
+                     audit_threshold=70, audit_rounds=3, models={"auditor": "anthropic/claude-opus-5-5"})
     est = batch.estimate(spec)
-    assert est["breakdown"] == {"study": 1, "footage": 1, "planner": 1, "editor": 2, "critic": 2}
+    assert est["breakdown"] == {"study": 1, "footage": 1, "planner": 1, "editor": 4, "auditor": 4, "concepts": 2, "rank": 1}
+    assert est["max_calls"] > est["calls"]
     b = batch.create(spec)
     jobs.drain()
     b = batch.get(b["id"])
-    assert b["status"] == "done", b
+    assert b["status"] == "done", (b["error"], [x["error"] for x in b["variations"]])
     assert [v["status"] for v in b["variations"]] == ["done", "done"]
     hooks = {v["hook_text"] for v in b["variations"]}
     assert len(hooks) == 2  # different variations
@@ -215,10 +252,32 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
     assert Path(v["output"]).exists()
     vdir = Path(batch._var(v["id"])["dir"])
     p = load(vdir)
-    assert p.music and p.layers[0].y == "20%"          # music added, AI review fix applied
+    assert p.music and p.layers[0].y == "20%"          # music added; the editor revised the edit from the review
+    a = v["audit"]
+    assert a and a["scores"]["hook"] == 5 and a["reached"] and a["threshold"] == 70 and not v["attention"]
+    assert [x["round"] for x in a["rounds"]] == [0, 1] and a["rounds"][1]["score"] > a["rounds"][0]["score"]
+    assert not any(f.get("message") == "no evidence: dropped" for f in a["top"])
+    assert fake_ai.count("auditor") >= 4 and "fixer" not in fake_ai
+    assert not list(vdir.parent.glob(f"{vdir.name}.r*"))  # the best attempt became the variation; others removed
+    assert fake_ai.count("concepts") == 2 and fake_ai.count("rank") == 1
+    # the models picked for this generation: auditor = Opus; every other role keeps the balanced default
+    assert {m for t, m in MODELS_USED if t == "auditor"} == {"anthropic/claude-opus-5-5"}
+    assert {m for t, m in MODELS_USED if t == "editor"} == {"anthropic/claude-sonnet-5-5"}
+    assert b["models"]["auditor"] == "anthropic/claude-opus-5-5" and b["models"]["editor"] == "anthropic/claude-sonnet-5-5"
+    assert v["concept"]["title"] == "Idea 1.3" and v["concept"]["signature_move"] == "zoom_out_reveal"
+    assert b["variations"][1]["concept"]["title"] == "Idea 2.2"
+    assert p.clips and all(c.grade and c.grade.matched_to == "reference" for c in p.clips)  # graded to the reference's colour
+    assert p.clips[1].transition and p.clips[1].transition.type == "fadewhite"  # signature move applied after the plain transition
+    assert p.notes and [b.role for b in p.notes.beats] == ["hook", "demo"]   # beat sheet stored in the project
+    assert p.clips[0].meta and p.clips[0].meta.why and p.clips[0].meta.role == "hook" and p.clips[0].meta.quality == 4
+    from vedit.ops.fonts import FONTS
+    assert {l.style.font for l in p.layers if l.type == "text"} <= set(FONTS)  # titles use a bundled font
     assert 3.5 <= p.duration <= 6.5
     assert len(history.log(vdir)) > 4                    # one undoable step per operation
-    assert fake_ai.count("planner") == 1 and fake_ai.count("editor") == 2
+    assert fake_ai.count("planner") == 1 and fake_ai.count("editor") >= 4  # 2 plans + 2 revisions
+    # footage memory: the reviewer's "hook too low" at 0.5 s marked the opening segment weak as a hook
+    assert any(m["weak"].get("hook") for m in footage.marks(ups[0]).values())
+    assert a["issues"] and a["issues"][0]["id"].startswith("I")  # the issue list travels with the video
 
     row = batch.keep(v["id"])
     assert row["path"] == str(vdir)
@@ -229,6 +288,49 @@ def test_generate_batch_end_to_end(beat_ref, test_clip, song, fake_ai):
     assert batch.get(b["id"])["variations"][1]["status"] == "done"
     batch.delete(b["id"])
     assert not vdir.exists()
+
+
+def test_video_used_only_for_its_sound(beat_ref, test_clip, fake_ai, tmp_path):
+    """The Sound step: a video's audio becomes the music track (beats measured), its pictures are never cut in."""
+    from vedit.generate import batch, footage
+    from vedit.generate.spec import BatchSpec
+    from vedit.project import load
+    from vedit.references import store
+
+    snd = tmp_path / "trending sound.mp4"
+    _ff("-i", str(beat_ref), "-vf", "hue=s=0", "-c:a", "copy", str(snd))  # different hash from the reference
+    r = store.add(beat_ref)
+    clip, sv = footage.add(test_clip)["id"], footage.add(snd)["id"]
+
+    roles = footage.classify([clip, sv])
+    assert roles[sv] == {"role": "sound", "reason": "fake", "by": "ai"} and roles[clip]["role"] == "footage"
+    n = fake_ai.count("classify")
+    footage.classify([clip, sv])
+    assert fake_ai.count("classify") == n  # cached per file
+
+    m = footage.sound_meta(sv)
+    assert m["kind"] == "audio" and m["from_video"] and m["bpm"] == pytest.approx(120, abs=2)
+    with pytest.raises(Exception):
+        batch.validate(BatchSpec(refs=[r["id"]], footage=[clip], sound=[sv] * 11))
+
+    # two sounds, three videos: they take turns (m1, m2, m1)
+    song2 = tmp_path / "song2.wav"
+    _ff("-f", "lavfi", "-i", "aevalsrc='0.8*sin(2*PI*440*t)*exp(-40*mod(t,0.6))':s=44100:d=12", str(song2))
+    s2 = footage.add(song2)["id"]
+    spec = BatchSpec(refs=[r["id"]], footage=[clip], sound=[sv, s2], count=3, review=False, axes=["hook"], brief={"length_s": 5})
+    b = batch.create(spec)
+    jobs.drain()
+    b = batch.get(b["id"])
+    assert b["status"] == "done", (b["error"], [x["error"] for x in b["variations"]])
+    used = []
+    for v in b["variations"]:
+        p = load(Path(batch._var(v["id"])["dir"]))
+        assert len(p.music) == 1
+        music_src = p.sources[p.music[0].source]
+        assert not music_src.has_video
+        assert all(p.sources[c.source].path != music_src.path for c in p.clips)
+        used.append(Path(music_src.path).parent.name)
+    assert used == [sv, s2, sv]
 
 
 @needs_ffmpeg
@@ -252,6 +354,8 @@ def test_home_api_references_uploads_and_batches(beat_ref, test_clip, fake_ai):
 
     with test_clip.open("rb") as f:
         up = c.post("/api/uploads", files=[("files", ("clip.mp4", f, "video/mp4"))]).json()["added"][0]
+    roles = c.post("/api/uploads/classify", json={"ids": [up["id"]]}).json()["roles"]
+    assert roles[up["id"]]["role"] == "footage"
     body = {"refs": [rid], "footage": [up["id"]], "count": 1, "review": False, "brief": {"length_s": 5}}
     assert c.post("/api/batches/estimate", json=body).json()["calls"] >= 2
     bad = c.post("/api/batches", json={**body, "footage": []})
@@ -285,3 +389,47 @@ def test_cli_ref_and_gen(beat_ref, test_clip, fake_ai, tmp_path, monkeypatch):
     b = run("gen", "run", "--ref", str(r["id"]), "-f", str(test_clip), "--count", "1", "--length", "5", "--no-review")["batch"]
     assert b["status"] == "done" and Path(b["variations"][0]["output"]).exists()
     assert run("gen", "list")["batches"][0]["id"] == b["id"]
+
+
+@needs_ffmpeg
+def test_keep_improving_one_video(beat_ref, test_clip, song, fake_ai):
+    from vedit import history
+    from vedit.generate import batch, footage
+    from vedit.generate.spec import BatchSpec
+    from vedit.project import load, save
+    from vedit.references import store
+
+    r = store.add(beat_ref)
+    ups = [footage.add(test_clip)["id"], footage.add(song)["id"]]
+    # an unreachable pass mark and no revisions: the video ends below the mark, ready to be improved
+    spec = BatchSpec(refs=[r["id"]], footage=ups, count=1, brief={"product": "Test app", "length_s": 5}, explore=False,
+                     audit_threshold=100, audit_rounds=0)
+    b = batch.create(spec)
+    jobs.drain()
+    v = batch.get(b["id"])["variations"][0]
+    assert v["status"] == "done" and not v["audit"]["reached"] and len(v["audit"]["rounds"]) == 1 and v["attention"]
+    PROMPTS.clear()
+    global NEVER_PASS
+    NEVER_PASS = True  # the reviewer stays unhappy, so both extra rounds run
+    try:
+        out = batch.improve(v["id"], rounds=2)
+        assert out["status"] == "queued"
+        jobs.drain()
+    finally:
+        NEVER_PASS = False
+    v2 = batch.get(b["id"])["variations"][0]
+    assert v2["status"] == "done" and len(v2["audit"]["rounds"]) == 3  # 2 more rounds after the first
+    patches = [pr for t, pr in PROMPTS if t == "editor" and "Return a PATCH" in pr]
+    assert len(patches) == 2 and all("FIX THESE ISSUES" in pr and "THE CURRENT EDIT" in pr for pr in patches)
+    assert "I1" in patches[0]  # issues carry stable ids
+    assert "EARLIER ROUNDS" in patches[-1]  # the 2nd patch knows how the 1st did
+    assert not [pr for t, pr in PROMPTS if t == "editor" and "INDEPENDENT REVIEW" in pr]  # no full rewrites needed
+    vdir = Path(batch._var(v["id"])["dir"])
+    assert not list(vdir.parent.glob(f"{vdir.name}.r*"))
+    # once a person edits it, improving from the AI's plan would throw their work away: refuse
+    p = load(vdir)
+    p.layers[0].y = "33%"
+    save(vdir, p)
+    history.commit(vdir, p, "hand edit")
+    with pytest.raises(Exception, match="edited by hand"):
+        batch.improve(v["id"], rounds=1)

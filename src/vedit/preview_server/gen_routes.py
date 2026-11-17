@@ -137,6 +137,14 @@ def mount(app: FastAPI, host, bad) -> None:
     async def add_uploads(files: list[UploadFile] = File(...)) -> dict:
         return await _save_uploads(files, lambda p, n: footage.add(p, n, move=True))
 
+    @app.post("/api/uploads/classify")
+    def classify_uploads(body: dict) -> dict:
+        """AI suggests, per upload, whether it is footage (pictures) or sound (audio only)."""
+        try:
+            return {"roles": footage.classify([str(u) for u in body.get("ids") or []], body.get("quality") or "balanced")}
+        except VeditError as e:
+            raise bad(e)
+
     @app.get("/api/uploads/{uid}/thumb.jpg")
     def upload_thumb(uid: str):
         try:
@@ -226,6 +234,14 @@ def mount(app: FastAPI, host, bad) -> None:
         except VeditError as e:
             raise bad(e)
         return row
+
+    @app.post("/api/variations/{vid}/improve")
+    def var_improve(vid: str, body: dict | None = None) -> dict:
+        """More editor revisions for one video, from its best version, until the pass mark (or the rounds run out)."""
+        try:
+            return batch.improve(vid, (body or {}).get("rounds"))
+        except VeditError as e:
+            raise bad(e)
 
     @app.post("/api/variations/{vid}/{action}")
     def var_action(vid: str, action: str) -> dict:

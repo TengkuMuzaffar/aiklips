@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,18 +20,20 @@ INSTALL_HINT = (
 )
 
 
-def ffmpeg_bin() -> str:
-    b = shutil.which("ffmpeg")
-    if not b:
-        raise VeditError("ffmpeg not found. " + INSTALL_HINT)
+def _tool(name: str) -> str:
+    """An FFmpeg binary: $VEDIT_FFMPEG / $VEDIT_FFPROBE (the desktop launcher points these at its own copy), else PATH."""
+    b = os.environ.get(f"VEDIT_{name.upper()}") or shutil.which(name)
+    if not b or not Path(b).exists() and not shutil.which(b):
+        raise VeditError(f"{name} not found. " + INSTALL_HINT)
     return b
+
+
+def ffmpeg_bin() -> str:
+    return _tool("ffmpeg")
 
 
 def ffprobe_bin() -> str:
-    b = shutil.which("ffprobe")
-    if not b:
-        raise VeditError("ffprobe not found. " + INSTALL_HINT)
-    return b
+    return _tool("ffprobe")
 
 
 @lru_cache
@@ -48,12 +51,29 @@ def run(cmd: list[str], what: str = "ffmpeg") -> subprocess.CompletedProcess:
     return proc
 
 
-def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float], None] | None) -> None:
-    """Run ffmpeg with -progress pipe:1 and report 0..1 progress."""
+def kill_tree(proc: subprocess.Popen) -> None:
+    """Stop a process and anything it started. On Windows `ffmpeg` may be a launcher shim (Chocolatey, Scoop) whose
+    real ffmpeg child would otherwise keep running and keep the output file locked."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    proc.kill()
+    proc.wait()
+
+
+class Cancelled(VeditError):
+    """The user stopped a render."""
+
+
+def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float], None] | None,
+                      should_stop: Callable[[], bool] | None = None) -> None:
+    """Run ffmpeg with -progress pipe:1 and report 0..1 progress. `should_stop` returning True kills it (Cancelled)."""
     cmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     assert proc.stdout is not None
     for line in proc.stdout:
+        if should_stop is not None and should_stop():
+            kill_tree(proc)
+            raise Cancelled("Export cancelled")
         if line.startswith("out_time_us=") and on_progress and total > 0:
             try:
                 us = int(line.split("=", 1)[1])

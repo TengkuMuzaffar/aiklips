@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,6 +33,7 @@ class Canvas(_Model):
     height: int = 1920
     fps: float = 30
     background: str = "#000000"
+    loudness: float | None = -14.0  # final mix normalised to this LUFS (social apps play at about -14); None = off
 
 
 class Source(_Model):
@@ -48,7 +49,8 @@ class Source(_Model):
 class Effect(_Model):
     """A per-clip effect computed on the clip's source (cached in .vedit/cache)."""
 
-    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur", "mask", "focus"]
+    # "fx" = a filter from ops/fx_filters.py (blur, vignette, grain...): params {"id", "key", "on", settings...}
+    type: Literal["bg", "face_mesh", "face_sticker", "face_prop", "face_blur", "mask", "focus", "fx"]
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -84,6 +86,54 @@ class Transition(_Model):
     duration: float = 0.5
 
 
+class Grade(_Model):
+    """Colour grade of a clip: a correction (from `color match` or set by hand), then a named look.
+
+    The correction numbers are what `vedit color match` measured to make this clip match its
+    target; the look is a creative grade applied on top at `intensity` (0..1).
+    """
+
+    brightness: float = 0.0  # added to luma, -0.3..0.3
+    contrast: float = 1.0  # 0.5..1.6, around mid grey
+    saturation: float = 1.0  # 0 = black & white .. 2
+    temperature: float = 0.0  # -1 cool .. +1 warm
+    tint: float = 0.0  # -1 green .. +1 magenta
+    look: str | None = None
+    intensity: float = 1.0
+    lut: str | None = None  # .cube file applied last (before the look's vignette)
+    matched_to: str | None = None  # informational: "clips", "c2", "ref 3"
+
+
+ROLES = ("hook", "problem", "setup", "demo", "proof", "benefit", "payoff", "cta", "other")
+
+
+class ClipMeta(_Model):
+    """Why a clip is in the edit. Written by the generator or `vedit why`; read by the auditor."""
+
+    why: str | None = None
+    role: str | None = None  # one of ROLES
+    beat: str | None = None  # beat id in Project.notes.beats
+    segment: str | None = None  # footage-log segment id it came from (generation)
+    quality: int | None = None  # that segment's logged quality 1-5
+    audio: str | None = None  # voice (keep, music ducks) | ambient (keep, lower) | mute (music carries it)
+
+
+class Beat(_Model):
+    id: str
+    role: str = "other"
+    purpose: str = ""
+
+
+class EditNotes(_Model):
+    """The edit's intent: what it is for and how it is structured."""
+
+    rationale: str = ""
+    brief: str = ""
+    beats: list[Beat] = Field(default_factory=list)
+    target_shot_s: float | None = None  # pacing the edit aims for (from the reference)
+    style: str = ""  # one-line summary of the target style (Style DNA), for reviewers
+
+
 class Clip(_Model):
     id: str
     source: str
@@ -98,6 +148,14 @@ class Clip(_Model):
     zoom_to: float | None = None  # animated zoom (Ken Burns) from `zoom` to `zoom_to`
     effects: list[Effect] = Field(default_factory=list)
     transition: Transition | None = None  # transition *into* this clip from the previous one
+    grade: Grade | None = None  # colour correction + look (`vedit color ...`)
+    meta: ClipMeta | None = None  # why this clip is here (`vedit why`)
+    fade_in: float = 0.0  # sound fade in / out, seconds (the picture is untouched: use a transition for that)
+    fade_out: float = 0.0
+    voice: Literal["off", "clean", "studio"] = "off"  # speech clean-up: rumble, noise, level (render/graph.py VOICE_CHAINS)
+    # empty space on the main track (a clip dragged later leaves one): plays a generated background-colour file with no
+    # sound (ops/cut.py `gap_source`), so cuts, render and export treat it like any clip. Audits and sound skip it.
+    gap: bool = False
 
     @property
     def duration(self) -> float:
@@ -136,6 +194,11 @@ class TextStyle(_Model):
     uppercase: bool = False
     line_spacing: float = 1.15
     highlight_color: str = "#FFE600"
+    letter_spacing: float = 0.0  # extra px between letters (negative = tighter)
+    glow_color: str | None = None  # soft coloured glow behind the letters (neon looks)
+    glow_size: int = 18
+    gradient: list[str] | None = None  # fill top -> bottom, e.g. ["#FFE600", "#FF6A00"]
+    look: str | None = None  # name of the text look this style came from (informational)
 
 
 class Word(_Model):
@@ -144,11 +207,20 @@ class Word(_Model):
     end: float
 
 
+BLEND_MODES = ("normal", "screen", "multiply", "overlay", "add", "lighten", "darken")
+SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
+
+
 class Layer(_Model):
-    """An overlay drawn on top of the timeline: text, image or captions."""
+    """An overlay drawn on top of the timeline: text, image, captions, video (picture-in-picture, b-roll, light leaks)
+    a shape, or an adjustment layer (filters + colour over a time range). The list order of project.layers is the stacking
+    order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust"]
+    # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
+    # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
+    track: int | None = None
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -164,6 +236,34 @@ class Layer(_Model):
     width: int | None = None  # image width in canvas px
     words: list[Word] = Field(default_factory=list)
     words_per_group: int = 3
+    why: str | None = None  # why this overlay is here (generation / `vedit why`)
+    # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
+    blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"
+    # video layers: a project source played from src_in for the layer's duration
+    source: str | None = None
+    src_in: float = 0.0
+    loop: bool = False  # repeat the clip when the layer is longer than it
+    # framing, like a main-track clip: free = `width` wide (picture-in-picture), cover = fill the canvas (crop),
+    # contain = the whole picture as big as fits. flip_h / flip_v mirror it (orientation; rotation is `rotation`)
+    fit: Literal["free", "cover", "contain"] = "free"
+    hidden: bool = False  # track hidden on the timeline (eye): not drawn in the preview or the export; sound still plays
+    flip_h: bool = False
+    flip_v: bool = False
+    volume: float = 0.0  # overlay sound (0 = muted, the usual for b-roll / textures)
+    # frame of image / video / shape layers (canvas px): rounded corners, an inside border, circle cut-out, green screen
+    radius: int = 0
+    border_width: int = 0
+    border_color: str = "#FFFFFF"
+    mask: Literal["rect", "circle"] = "rect"
+    chroma: str | None = None  # key colour made transparent, e.g. "#00FF00"
+    chroma_similarity: float = 0.25
+    # shape layers
+    shape: Literal["rect", "ellipse", "line", "arrow"] = "rect"
+    height: int | None = None  # shape height in canvas px (line / arrow: thickness)
+    fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
+    # adjustment layers: filters and a colour grade applied to everything under them (clips and the layers below)
+    effects: list[Effect] = Field(default_factory=list)
+    grade: Grade | None = None
 
 
 class MusicTrack(_Model):
@@ -171,11 +271,21 @@ class MusicTrack(_Model):
     source: str
     start: float = 0.0  # timeline seconds
     in_: float = Field(default=0.0, alias="in")
+    end: float | None = None  # timeline seconds where it stops; None = the end of the timeline (or of the file)
     volume: float = 0.25
     loop: bool = True
     duck: bool = False
     fade_in: float = 0.5
     fade_out: float = 1.0
+
+
+class Marker(_Model):
+    """A named moment on the timeline (notes, beats to hit, YouTube chapters)."""
+
+    id: str
+    t: float  # timeline seconds
+    label: str = ""
+    color: str = "#FBBF24"
 
 
 class Project(_Model):
@@ -186,6 +296,9 @@ class Project(_Model):
     clips: list[Clip] = Field(default_factory=list)
     layers: list[Layer] = Field(default_factory=list)
     music: list[MusicTrack] = Field(default_factory=list)
+    notes: EditNotes | None = None
+    markers: list[Marker] = Field(default_factory=list)
+    main_hidden: bool = False  # main video track hidden (eye): its picture becomes the background; sound still plays
 
     # ---- timeline helpers -------------------------------------------------
     @property
@@ -216,6 +329,7 @@ class Project(_Model):
             [c.id for c in self.clips]
             + [l.id for l in self.layers]
             + [m.id for m in self.music]
+            + [k.id for k in self.markers]
             + list(self.sources)
         )
         n = 0
@@ -259,22 +373,113 @@ def find_project_dir(explicit: str | None = None) -> Path:
     )
 
 
+# project.json format migrations: MIGRATIONS[n] turns a version-n dict into version n+1. When the format changes,
+# bump SCHEMA_VERSION and add a step here, so projects saved by older versions keep opening.
+MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def migrate(data: dict) -> dict:
+    """Bring a project dict up to SCHEMA_VERSION. A project saved by a *newer* aiklips is refused rather than
+    loaded and re-saved without the fields this version doesn't know (that would silently lose work after a
+    rollback to an older version)."""
+    v = int(data.get("version", 1))
+    if v > SCHEMA_VERSION:
+        raise VeditError(f"This project was saved by a newer version of aiklips (format {v}; this version reads up to "
+                         f"{SCHEMA_VERSION}). Update aiklips to open it.")
+    while v < SCHEMA_VERSION:
+        data = MIGRATIONS[v](data)
+        v += 1
+        data["version"] = v
+    return data
+
+
 def load(pdir: Path) -> Project:
     try:
         data = json.loads((pdir / PROJECT_FILE).read_text())
     except json.JSONDecodeError as e:
         raise VeditError(f"project.json is not valid JSON: {e}") from e
+    data = migrate(data)
     try:
-        return Project.model_validate(data)
+        p = Project.model_validate(data)
     except Exception as e:  # pydantic ValidationError
         raise VeditError(f"project.json is invalid: {e}") from e
+    normalize_tracks(p)  # projects from before tracks existed
+    return p
 
 
 def dump_json(project: Project) -> str:
     return json.dumps(project.to_dict(), indent=2) + "\n"
 
 
+def _span(layer: Layer) -> tuple[float, float]:
+    return layer.start, float("inf") if layer.end is None else layer.end
+
+
+def spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return a[0] < b[1] - 1e-3 and b[0] < a[1] - 1e-3
+
+
+def normalize_tracks(project: Project) -> None:
+    """Keep overlay tracks consistent (CapCut-style rows), in place:
+
+    - a new layer (track None) goes on the top track if it is free at that time, else on a new track above it, so the
+      layer added last is drawn on top, as before tracks existed;
+    - two layers on one track never overlap in time: the later one in the list moves to a new track just above;
+    - tracks are numbered 0..n-1 with no gaps, and project.layers is sorted by track (stable), so the list order the
+      renderers use (later = on top) always matches the timeline rows.
+    """
+    layers = project.layers
+    top = max((l.track for l in layers if l.track is not None), default=-1)
+    for l in layers:
+        if l.track is None:
+            if top >= 0 and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
+                l.track = top
+            else:
+                top += 1
+                l.track = top
+    # resolve overlaps on a track: bump the later layer to a new track right above (fractional, renumbered below)
+    rows: dict[float, list[Layer]] = {}
+    for l in layers:
+        rows.setdefault(l.track, []).append(l)
+    pos: dict[str, float] = {}
+    for t, row in rows.items():
+        placed: list[list[Layer]] = []
+        for l in row:
+            for k, sub in enumerate(placed):
+                if not any(spans_overlap(_span(l), _span(o)) for o in sub):
+                    sub.append(l)
+                    break
+            else:
+                placed.append([l])
+        for k, sub in enumerate(placed):
+            for l in sub:
+                pos[l.id] = t + k / (len(placed) + 1)
+    order = sorted(set(pos.values()))
+    rank = {v: i for i, v in enumerate(order)}
+    for l in layers:
+        l.track = rank[pos[l.id]]
+    layers.sort(key=lambda l: l.track)
+
+
+def normalize_gaps(project: Project) -> None:
+    """Main-track gaps: merge neighbours, drop empty ones and any at the very end (nothing comes after them)."""
+    out: list[Clip] = []
+    for c in project.clips:
+        if c.gap and c.duration < 0.01:
+            continue
+        if c.gap and out and out[-1].gap and out[-1].source == c.source:
+            prev = out[-1]
+            prev.out = min(project.sources[c.source].duration, prev.out + (c.out - c.in_))
+            continue
+        out.append(c)
+    while out and out[-1].gap:
+        out.pop()
+    project.clips = out
+
+
 def save(pdir: Path, project: Project) -> None:
+    normalize_tracks(project)
+    normalize_gaps(project)
     validate(project)
     tmp = pdir / (PROJECT_FILE + ".tmp")
     tmp.write_text(dump_json(project))
@@ -295,6 +500,15 @@ def validate(project: Project) -> None:
     for m in project.music:
         if m.source not in project.sources:
             raise VeditError(f"Music {m.id} references unknown source '{m.source}'")
+    for layer in project.layers:
+        if layer.type == "video":
+            if not layer.source or layer.source not in project.sources:
+                raise VeditError(f"Video layer {layer.id} references unknown source '{layer.source}'")
+            src = project.sources[layer.source]
+            if not src.has_video:
+                raise VeditError(f"Video layer {layer.id}: source {layer.source} has no picture")
+            if not (0 <= layer.src_in < src.duration):
+                raise VeditError(f"Video layer {layer.id} starts at {layer.src_in:.2f}s, outside its source (0-{src.duration:.2f}s)")
 
 
 def state_dir(pdir: Path) -> Path:

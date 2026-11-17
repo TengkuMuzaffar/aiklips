@@ -1,0 +1,134 @@
+# Publishes a release whenever main gets a new version number in pyproject.toml.
+#
+# Assets (what the launcher and the in-app updater download):
+#   manifest.json / manifest.sig     signed with the RELEASE_SIGNING_KEY secret (ed25519, see launcher/cmd/relsign)
+#   aiklips-<v>.tar.gz            the app source at this commit (git archive; tests/, launcher/ left out)
+#   aiklips-mac.zip               aiklips.app (universal: Apple silicon + Intel)
+#   aiklips-windows-x64.exe       installs itself into %LOCALAPPDATA%\Programs\aiklips on first start
+#   aiklips-linux-x86_64 / -arm64 installs itself into ~/.local/bin with a menu entry on first start
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$v" >/dev/null 2>&1; then
+            echo "v$v is already released; nothing to do (bump the version in pyproject.toml to release)."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [plan, test]
+    runs-on: macos-latest   # lipo for the universal macOS binary; Go cross-compiles the rest
+    env:
+      V: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: launcher/go.mod
+      - name: Release key is set up
+        run: |
+          if [ ! -s launcher/pubkey.txt ]; then echo "::error::launcher/pubkey.txt is empty: run 'cd launcher && go run ./cmd/relsign keygen -pub pubkey.txt' and commit it"; exit 1; fi
+          if [ -z "${{ secrets.RELEASE_SIGNING_KEY }}" ]; then echo "::error::The RELEASE_SIGNING_KEY secret is missing"; exit 1; fi
+      - name: Payload, manifest, signature
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=aiklips/ -o "dist/aiklips-$V.tar.gz" HEAD
+          prev=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          { echo "## What's new"; git log --no-merges --pretty='- %s' ${prev:+$prev..}HEAD | grep -v '^- chore' | head -40; } > notes.md
+          schema=$(sed -n 's/^SCHEMA_VERSION = \([0-9]*\)/\1/p' src/vedit/project.py)
+          cd launcher
+          go run ./cmd/relsign manifest -version "$V" -payload "../dist/aiklips-$V.tar.gz" -notes ../notes.md -schema "$schema" > ../dist/manifest.json
+          go run ./cmd/relsign sign ../dist/manifest.json > ../dist/manifest.sig
+          go run ./cmd/relsign verify ../dist/manifest.json ../dist/manifest.sig pubkey.txt
+      - name: Launchers
+        working-directory: launcher
+        run: |
+          LD="-s -w -X main.LauncherVersion=$V -X main.Repo=${{ github.repository }}"
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LD -H windowsgui" -o ../dist/aiklips-windows-x64.exe .
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LD" -o ../dist/aiklips-linux-x86_64 .
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LD" -o ../dist/aiklips-linux-arm64 .
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LD" -o /tmp/cc-arm64 .
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LD" -o /tmp/cc-amd64 .
+          app=/tmp/mac/aiklips.app
+          mkdir -p "$app/Contents/MacOS"
+          lipo -create -output "$app/Contents/MacOS/aiklips" /tmp/cc-arm64 /tmp/cc-amd64
+          sed "s/@VERSION@/$V/g" macos/Info.plist > "$app/Contents/Info.plist"
+          codesign --force --deep --sign - "$app"   # ad-hoc signature: required on Apple silicon (not notarised)
+          (cd /tmp/mac && ditto -c -k --keepParent aiklips.app "$GITHUB_WORKSPACE/dist/aiklips-mac.zip")
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat notes.md .github/release-install-notes.md > body.md
+          gh release create "v$V" dist/* --target "$GITHUB_SHA" --title "aiklips $V" --notes-file body.md
+
+  # the release index lives on the website (separate repo, deployed by Cloudflare on every push to its main):
+  # commit the new latest.json there. Needs the secret WEBSITE_DEPLOY_TOKEN, a fine-grained token with
+  # "Contents: read and write" on the website repo only; the repo name can be changed with the variable WEBSITE_REPO.
+  website:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      WEBSITE_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+      WEBSITE_REPO: ${{ vars.WEBSITE_REPO || 'TengkuMuzaffar/aiklips-website' }}
+    steps:
+      - name: Publish latest.json to the website
+        run: |
+          if [ -z "$WEBSITE_TOKEN" ]; then
+            echo "::warning::WEBSITE_DEPLOY_TOKEN is not set: the website's latest.json was not updated (the app falls back to GitHub)"
+            exit 0
+          fi
+          gh release view "v$V" --repo "${{ github.repository }}" --json tagName,body,url,publishedAt,assets > rel.json
+          git clone --depth 1 "https://x-access-token:${WEBSITE_TOKEN}@github.com/${WEBSITE_REPO}.git" site
+          python3 - <<'EOF'
+          import json
+          r = json.load(open("rel.json"))
+          idx = {"version": r["tagName"].lstrip("v"), "notes": r.get("body") or "", "url": r["url"],
+                 "published": r.get("publishedAt"), "assets": {a["name"]: a["url"] for a in r.get("assets", [])}}
+          with open("site/public/latest.json", "w") as f:
+              json.dump(idx, f, indent=2)
+              f.write("\n")
+          EOF
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/latest.json
+          git diff --cached --quiet && { echo "latest.json already up to date"; exit 0; }
+          git commit -m "release index: aiklips v$V"
+          git push origin HEAD:main

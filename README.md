@@ -1,4 +1,4 @@
-# claude-cut
+# aiklips
 
 **An open-source video editor you drive with Claude Code.** Clone it, open it in Claude Code, and describe what you want:
 
@@ -9,6 +9,11 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 - ✂️ **Cutting:** trim, split, delete ranges, reorder, speed / slow-mo, auto silence removal, jump-cut zoom, reframe (cover / contain / blurred fill), Ken Burns zoom
 - ↩️ **Undo / redo history:** every edit is a snapshot. You can undo, redo, or jump to any step.
 - 🎬 **Custom animation:** text and image layers with stackable presets (pop, slide, typewriter, bounce, shake…) or free-form keyframes with easing
+- 🔤 **Fonts & text looks:** 24 bundled open-licence fonts (condensed, serif, handwritten, rounded, display…) and 15 ready-made text looks (font + colours + outline / glow / gradient + animation). Save your own look once and reuse it in every project.
+- 🎨 **Colour grading:** match clips shot on different cameras so they look like one shoot, or match a reference video's colour. Then apply a look (warm film, teal & orange, moody, vibrant, B&W…) or a `.cube` LUT. All measured by code, no guessing.
+- 🧑‍⚖️ **Auditor:** every edit is checked before it's called done: hook, readability, safe zones, overlaps, fonts, colour, pacing, reused footage, loudness and the stated reason for each shot. An independent AI reviewer can watch the render too, and below your pass mark (default 80/100) its review goes back to the AI editor, which revises and rebuilds the edit until it passes or hits the round cap.
+- 🔊 **Sound auditor:** measures each clip's own sound (speech vs background noise), keeps speech with the music ducked under it, mutes b-roll wind/hum so the music carries those parts, and flags cut-off words, volume jumps and music that ends early.
+- 💡 **Creative generation:** 3 concepts per video with a judge picking the strongest, a library of signature moves (punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, zoom-out reveal) learned from your references, and taste memory from the videos you keep or discard.
 - 💬 **Captions:** word-by-word highlighted captions from SRT, or offline auto-transcription (faster-whisper)
 - 🎞️ **Transitions:** crossfade, dip to black / white, slide, push, wipe, zoom, whip, circle and more. They're centred on the cut, so timing never shifts.
 - 🫥 **Tracked masks:** hide labels, logos or plates with a feathered blur / pixelate / fill that follows the object as the camera moves. Draw the box on the preview, or let the AI find it.
@@ -28,10 +33,26 @@ Rendering, background removal and face tracking all run locally on macOS, Window
 
 The AI sends your instructions to Claude, along with the project details and any preview frames it looks at. Your video files themselves are never uploaded. References and Generate work the same way: measurements, transcripts and small contact sheets are sent, never the videos.
 
-## Quick start
+## Download the app
+
+**[aiklips.muzdev.online](https://aiklips.muzdev.online)**, or get the newest version from the [releases page](https://github.com/TengkuMuzaffar/aiklips/releases/latest):
+
+| System | Download | First start |
+|---|---|---|
+| macOS 12+ | `aiklips-mac.zip` | Unzip, move **aiklips.app** to Applications, then **right-click → Open** the first time (not notarised yet). |
+| Windows 10/11 | `aiklips-windows-x64.exe` | Run it; on SmartScreen choose **More info → Run anyway**. It adds Start-menu and desktop shortcuts. |
+| Linux | `aiklips-linux-x86_64` / `-arm64` | `chmod +x` and run it once; it adds itself to your app menu. |
+
+The first start sets everything up (Python, libraries, FFmpeg: about 150 MB, a few minutes). After that the app
+updates itself: when a new version is out it says so (**Settings → Updates**) and installs it on restart. Updates are
+signed and verified, a version that fails to start is rolled back automatically, and your projects
+(`~/aiklips-projects`) are never touched. Optional features (AI background removal, face tracking, auto-captions)
+download the first time you use them. How it works: [docs/design/distribution.md](docs/design/distribution.md).
+
+## Quick start (from source, with Claude Code)
 
 ```bash
-git clone https://github.com/<you>/claude-cut && cd claude-cut
+git clone https://github.com/<you>/aiklips && cd aiklips
 scripts/setup.sh --ai          # macOS / Linux  (Windows: scripts\setup.ps1 -AI)
 claude                         # open Claude Code here
 ```
@@ -46,7 +67,7 @@ Remove the pauses and add a bold hook title for the first 3 seconds
 ### Or use the desktop app
 
 ```bash
-cd claude-cut
+cd aiklips
 uv run vedit app                      # home screen: your projects
 uv run vedit app projects/myreel      # or jump straight into one project (created if needed)
 ```
@@ -55,7 +76,7 @@ uv run vedit app projects/myreel      # or jump straight into one project (creat
 - Create a project by picking a name and a format: 9:16, 4:5, 1:1 or 16:9.
 - Projects can be opened, renamed, duplicated, removed from the list, or deleted.
 - "Open folder…" adds an existing project from anywhere on disk.
-- The project list is a small SQLite library at `~/.claude-cut/library.db`. Each project's edit stays in its own `project.json`.
+- The project list is a small SQLite library at `~/.aiklips/library.db`. Each project's edit stays in its own `project.json`.
 - Projects created with the CLI show up automatically. `uv run vedit projects` prints the list.
 
 **The References tab** is a library of videos you want to learn from.

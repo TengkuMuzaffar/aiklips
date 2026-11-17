@@ -16,6 +16,8 @@ from typing import Iterator
 from .project import PROJECT_FILE, Project, VeditError, dump_json, load, save, state_dir
 
 MAX_SNAPSHOTS = 500
+COALESCE_SECONDS = 1.5
+# a history step can carry a "version" name (a bookmark: `vedit version save`); trimming never removes those  # repeated edits of the same field this close together become one undo step
 
 
 def _hdir(pdir: Path) -> Path:
@@ -51,19 +53,39 @@ def _read(pdir: Path, n: int) -> dict:
     return json.loads(p.read_text())
 
 
-def commit(pdir: Path, project: Project, message: str) -> int:
+def commit(pdir: Path, project: Project, message: str, coalesce: str | None = None) -> int:
+    """`coalesce` is a key naming the field being edited (e.g. "layer_set:t1:style.size"). When the newest step has
+    the same key and was written moments ago (a slider drag, typing in a number box), it is replaced instead of
+    adding a step, so one undo reverts the whole gesture."""
     h = head(pdir)
-    for i in _indices(pdir):
+    idx = _indices(pdir)
+    now = time.time()
+    if coalesce and h >= 1 and h == (idx[-1] if idx else -1):
+        try:
+            prev = _read(pdir, h)
+        except (OSError, ValueError, VeditError):
+            prev = {}
+        if prev.get("coalesce") == coalesce and now - float(prev.get("time", 0)) < COALESCE_SECONDS and not prev.get("version"):
+            _snap_path(pdir, h).write_text(json.dumps(
+                {"message": message, "time": now, "coalesce": coalesce, "project": project.to_dict()}, indent=1))
+            return h
+    for i in idx:
         if i > h:
             _snap_path(pdir, i).unlink()  # drop redo branch
     n = h + 1
-    _snap_path(pdir, n).write_text(
-        json.dumps({"message": message, "time": time.time(), "project": project.to_dict()}, indent=1)
-    )
+    snap = {"message": message, "time": now, "project": project.to_dict()}
+    if coalesce:
+        snap["coalesce"] = coalesce
+    _snap_path(pdir, n).write_text(json.dumps(snap, indent=1))
     _set_head(pdir, n)
-    # trim very old history
+    # trim very old history (saved versions are kept)
     idx = _indices(pdir)
     for i in idx[: max(0, len(idx) - MAX_SNAPSHOTS)]:
+        try:
+            if _read(pdir, i).get("version"):
+                continue
+        except (OSError, ValueError, VeditError):
+            pass
         _snap_path(pdir, i).unlink()
     return n
 
@@ -75,8 +97,27 @@ def sync(pdir: Path) -> None:
     if h < 0:
         commit(pdir, current, "initial state")
         return
-    if _read(pdir, h)["project"] != current.to_dict():
+    if not same_as(pdir, h, current):
         commit(pdir, current, "manual edit of project.json")
+
+
+def _normal(data: dict) -> dict | None:
+    """A snapshot as the CURRENT project format sees it: fields added since it was taken get their defaults,
+    so a new setting (e.g. canvas.loudness) never looks like a hand edit."""
+    try:
+        return Project.model_validate(data).to_dict()
+    except Exception:
+        return None
+
+
+def same_as(pdir: Path, n: int, current: Project | None = None) -> bool:
+    """Is the project's content the same as history step n (ignoring fields added to the format since)?"""
+    try:
+        snap = _read(pdir, n)["project"]
+    except (OSError, KeyError, ValueError):
+        return False
+    cur = (current or load(pdir)).to_dict()
+    return snap == cur or _normal(snap) == cur
 
 
 def _restore(pdir: Path, n: int) -> dict:
@@ -115,13 +156,33 @@ def checkout(pdir: Path, n: int) -> dict:
     return {"head": n, "now_at": snap["message"]}
 
 
+def save_version(pdir: Path, name: str) -> dict:
+    """Name the current state (a bookmark on the current history step: no extra undo step, never trimmed)."""
+    sync(pdir)
+    h = head(pdir)
+    name = name.strip() or time.strftime("Version %Y-%m-%d %H:%M")
+    snap = _read(pdir, h)
+    snap["version"] = name
+    _snap_path(pdir, h).write_text(json.dumps(snap, indent=1))
+    return {"step": h, "name": name}
+
+
+def versions(pdir: Path) -> list[dict]:
+    out = []
+    for i in _indices(pdir):
+        s = _read(pdir, i)
+        if s.get("version"):
+            out.append({"step": i, "name": s["version"], "time": s["time"], "message": s["message"]})
+    return out
+
+
 def log(pdir: Path, limit: int | None = None) -> list[dict]:
     h = head(pdir)
     out = []
     idx = _indices(pdir)
     for i in (idx[-limit:] if limit else idx):
         s = _read(pdir, i)
-        out.append({"step": i, "message": s["message"], "time": s["time"], "current": i == h})
+        out.append({"step": i, "message": s["message"], "time": s["time"], "current": i == h, "version": s.get("version")})
     return out
 
 
@@ -130,6 +191,7 @@ class Tx:
         self.project = project
         self.message = message
         self.cancelled = False
+        self.coalesce: str | None = None
 
 
 @contextmanager
@@ -144,4 +206,4 @@ def transaction(pdir: Path, message: str) -> Iterator[Tx]:
     if tx.cancelled:
         return
     save(pdir, tx.project)
-    commit(pdir, tx.project, tx.message)
+    commit(pdir, tx.project, tx.message, tx.coalesce)

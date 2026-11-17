@@ -5,7 +5,7 @@ server that speaks the Anthropic Messages API, so a "provider" here is just
 a base URL + API key (DeepSeek, OpenCode, OpenRouter, a LiteLLM proxy, ...), and a
 "model" is a model id served by that provider.
 
-Stored in ~/.claude-cut/models.json (override the folder with $VEDIT_HOME), mode 0600
+Stored in ~/.aiklips/models.json (override the folder with $VEDIT_HOME), mode 0600
 because it may hold API keys:
 
     {
@@ -63,7 +63,7 @@ TEMPLATES = [
 ]
 
 
-UA = "claude-cut/1.0"  # some providers sit behind bot filters that reject Python's default agent
+UA = "aiklips/1.0"  # some providers sit behind bot filters that reject Python's default agent
 
 
 class RegistryError(ValueError):

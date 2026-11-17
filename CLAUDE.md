@@ -1,4 +1,4 @@
-# claude-cut: you are the video editor
+# aiklips: you are the video editor
 
 People clone this repo and ask you to edit their videos in plain language. You edit **only** through the `vedit` CLI.
 Every command is a non-destructive, undoable change to `project.json`. Original media is never modified.
@@ -16,8 +16,15 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 4. **Look at your work.**
    - After visual changes, run `uv run vedit --json frame --at <sec>` or `uv run vedit --json sheet`.
    - Then **Read the image** it returns to check the result yourself (text placement, crop, background).
-5. **Tell the user what changed**, in timeline seconds, and mention they can say "undo".
-6. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. The file goes to `projects/<name>/exports/`.
+5. **Justify and audit before saying done.**
+   - Record why each clip you chose or kept is there: `vedit why c3 "close-up proves the texture claim" --role proof`.
+   - Run `uv run vedit --json audit`. Fix every **must-fix** finding, and should-fix ones where they help. Re-run until it passes.
+   - In the desktop editor this is enforced: when you finish a turn that changed the edit, the auditor runs and, while
+     the score is below the pass mark (`vedit audit-settings`, default 80) or must-fix findings remain, sends the
+     findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed.
+   - Don't call an edit finished while the audit has must-fix findings; if one can't be fixed, say so and why.
+6. **Tell the user what changed**, in timeline seconds, the audit score, and mention they can say "undo".
+7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. Default: H.264 MP4 at the project's size and fps in `projects/<name>/exports/`; unset options reuse the project's last export settings, and a file is never overwritten (name-2…). Ask before ProRes or 2× (huge files).
 
 **The desktop editor:** the user may have it open (`uv run vedit app`, or `vedit serve` in a browser).
 - It re-renders automatically after every command, so you never need to start it. Suggest it once.
@@ -33,6 +40,31 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Don't touch user media files.** Never delete or overwrite them. Never hand-edit `.vedit/`.
 - **Hand-editing `project.json` is a last resort.** It's acceptable for complex keyframes, but keep it valid. The next command records it in history automatically.
 - **Report errors.** If a command errors, read the message and fix the inputs. Don't retry blindly.
+- **Sound.** Speech clips keep their sound and the music ducks under them; b-roll noise (wind, traffic, hum) is
+  muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
+  those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
+- **Signature moves.** One memorable move beats five generic ones: `vedit fx apply <move>` (at most 2 per video).
+- **Green screen footage:** `bg remove --mode chroma` (instant, keyed in the render); the AI modes are for footage without a screen.
+- **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
+  Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
+  and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
+- **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
+  whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
+- **Tracks.** The main track holds the clips (and gaps); overlay tracks sit above it (0 = bottom, higher = drawn on
+  top) and several layers share a track when their times don't overlap. B-roll over a talking head: `to-overlay <clip>
+  --at T` (keeps sound, colour, filters), or `overlay add`; back again with `to-clip`. `place <clip> --at T` past the
+  previous clip leaves a gap (background colour). `info` shows each layer's `track`, `hidden` and gap clips; a hidden
+  track (the user's eye toggle) is not in the export, so check `track list` before saying something is missing.
+- **Effects on part of a clip.** `fx add <f> --clip c2 --start 1 --end 2.5 --fade-in 0.3` (seconds from the clip's own
+  start) instead of splitting the clip just for an effect. Video overlays take filters and colour too
+  (`fx add --layer`, `color set|look --layer`).
+- **Stretches, not clips.** For a look on a section (flashback, ending), use one `adjust add` layer over it instead of
+  the same filter on each clip. Before a big change, `version save "before X"` so the user can compare.
+- **Filters** (`vedit fx add blur|sharpen|denoise|glow|vignette|grain|rgb_split|edges|posterize|invert|mirror|pixelate|letterbox|film|vhs|shake|zoom_pulse|trails`):
+  use them to serve the look, not to decorate. Prefer one look across the whole edit (`fx add film` with no `--clip`
+  adds it to every clip) over different filters per clip; for colour itself use `color look`, not filters.
+- **Consistency.** One text look for all titles (`text look apply`), at most two fonts, one colour look on every
+  clip, and run `color match` whenever the edit mixes footage from different cameras or lighting.
 - **Hiding things = `vedit mask`.** To hide a label, logo, brand or plate, use a tracked `mask add`. The default style `remove` rebuilds the background so the thing looks like it was never there; use `--style blur|pixelate` only for privacy censoring (faces, plates) or when the user asks for blur. Never build PNG or colour patches with ffmpeg as overlay layers, because they look stuck on and slide off when the camera moves.
 - **Stay inside vedit.** Don't run raw ffmpeg / python for edits. If vedit can't do something, say so and suggest the closest vedit command.
 
@@ -51,30 +83,63 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | info
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
-move <clip> --to N | remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
+move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --src-in]
+to-overlay <clip> --at T [--track N --share-track] | to-clip <layer> [--index N] | track list | track hide|show <N|main>
+trim-to --at T --side start|end | paste --from ID --to ID [--to ID2] --group colour|effects|framing|sound|speed|style|frame|transform|animation
+remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
-text add "TEXT" [--start --end --x --y --size --color --stroke --bg --font --uppercase --preset NAME[:dur]]
+overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
+shape add rect|ellipse|line|arrow [--start --end --x --y --width --height --fill --border --border-color --radius --rotation --blend --preset]
+layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
+text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
+text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
+fonts [--feel serif --sheet]
+color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID | --layer ID]
+color set [--clip | --layer ID --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear [--clip | --layer]
 layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
 captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
-bg remove [--clip --mode fast|quality --replace color:#hex|blur|image:path|video:path] | bg replace <spec> | bg clear
+bg remove [--clip --mode chroma|fast|quality --replace color:#hex|blur|image:path|video:path --key auto|#hex] | bg tune [--similarity --blend --spill --shrink --key] | bg replace <spec> | bg clear
 face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|mouth|face | face prop <model.obj> | face blur [--style pixelate] | face clear
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
 mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
-focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --zoom 1.3] | focus clear
-music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | music remove <id>
-undo [--steps N] | redo | history | checkout <step>
-preview [--open] | frame --at T[,T2,...] | sheet | export [out.mp4] [--scale 1] | serve
-ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
-gen run --ref ID [--ref ID2] -f <footage/music/image>... [--count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
+focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|follow|both --style spotlight|colorpop|brighten|glow|outline --color --width --zoom 1.3] | focus set [--style --color --width --strength] | focus clear
+music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
+audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
+audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
+fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
+fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start S --end S --fade-in S --fade-out S]
+fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
+taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
+undo [--steps N] | redo | history | checkout <step> | version save "NAME" | version list
+update status | update check | update apply | update rollback | update auto true|false   (installed app only)
+marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
+sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
+adjust add [--start --end --look NAME --intensity --saturation --brightness --contrast --temperature --fx vignette ...]  (then `fx add <f> --layer adjN`)
+template save NAME --layer ID [--layer ID2 ...] | template list | template apply NAME --at T | template delete NAME
+proxy make | proxy status | proxy clean
+preview [--open] | frame --at T[,T2,...] | sheet | serve
+export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
+ref add <videos...> | ref list | ref show <id> | ref recipe <id> | ref set <id> <trait.path> <json> | ref remove <id>
+gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
 
 **References / Generate:**
-- `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota (about 2 calls per video).
+- To edit the user's own footage like a reference by hand, run `vedit --json ref recipe <id>`: ordered vedit commands
+  built from its Style DNA (fill in the `<...>` parts) plus `gaps`, what vedit can't do exactly, with the closest option.
+- `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota:
+  about 5 calls per video with the defaults (concepts + editor + auditor, + one editor revision and re-audit when the
+  score is below the pass mark), plus 1 planner + 1 rank call per batch. Each extra revision round adds 2 calls (cap:
+  `vedit audit-settings --max-rounds`). `--no-review` / `--no-explore` cut that to about 1-2.
 - Give the estimate and ask before running it with `--count` above 3.
+- Four AI roles: Watcher (studies references, logs footage; needs vision), Creative director (angles, hooks,
+  concepts), Editor (builds and revises edits), Auditor (watches renders; needs vision). Precedence: this
+  generation's `--model` > the user's saved default (`vedit ai-models`) > the quality tier. Say which models you used.
 - To change one generated video, open its project folder with `vedit use` and edit it like any other project.
+- To keep the AI improving one generated video that's below the pass mark (and not edited by hand):
+  `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.
 
 ## Skills
 
@@ -86,18 +151,55 @@ Detailed recipes live in `.claude/skills/`:
 - `face-ar`
 - `masking-focus`: remove / hide / censor regions with tracking (box, multi-box or painted shape), and spotlight or follow an object
 - `transitions`
+- `color`: match clips to each other or a reference, grade with looks, LUTs
 
 Load the relevant one before doing that kind of edit.
 
-## Developing claude-cut itself
+## Developing aiklips itself
 
 - **Code:** `src/vedit/`
   - Pure timeline ops: `ops/cut.py`
   - FFmpeg graph: `render/graph.py`
   - Overlay rendering: `render/layers.py`
   - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
+  - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
+    applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.
+  - Tracks: `Layer.track` (`normalize_tracks` in project.py), main-track gaps (`Clip.gap`), `Layer.hidden` /
+    `Project.main_hidden`. Timeline ops shared by the editor and the CLI live in `ops/tracks.py`; **every editor action
+    (`editor/actions.py` `@op`) needs a CLI command too, so the AI can do it** (`tests/test_ai_parity.py` checks this).
+  - Overlays: `Layer` types video / shape + frame fields (blend, radius, border, mask, chroma) in `project.py`;
+    `ops/overlays.py` (add / order / style + the generated library, cached in ~/.aiklips/overlays), pixels in
+    `ops/overlay_style.py` (shared by export and live sprites), video frames decoded per layer in `render/layers.py`,
+    blend modes in `render/graph.py` `_blend_layer`. Live preview plays video layers in `<video>` elements (keyed on a
+    canvas for green screen) with CSS mix-blend-mode, so #pv-hold / #pv-layers must not get a z-index.
+  - Editor tools: `ops/editing.py` (markers + chapters, keyframes, trim to playhead, paste attributes), clip sound
+    fades / voice chains in `render/graph.py` (`clip_audio_tail`, `VOICE_CHAINS`), scopes `render/scopes.py`, proxies
+    `proxies.py` (previews only; built in the editor's background thread), adjustment layers (`Layer.type == "adjust"`,
+    `_adjust_layer` in graph.py; part of the base preview and the instant frame), named versions in `history.py`
+    (a `version` key on a step), templates `ops/templates.py` (~/.aiklips/templates).
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
+  - Colour: `Clip.grade` + `ops/color.py` (measure / match / looks -> FFmpeg filters, applied after fit in `render/graph.py`)
+  - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`
+    (built-in + saved looks in ~/.aiklips/text-looks.json), rendering in `ops/text.py`
+  - Editor live preview: the editor plays `base.mp4` (rendered with `layers=False`) and draws overlay layers in the
+    browser from `/api/sprite` (`preview_server/sprites.py`, same `render_text`). Layer motion runs in
+    `preview_server/static/animate.js`, a port of `ops/animate.py`: **change both together**
+    (`tests/test_live_preview.py` checks they agree). The "Final" toggle and `vedit frame` / audit use the full render.
+    Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
+    frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+  - Distribution: `launcher/` (Go: install, signed updates, rollback), `updater.py` (check + stage + on-demand extras,
+    `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
+    `docs/design/distribution.md` before changing any of them; a `project.json` format change needs `SCHEMA_VERSION`
+    + a `MIGRATIONS` step in project.py.
+  - Settings page: `preview_server/static/settings.html` at `/settings` (home links to it; the editor opens it in an
+    iframe overlay with `?embed=1`, closed/refreshed via postMessage). Tabs: Models (chat default = `ai.json` "chat",
+    roles, audit pass mark), Providers & keys (`editor/models.py` registry + add-provider wizard), Permissions
+    (`editor/permissions.py`: global always-allow + "ask"/"deny" for anything unlisted, checked in `ChatSession._permission`),
+    Usage (`ai.client.usage_summary` over `ai-usage.jsonl`; chat turns are logged there too as task "chat").
+  - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
+    `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).
+    Design + roadmap (AI reviewer, chat Stop hook, creativity): `docs/design/auditor-justification-creativity.md`
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
 - **Before committing:** keep the tests green. Add a test for each new op.
