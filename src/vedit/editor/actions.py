@@ -268,17 +268,9 @@ def _fx_replace(p: Project, a: dict) -> str:
 @op("track_visible")
 def _track_visible(p: Project, a: dict) -> str:
     """The eye on a track's header: show / hide everything on an overlay track, or the main video track."""
-    hide = not bool(a.get("visible", True))
-    if a.get("track") in ("main", None, ""):
-        p.main_hidden = hide
-        return f"main track {'hidden' if hide else 'shown'}"
-    t = int(a["track"])
-    hit = [l for l in p.layers if l.track == t]
-    if not hit:
-        raise VeditError(f"No overlay track {t + 1}")
-    for l in hit:
-        l.hidden = hide
-    return f"track {t + 1} {'hidden' if hide else 'shown'}"
+    from ..ops import tracks
+
+    return tracks.set_track_visible(p, a.get("track"), bool(a.get("visible", True)))
 
 
 @op("fx_move")
@@ -495,22 +487,12 @@ def _layer_add_adjust(p: Project, a: dict) -> str:
 
 @op("layer_grade")
 def _layer_grade(p: Project, a: dict) -> str:
-    """Colour of an adjustment layer: brightness / contrast / saturation / temperature / tint, look + intensity, clear."""
-    from ..ops import color
-    from ..project import Grade
+    """Colour of a video overlay or adjustment layer: correction values, look + intensity, clear."""
+    from ..ops import tracks
 
-    l = p.layer(a["layer"])
-    if l.type != "adjust":
-        raise VeditError(f"{l.id} is not an adjustment layer")
-    if a.get("clear"):
-        l.grade = None
-        return f"{l.id}: clear colour"
-    g = l.grade or Grade()
-    vals = {k: float(a[k]) for k in ("brightness", "contrast", "saturation", "temperature", "tint", "intensity") if a.get(k) not in (None, "")}
-    if a.get("look") is not None:
-        vals["look"] = None if a["look"] in ("", "natural") else color.look_name(a["look"])
-    l.grade = g.model_copy(update=vals)
-    return f"{l.id}: colour " + ", ".join(f"{k} {v}" for k, v in vals.items())
+    l = tracks.grade_layer(p, a["layer"], {k: a.get(k) for k in tracks.GRADE_KEYS}, a.get("look"), bool(a.get("clear")))
+    return f"{l.id}: " + ("clear colour" if a.get("clear") else "colour " + ", ".join(
+        f"{k} {a[k]}" for k in (*tracks.GRADE_KEYS, "look") if a.get(k) not in (None, "")))
 
 
 @op("template_apply")
@@ -537,53 +519,24 @@ def _overlay_add(p: Project, a: dict) -> str:
     return f"add {overlays.LIBRARY[a['key']].label} ({l.id})"
 
 
-IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
-
-
 @op("layer_place")
 def _layer_place(p: Project, a: dict) -> str:
-    """Timeline drag of an overlay: new times and / or track. A video layer trimmed from its left edge also moves
-    `src_in`, so the picture keeps playing in sync (like trimming a clip), and can't stretch past its file unless it loops."""
-    from ..ops import overlays
+    """Timeline drag of an overlay: new times and / or track (ops/tracks.py, shared with `vedit place`)."""
+    from ..ops import tracks
 
-    l = p.layer(a["layer"])
-    start = _num(a, "start")
-    end: Any = ... if "end" not in a else _num(a, "end")
-    if l.type == "video" and l.source in p.sources:
-        src = p.sources[l.source]
-        if _num(a, "src_in") is not None:
-            l.src_in = min(max(0.0, float(a["src_in"])), max(0.0, src.duration - 0.05))
-        if not l.loop and start is not None:
-            room = src.duration - l.src_in
-            e = l.end if end is ... else end
-            if e is None or e - start > room:
-                end = round(start + room, 3)
-    track = int(a["track"]) if a.get("track") not in (None, "") else (l.track or 0)
-    overlays.place_layer(p, l.id, track, start, end, bool(a.get("new_track")))
+    end: Any = tracks._KEEP if "end" not in a else _num(a, "end")
+    track = int(a["track"]) if a.get("track") not in (None, "") else None
+    l = tracks.place_layer(p, a["layer"], _num(a, "start"), end, track, bool(a.get("new_track")), _num(a, "src_in"))
     return f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
 
 
 @op("layer_add_media")
 def _layer_add_media(p: Project, a: dict) -> str:
     """A video or image from the Media bin dropped on an overlay track: picture-in-picture / b-roll / sticker."""
-    from ..ops import overlays
+    from ..ops import tracks
 
-    sid = a["source"]
-    if sid not in p.sources:
-        raise VeditError(f"No source {sid}")
-    src = p.sources[sid]
-    start = max(0.0, min(float(a.get("start") or 0), max(0.0, p.duration - 0.5)))
-    W = p.canvas.width
-    if Path(src.path).suffix.lower() in IMAGE_EXT:
-        l = Layer(id=p.new_id("img"), type="image", image=src.path, start=start,
-                  end=round(min(max(p.duration, start + 0.5), start + 3), 3), width=int(W * 0.6))
-        p.layers.append(l)
-    elif src.has_video:
-        l = overlays.add_video(p, sid, start, None, x="50%", y="50%", width=int(W * 0.6))
-    else:
-        raise VeditError("Audio files go on the music track")
-    if a.get("track") not in (None, ""):
-        overlays.place_layer(p, l.id, int(a["track"]), new_track=bool(a.get("new_track")))
+    track = int(a["track"]) if a.get("track") not in (None, "") else None
+    l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")))
     return f"add {l.type} overlay {l.id}"
 
 
@@ -596,51 +549,21 @@ def _clip_place(p: Project, a: dict) -> str:
 
 @op("clip_to_overlay")
 def _clip_to_overlay(p: Project, a: dict) -> str:
-    """A main-track clip dragged up onto the overlay tracks (CapCut): it leaves the main track (which closes the gap)
-    and becomes a full-frame video layer at the dropped time, on the dropped track, keeping its sound and colour."""
-    from ..ops import overlays
+    """A main-track clip dragged up onto the overlay tracks (ops/tracks.py, shared with `vedit to-overlay`)."""
+    from ..ops import tracks
 
-    c = p.clip(a["clip"])
-    if abs(c.speed - 1) > 1e-3:
-        raise VeditError("Overlays play at normal speed: set this clip's speed back to 1× before moving it to an overlay track")
-    sid, src_in, length, vol, grade = c.source, c.in_, c.out - c.in_, c.volume, c.grade
-    fx = [e for e in c.effects if e.type == "fx"]
-    s0 = p.clip_starts()[[x.id for x in p.clips].index(c.id)]
-    d0 = c.duration
-    # text / stickers sitting entirely on this clip travel with it instead of being deleted with the clip
-    riders = [l.model_copy(deep=True) for l in p.layers if l.type != "captions" and l.start >= s0 - 1e-3
-              and l.end is not None and l.end <= s0 + d0 + 1e-3]
-    cut.remove_clip(p, c.id)
-    if p.duration <= 0.05:
-        raise VeditError("Keep at least one clip on the main track")
-    start = max(0.0, min(float(a.get("start") or 0), p.duration - 0.1))
-    rider_ids = {r.id for r in riders}
-    p.layers = [l for l in p.layers if l.id not in rider_ids]
-    for r in riders:
-        r.start, r.end = round(start + r.start - s0, 3), round(min(p.duration, start + r.end - s0), 3)
-        if r.end - r.start >= 0.05:
-            p.layers.append(r)
-    l = overlays.add_video(p, sid, start, round(min(p.duration, start + length), 3), src_in=src_in,
-                           x="50%", y="50%", width=p.canvas.width, volume=vol)
-    l.grade, l.effects = grade, fx
-    overlays.place_layer(p, l.id, int(a.get("track") or 0), new_track=bool(a.get("new_track", True)))
-    return f"{c.id} -> overlay {l.id} on track {l.track}"
+    cid = a["clip"]
+    l = tracks.clip_to_overlay(p, cid, float(a.get("start") or 0), int(a.get("track") or 0), bool(a.get("new_track", True)))
+    return f"{cid} -> overlay {l.id} on track {l.track}"
 
 
 @op("overlay_to_clip")
 def _overlay_to_clip(p: Project, a: dict) -> str:
-    """A video overlay dragged down onto the main track: it becomes a clip there (inserted at `index`)."""
-    l = p.layer(a["layer"])
-    if l.type != "video" or not l.source:
-        raise VeditError("Only video overlays can go on the main track")
-    end = l.end if l.end is not None else p.duration
-    src = p.sources[l.source]
-    out = min(src.duration, l.src_in + max(0.05, end - l.start))
-    p.layers.remove(l)
-    clip = cut.append_clip(p, l.source, l.src_in, out, None if a.get("index") in (None, "") else int(a["index"]))
-    clip.volume = l.volume if l.volume > 0 else 1.0
-    clip.grade = l.grade
-    return f"overlay {l.id} -> clip {clip.id}"
+    """A video overlay dragged down onto the main track (ops/tracks.py, shared with `vedit to-clip`)."""
+    from ..ops import tracks
+
+    clip = tracks.overlay_to_clip(p, a["layer"], None if a.get("index") in (None, "") else int(a["index"]))
+    return f"overlay {a['layer']} -> clip {clip.id}"
 
 
 @op("layer_move")
@@ -702,22 +625,11 @@ def _rename(p: Project, a: dict) -> str:
 
 @op("music_set")
 def _music_set(p: Project, a: dict) -> str:
-    m = next((m for m in p.music if m.id == a["music"]), None)
-    if not m:
-        raise VeditError(f"No music {a['music']}")
-    for k in ("volume", "start"):
-        if _num(a, k) is not None:
-            setattr(m, k, float(a[k]))
-    if _num(a, "in") is not None:  # trimmed from the left edge on the timeline
-        m.in_ = max(0.0, float(a["in"]))
-    if "end" in a:
-        m.end = _num(a, "end")
-        if m.end is not None and m.end - m.start < 0.1:
-            raise VeditError("Music end must be after its start")
-    if "duck" in a:
-        m.duck = bool(a["duck"])
-    if "loop" in a:
-        m.loop = bool(a["loop"])
+    from ..ops import tracks
+
+    m = tracks.set_music(p, a["music"], _num(a, "volume"), _num(a, "start"), _num(a, "in"),
+                         _num(a, "end") if "end" in a else tracks._KEEP,
+                         bool(a["duck"]) if "duck" in a else None, bool(a["loop"]) if "loop" in a else None)
     return f"{m.id}: update"
 
 

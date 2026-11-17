@@ -49,6 +49,14 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
   and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
 - **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
   whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
+- **Tracks.** The main track holds the clips (and gaps); overlay tracks sit above it (0 = bottom, higher = drawn on
+  top) and several layers share a track when their times don't overlap. B-roll over a talking head: `to-overlay <clip>
+  --at T` (keeps sound, colour, filters), or `overlay add`; back again with `to-clip`. `place <clip> --at T` past the
+  previous clip leaves a gap (background colour). `info` shows each layer's `track`, `hidden` and gap clips; a hidden
+  track (the user's eye toggle) is not in the export, so check `track list` before saying something is missing.
+- **Effects on part of a clip.** `fx add <f> --clip c2 --start 1 --end 2.5 --fade-in 0.3` (seconds from the clip's own
+  start) instead of splitting the clip just for an effect. Video overlays take filters and colour too
+  (`fx add --layer`, `color set|look --layer`).
 - **Stretches, not clips.** For a look on a section (flashback, ending), use one `adjust add` layer over it instead of
   the same filter on each clip. Before a big change, `version save "before X"` so the user can compare.
 - **Filters** (`vedit fx add blur|sharpen|denoise|glow|vignette|grain|rgb_split|edges|posterize|invert|mirror|pixelate|letterbox|film|vhs|shake|zoom_pulse|trails`):
@@ -74,18 +82,21 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | info
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
-move <clip> --to N | remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
+move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --src-in]
+to-overlay <clip> --at T [--track N --share-track] | to-clip <layer> [--index N] | track list | track hide|show <N|main>
+trim-to --at T --side start|end | paste --from ID --to ID [--to ID2] --group colour|effects|framing|sound|speed|style|frame|transform|animation
+remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
 overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
 shape add rect|ellipse|line|arrow [--start --end --x --y --width --height --fill --border --border-color --radius --rotation --blend --preset]
-layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill]
+layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
 text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
 text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
 fonts [--feel serif --sheet]
-color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID]
-color set [--clip --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear
+color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID | --layer ID]
+color set [--clip | --layer ID --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear [--clip | --layer]
 layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
 captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
@@ -94,11 +105,12 @@ face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|m
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
 mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
 focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --zoom 1.3] | focus clear
-music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> | music remove <id>
+music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
 fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
-fx filters | fx add <filter> [--clip ID --set amount=20 ...] | fx set <fxN> amount=30 on=false | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
+fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start S --end S --fade-in S --fade-out S]
+fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
 undo [--steps N] | redo | history | checkout <step> | version save "NAME" | version list
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
@@ -148,6 +160,9 @@ Load the relevant one before doing that kind of edit.
   - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
   - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
     applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.
+  - Tracks: `Layer.track` (`normalize_tracks` in project.py), main-track gaps (`Clip.gap`), `Layer.hidden` /
+    `Project.main_hidden`. Timeline ops shared by the editor and the CLI live in `ops/tracks.py`; **every editor action
+    (`editor/actions.py` `@op`) needs a CLI command too, so the AI can do it** (`tests/test_ai_parity.py` checks this).
   - Overlays: `Layer` types video / shape + frame fields (blend, radius, border, mask, chroma) in `project.py`;
     `ops/overlays.py` (add / order / style + the generated library, cached in ~/.claude-cut/overlays), pixels in
     `ops/overlay_style.py` (shared by export and live sprites), video frames decoded per layer in `render/layers.py`,

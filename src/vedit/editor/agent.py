@@ -58,6 +58,12 @@ boxes joined with ';'. For object focus use `vedit focus add`; for transitions
 `vedit transition`. Load the `masking-focus` / `transitions` skill first.
 The user can also box, brush or grid-paint a mask (Mask button under the preview) or draw a focus box.
 
+The timeline has a main track (clips; it can hold gaps) and overlay tracks above it (0 = bottom, higher =
+drawn on top). Everything you can drag there you can do with vedit: `place` (move a clip to a time / a layer to a
+track), `to-overlay` / `to-clip` (move between main and overlay tracks), `track list|hide|show`, `layer style
+--fit --flip-h`, `color set|look --layer`, `music set --offset --end`, and effects on part of a clip
+(`fx add ... --start --end --fade-in`, `fx set fxN start= end=`). `info` shows tracks, gaps and hidden tracks.
+
 Keep the edit consistent: one text look for all titles (`vedit text look apply <name>`, bundled
 fonts via `vedit fonts`, load the `animation` skill), and for colour run `vedit color match`
 then one `vedit color look <name>` on every clip (load the `color` skill). Say why you chose a look.
@@ -560,12 +566,33 @@ class ChatSession:
             if kind == "clip":
                 starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
                 c = p.clip(sid)
-                lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
-                             f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: {', '.join(str(e.params.get('key')) if e.type == 'fx' else e.type for e in c.effects) or 'none'})")
+                if c.gap:
+                    lines.append(f"selected: gap {c.id} (empty space on the main track) at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s")
+                else:
+                    lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
+                                 f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: "
+                                 f"{', '.join(str(e.params.get('id')) + ' ' + str(e.params.get('key')) if e.type == 'fx' else e.type for e in c.effects) or 'none'})")
             elif kind == "layer":
                 l = p.layer(sid)
                 label = l.text or l.image or " ".join(w.text for w in l.words[:8])
-                lines.append(f"selected: {l.type} layer {l.id} {l.start:.2f}-{(l.end if l.end is not None else p.duration):.2f}s \"{label[:60]}\"")
+                extra = f", track {l.track}" + (" (hidden)" if l.hidden else "")
+                if l.type == "video":
+                    extra += f", fit {l.fit}" + (", flipped" if l.flip_h or l.flip_v else "")
+                if l.type in ("video", "adjust") and l.effects:
+                    extra += ", effects: " + ", ".join(str(e.params.get("id")) + " " + str(e.params.get("key")) for e in l.effects if e.type == "fx")
+                lines.append(f"selected: {l.type} layer {l.id} {l.start:.2f}-{(l.end if l.end is not None else p.duration):.2f}s{extra} \"{label[:60]}\"")
+            elif kind == "fx":
+                from ..ops import fx_filters
+
+                holder, e = fx_filters.find(p, sid)
+                pr = e.params
+                e_end = "end" if pr.get("end") is None else f"{float(pr['end']):g}"
+                win = f"{float(pr.get('start') or 0):g}-{e_end}s"
+                lines.append(f"selected: effect {sid} ({pr.get('key')}) on {holder.id}, {win} of it, fade in {pr.get('fade_in') or 0}s / out {pr.get('fade_out') or 0}s"
+                             f"{'' if pr.get('on', True) else ', switched off'} (change with `vedit fx set {sid} ...`)")
+            elif kind == "marker":
+                m = next((m for m in p.markers if m.id == sid), None)
+                lines.append(f"selected: marker {sid} at {m.t:.2f}s \"{m.label or ''}\"" if m else f"selected: marker {sid}")
             elif kind == "music":
                 lines.append(f"selected: music track {sid}")
             elif kind == "source":
