@@ -1,4 +1,4 @@
-# claude-cut
+# aiklips
 
 **An open-source video editor you drive with Claude Code.** Clone it, open it in Claude Code, and describe what you want:
 
@@ -33,10 +33,26 @@ Rendering, background removal and face tracking all run locally on macOS, Window
 
 The AI sends your instructions to Claude, along with the project details and any preview frames it looks at. Your video files themselves are never uploaded. References and Generate work the same way: measurements, transcripts and small contact sheets are sent, never the videos.
 
-## Quick start
+## Download the app
+
+**[aiklips.muzdev.online](https://aiklips.muzdev.online)**, or get the newest version from the [releases page](https://github.com/TengkuMuzaffar/aiklips/releases/latest):
+
+| System | Download | First start |
+|---|---|---|
+| macOS 12+ | `aiklips-mac.zip` | Unzip, move **aiklips.app** to Applications, then **right-click → Open** the first time (not notarised yet). |
+| Windows 10/11 | `aiklips-windows-x64.exe` | Run it; on SmartScreen choose **More info → Run anyway**. It adds Start-menu and desktop shortcuts. |
+| Linux | `aiklips-linux-x86_64` / `-arm64` | `chmod +x` and run it once; it adds itself to your app menu. |
+
+The first start sets everything up (Python, libraries, FFmpeg: about 150 MB, a few minutes). After that the app
+updates itself: when a new version is out it says so (**Settings → Updates**) and installs it on restart. Updates are
+signed and verified, a version that fails to start is rolled back automatically, and your projects
+(`~/aiklips-projects`) are never touched. Optional features (AI background removal, face tracking, auto-captions)
+download the first time you use them. How it works: [docs/design/distribution.md](docs/design/distribution.md).
+
+## Quick start (from source, with Claude Code)
 
 ```bash
-git clone https://github.com/<you>/claude-cut && cd claude-cut
+git clone https://github.com/<you>/aiklips && cd aiklips
 scripts/setup.sh --ai          # macOS / Linux  (Windows: scripts\setup.ps1 -AI)
 claude                         # open Claude Code here
 ```
@@ -51,7 +67,7 @@ Remove the pauses and add a bold hook title for the first 3 seconds
 ### Or use the desktop app
 
 ```bash
-cd claude-cut
+cd aiklips
 uv run vedit app                      # home screen: your projects
 uv run vedit app projects/myreel      # or jump straight into one project (created if needed)
 ```
@@ -60,7 +76,7 @@ uv run vedit app projects/myreel      # or jump straight into one project (creat
 - Create a project by picking a name and a format: 9:16, 4:5, 1:1 or 16:9.
 - Projects can be opened, renamed, duplicated, removed from the list, or deleted.
 - "Open folder…" adds an existing project from anywhere on disk.
-- The project list is a small SQLite library at `~/.claude-cut/library.db`. Each project's edit stays in its own `project.json`.
+- The project list is a small SQLite library at `~/.aiklips/library.db`. Each project's edit stays in its own `project.json`.
 - Projects created with the CLI show up automatically. `uv run vedit projects` prints the list.
 
 **The References tab** is a library of videos you want to learn from.

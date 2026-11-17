@@ -1,7 +1,7 @@
 """The agentic auditor (P2 of docs/design/auditor-justification-creativity.md).
 
     full_audit(pdir, ...)   code checks (audit.py, incl. sound.py) + an independent AI reviewer that looks at the render
-    settings()              the pass mark (score threshold) and the revision cap, ~/.claude-cut/audit.json
+    settings()              the pass mark (score threshold) and the revision cap, ~/.aiklips/audit.json
 
 The reviewer is read-only and never sees the editor's reasoning: only the brief, the beat sheet, the stated
 reasons, the measured sound per clip and the rendered frames. Its findings must point at a frame; findings
@@ -379,7 +379,7 @@ DEFAULTS = {"threshold": 80, "max_rounds": 3}
 
 
 def settings() -> dict:
-    """Pass mark and revision cap, shared by generation and the chat editor (~/.claude-cut/audit.json)."""
+    """Pass mark and revision cap, shared by generation and the chat editor (~/.aiklips/audit.json)."""
     from . import library
 
     try:

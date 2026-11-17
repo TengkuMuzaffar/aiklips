@@ -42,13 +42,13 @@ def launch(pdir: Path | None, browser: bool = False, port: int | None = None) ->
         try:
             import webview
 
-            webview.create_window("claude-cut", start, width=1480, height=920, min_size=(1024, 640))
+            webview.create_window("aiklips", start, width=1480, height=920, min_size=(1024, 640))
             webview.start()
             server.should_exit = True
             return
         except Exception as e:  # no native webview backend
             print(f"Native window unavailable ({e}); opening in your browser instead.")
-    print(f"claude-cut: {start}  (Ctrl+C to quit)")
+    print(f"aiklips: {start}  (Ctrl+C to quit)")
     webbrowser.open(start)
     try:
         t.join()

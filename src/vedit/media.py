@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,18 +20,20 @@ INSTALL_HINT = (
 )
 
 
-def ffmpeg_bin() -> str:
-    b = shutil.which("ffmpeg")
-    if not b:
-        raise VeditError("ffmpeg not found. " + INSTALL_HINT)
+def _tool(name: str) -> str:
+    """An FFmpeg binary: $VEDIT_FFMPEG / $VEDIT_FFPROBE (the desktop launcher points these at its own copy), else PATH."""
+    b = os.environ.get(f"VEDIT_{name.upper()}") or shutil.which(name)
+    if not b or not Path(b).exists() and not shutil.which(b):
+        raise VeditError(f"{name} not found. " + INSTALL_HINT)
     return b
+
+
+def ffmpeg_bin() -> str:
+    return _tool("ffmpeg")
 
 
 def ffprobe_bin() -> str:
-    b = shutil.which("ffprobe")
-    if not b:
-        raise VeditError("ffprobe not found. " + INSTALL_HINT)
-    return b
+    return _tool("ffprobe")
 
 
 @lru_cache

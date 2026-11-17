@@ -2,7 +2,7 @@
 
 A look is picked once and reused, so every title in an edit (and every video of a brand) has the
 same typography. Built-in looks ship here; users save their own from any layer
-(`vedit text look save <name> --from t1`). Saved looks live in ~/.claude-cut/text-looks.json.
+(`vedit text look save <name> --from t1`). Saved looks live in ~/.aiklips/text-looks.json.
 """
 
 from __future__ import annotations

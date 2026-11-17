@@ -6,7 +6,7 @@
     variation job           plan edit (AI) -> exact timing (code) -> build project (vedit)
                             -> render + review (AI, one round of fixes) -> export MP4
 
-Each variation is a normal claude-cut project in projects/batches/<batch>/vNN, so the
+Each variation is a normal aiklips project in projects/batches/<batch>/vNN, so the
 editor, undo history and export work on it unchanged.
 """
 

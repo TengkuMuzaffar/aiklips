@@ -1,7 +1,7 @@
 """Templates: a group of overlay layers (a lower third, an end card, a hook title with its arrow and box...) saved
 once and dropped into any project at the playhead, timing kept relative to the group's start.
 
-Stored in ~/.claude-cut/templates/<name>.json. Image and video layers keep the absolute path of their media, so the
+Stored in ~/.aiklips/templates/<name>.json. Image and video layers keep the absolute path of their media, so the
 template works in other projects as long as the file is still there.
 """
 

@@ -1,4 +1,4 @@
-# claude-cut: you are the video editor
+# aiklips: you are the video editor
 
 People clone this repo and ask you to edit their videos in plain language. You edit **only** through the `vedit` CLI.
 Every command is a non-destructive, undoable change to `project.json`. Original media is never modified.
@@ -44,6 +44,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
   muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
   those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
 - **Signature moves.** One memorable move beats five generic ones: `vedit fx apply <move>` (at most 2 per video).
+- **Green screen footage:** `bg remove --mode chroma` (instant, keyed in the render); the AI modes are for footage without a screen.
 - **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
   Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
   and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
@@ -100,11 +101,11 @@ color set [--clip | --layer ID --brightness --contrast --saturation --temperatur
 layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
 captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
-bg remove [--clip --mode fast|quality --replace color:#hex|blur|image:path|video:path] | bg replace <spec> | bg clear
+bg remove [--clip --mode chroma|fast|quality --replace color:#hex|blur|image:path|video:path --key auto|#hex] | bg tune [--similarity --blend --spill --shrink --key] | bg replace <spec> | bg clear
 face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|mouth|face | face prop <model.obj> | face blur [--style pixelate] | face clear
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
 mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
-focus add --at T --box x,y,w,h | --object NAME [--mode spotlight|follow|both --zoom 1.3] | focus clear
+focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|follow|both --style spotlight|colorpop|brighten|glow|outline --color --width --zoom 1.3] | focus set [--style --color --width --strength] | focus clear
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
@@ -113,6 +114,7 @@ fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start
 fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
 undo [--steps N] | redo | history | checkout <step> | version save "NAME" | version list
+update status | update check | update apply | update rollback | update auto true|false   (installed app only)
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
 sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
 adjust add [--start --end --look NAME --intensity --saturation --brightness --contrast --temperature --fx vignette ...]  (then `fx add <f> --layer adjN`)
@@ -153,7 +155,7 @@ Detailed recipes live in `.claude/skills/`:
 
 Load the relevant one before doing that kind of edit.
 
-## Developing claude-cut itself
+## Developing aiklips itself
 
 - **Code:** `src/vedit/`
   - Pure timeline ops: `ops/cut.py`
@@ -166,7 +168,7 @@ Load the relevant one before doing that kind of edit.
     `Project.main_hidden`. Timeline ops shared by the editor and the CLI live in `ops/tracks.py`; **every editor action
     (`editor/actions.py` `@op`) needs a CLI command too, so the AI can do it** (`tests/test_ai_parity.py` checks this).
   - Overlays: `Layer` types video / shape + frame fields (blend, radius, border, mask, chroma) in `project.py`;
-    `ops/overlays.py` (add / order / style + the generated library, cached in ~/.claude-cut/overlays), pixels in
+    `ops/overlays.py` (add / order / style + the generated library, cached in ~/.aiklips/overlays), pixels in
     `ops/overlay_style.py` (shared by export and live sprites), video frames decoded per layer in `render/layers.py`,
     blend modes in `render/graph.py` `_blend_layer`. Live preview plays video layers in `<video>` elements (keyed on a
     canvas for green screen) with CSS mix-blend-mode, so #pv-hold / #pv-layers must not get a z-index.
@@ -174,11 +176,11 @@ Load the relevant one before doing that kind of edit.
     fades / voice chains in `render/graph.py` (`clip_audio_tail`, `VOICE_CHAINS`), scopes `render/scopes.py`, proxies
     `proxies.py` (previews only; built in the editor's background thread), adjustment layers (`Layer.type == "adjust"`,
     `_adjust_layer` in graph.py; part of the base preview and the instant frame), named versions in `history.py`
-    (a `version` key on a step), templates `ops/templates.py` (~/.claude-cut/templates).
+    (a `version` key on a step), templates `ops/templates.py` (~/.aiklips/templates).
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
   - Colour: `Clip.grade` + `ops/color.py` (measure / match / looks -> FFmpeg filters, applied after fit in `render/graph.py`)
   - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`
-    (built-in + saved looks in ~/.claude-cut/text-looks.json), rendering in `ops/text.py`
+    (built-in + saved looks in ~/.aiklips/text-looks.json), rendering in `ops/text.py`
   - Editor live preview: the editor plays `base.mp4` (rendered with `layers=False`) and draws overlay layers in the
     browser from `/api/sprite` (`preview_server/sprites.py`, same `render_text`). Layer motion runs in
     `preview_server/static/animate.js`, a port of `ops/animate.py`: **change both together**
@@ -186,6 +188,10 @@ Load the relevant one before doing that kind of edit.
     Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
     frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+  - Distribution: `launcher/` (Go: install, signed updates, rollback), `updater.py` (check + stage + on-demand extras,
+    `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
+    `docs/design/distribution.md` before changing any of them; a `project.json` format change needs `SCHEMA_VERSION`
+    + a `MIGRATIONS` step in project.py.
   - Settings page: `preview_server/static/settings.html` at `/settings` (home links to it; the editor opens it in an
     iframe overlay with `?embed=1`, closed/refreshed via postMessage). Tabs: Models (chat default = `ai.json` "chat",
     roles, audit pass mark), Providers & keys (`editor/models.py` registry + add-provider wizard), Permissions

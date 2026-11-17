@@ -1,4 +1,4 @@
-"""Turn an EditPlan into a normal claude-cut project, one undoable history step per operation.
+"""Turn an EditPlan into a normal aiklips project, one undoable history step per operation.
 
 Only files from the batch's footage list can be used (by file id), so a reference video's
 own frames or music can never end up in an output.

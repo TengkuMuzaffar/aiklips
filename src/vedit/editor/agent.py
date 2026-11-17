@@ -34,7 +34,7 @@ with the Mask / Focus buttons under the preview.
 """.strip()
 
 SYSTEM_APPEND = """
-You are running inside the claude-cut desktop editor. The user sees four panes:
+You are running inside the aiklips desktop editor. The user sees four panes:
 an inspector (top-left), the video preview (top-right), this chat (bottom-left) and a
 drag-and-drop timeline (bottom-right). The preview and timeline refresh automatically
 after every vedit command, so never run `vedit serve`, `vedit app` or `--open`.

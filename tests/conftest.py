@@ -14,7 +14,7 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg
 
 @pytest.fixture(autouse=True)
 def isolated_library(tmp_path_factory, monkeypatch):
-    """Never touch the real ~/.claude-cut library or repo projects/ folder in tests."""
+    """Never touch the real ~/.aiklips library or repo projects/ folder in tests."""
     root = tmp_path_factory.mktemp("lib")
     monkeypatch.setenv("VEDIT_HOME", str(root / "home"))
     monkeypatch.setenv("VEDIT_PROJECTS_DIR", str(root / "projects"))

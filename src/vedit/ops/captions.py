@@ -60,7 +60,12 @@ def transcribe(audio_src: Path, model: str = "small", language: str | None = Non
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        raise VeditError("Auto-captions need the 'captions' extra. Run: uv sync --extra captions") from None
+        from .. import updater
+
+        if not updater.enabled():
+            raise VeditError("Auto-captions need the 'captions' extra. Run: uv sync --extra captions") from None
+        updater.install_extra("captions")
+        from faster_whisper import WhisperModel
     wav = audio_src.with_suffix(".captions.wav")
     media.run([media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(audio_src), "-vn", "-ac", "1", "-ar", "16000", str(wav)])
     wm = WhisperModel(model, device="auto", compute_type="int8")

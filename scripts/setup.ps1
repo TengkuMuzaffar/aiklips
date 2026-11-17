@@ -1,4 +1,4 @@
-# claude-cut setup for Windows.  Usage: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [-AI] [-Captions] [-All]
+# aiklips setup for Windows.  Usage: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [-AI] [-Captions] [-All]
 param([switch]$AI, [switch]$Captions, [switch]$All)
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
@@ -19,4 +19,4 @@ if ($Captions -or $All) { $extras += "--extra", "captions" }
 if ($All) { $extras += "--extra", "bg-quality" }
 uv sync @extras
 uv run vedit --help | Out-Null
-Write-Host "claude-cut is ready. Open this folder in Claude Code (run: claude) and say what you want to edit."
+Write-Host "aiklips is ready. Open this folder in Claude Code (run: claude) and say what you want to edit."

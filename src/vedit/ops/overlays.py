@@ -2,7 +2,7 @@
 styling, and a small built-in library (light leaks, dust, grain, bokeh, VHS lines, frames, stickers).
 
 Library media is generated on first use with FFmpeg / Pillow (no binary assets in the repo) into
-~/.claude-cut/overlays, then copied into the project's media/overlays so the project stays self-contained.
+~/.aiklips/overlays, then copied into the project's media/overlays so the project stays self-contained.
 """
 
 from __future__ import annotations

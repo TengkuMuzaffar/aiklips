@@ -184,7 +184,7 @@ Output: `{score 0-100, passed, findings: [{id, severity, category, at, message, 
 - New axis `structure`: rhythmic_montage / text_led / one_take / before_after / problem_solution (`STRUCTURE_HINT`).
 
 **P5: taste memory** (`generate/taste.py`)
-- Keep / Discard appends a row to `~/.claude-cut/taste.jsonl`: hook, concept, move, beat roles, opening reason, axes, audit score.
+- Keep / Discard appends a row to `~/.aiklips/taste.jsonl`: hook, concept, move, beat roles, opening reason, axes, audit score.
 - `taste.examples()` (latest 5 kept, 5 discarded) is added to the creative, concepts, rank and editor prompts.
 - `vedit taste [--clear]`.
 
@@ -207,7 +207,7 @@ task are removed.
 - **Chat editor:** the Stop hook already handed findings to the editing agent. It now blocks while
   `not good_enough(score, threshold)`, not only for must-fix findings.
 
-**Pass mark and stopping** (`review.settings()`, `~/.claude-cut/audit.json`, `vedit audit-settings`,
+**Pass mark and stopping** (`review.settings()`, `~/.aiklips/audit.json`, `vedit audit-settings`,
 editor Audit panel, wizard):
 - `threshold` (default 80) and `max_rounds` (default 3, hard cap 8).
 - The loop stops at the first round that is `passed and score >= threshold`, at `max_rounds`, or after 2 revisions in
@@ -243,7 +243,7 @@ Four roles with plain names (`ai.ROLES`): **Watcher** (`vision` tier: study, foo
 Watcher and Auditor look at frames, so `check_models()` only accepts vision models for them.
 
 - **Precedence** in `model_for()`: `VEDIT_AI_MODEL` (tests/CI) > this job's choice (`ai.use_models()`, thread-local, so
-  batches running side by side don't mix) > the saved default (`~/.claude-cut/ai.json`) > the quality tier.
+  batches running side by side don't mix) > the saved default (`~/.aiklips/ai.json`) > the quality tier.
 - **Per generation:** `BatchSpec.models` ({tier: key}), validated in `batch.validate`, and applied around the
   `batch_prepare` and `variation` jobs. `gen run --model auditor=anthropic/claude-opus-5-5`.
   - Batch rows show the model per role ("AI team" line).
@@ -298,7 +298,7 @@ Watcher and Auditor look at frames, so `check_models()` only accepts vision mode
   "same" when the revision fixed issues.
 - The report and the player carry the list ("Issues: 3 fixed · 2 open").
 
-**C. Footage memory** (`footage.mark/marks/marks_text/clear_marks`, `~/.claude-cut/uploads/<id>/marks.json`).
+**C. Footage memory** (`footage.mark/marks/marks_text/clear_marks`, `~/.aiklips/uploads/<id>/marks.json`).
 - Each picture finding (hook / story / footage / colour / pacing) with a time marks the segment playing there as
   weak for that clip's role, with the reason.
 - Segments brought in by a revision that won get a "good" mark; ones brought in by a revision judged worse get a

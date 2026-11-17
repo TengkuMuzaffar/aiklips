@@ -1,0 +1,5 @@
+# left out of release payloads (git archive): users don't need them to run the app
+tests/ export-ignore
+launcher/ export-ignore
+.github/ export-ignore
+projects/ export-ignore

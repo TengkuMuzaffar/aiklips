@@ -1,4 +1,4 @@
-"""claude-cut app server: home menu (project library) + 4-pane editor.
+"""aiklips app server: home menu (project library) + 4-pane editor.
 
   /            home: list / create / open / rename / duplicate / remove projects
   /editor      the editor for the currently open project
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 import threading
 import time
@@ -30,7 +31,7 @@ from ..render.runner import preview_dir, render_preview
 STATIC = Path(__file__).parent / "static"
 SRC = Path(__file__).resolve().parents[1]  # src/vedit, watched by `vedit serve --dev`
 # `--dev`: remembers the open project so a code reload drops you back into the same editor
-DEV_OPEN = Path(tempfile.gettempdir()) / "claude-cut-dev-open"
+DEV_OPEN = Path(tempfile.gettempdir()) / "aiklips-dev-open"
 BOOT = str(time.time())  # changes every time the server (re)starts
 
 # Injected into pages in dev mode: reloads the page when the server restarts or a static file changes.
@@ -213,7 +214,7 @@ def _thumb(pdir: Path, sid: str) -> Path:
 
 
 def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, dev: bool = False) -> FastAPI:
-    app = FastAPI(title="claude-cut")
+    app = FastAPI(title="aiklips")
     host = Host(watch, chat, dev)
 
     if pdir is not None:
@@ -337,6 +338,57 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
     @app.post("/api/close")
     async def close_project() -> dict:
         await host.close()
+        return {"ok": True}
+
+    # ---- app updates (desktop install via the launcher; see updater.py) ------------------
+    async def _update(fn, *a) -> dict:
+        try:
+            return await asyncio.to_thread(fn, *a)
+        except VeditError as e:
+            raise bad(e)
+
+    @app.get("/api/update")
+    async def api_update() -> dict:
+        """Status, refreshed from GitHub at most every 6 hours (never errors when offline)."""
+        from .. import updater
+
+        return await _update(updater.check)
+
+    @app.post("/api/update/check")
+    async def api_update_check() -> dict:
+        from .. import updater
+
+        return await _update(updater.check, True)
+
+    @app.post("/api/update/apply")
+    async def api_update_apply() -> dict:
+        from .. import updater
+
+        return await _update(updater.stage)
+
+    @app.post("/api/update/rollback")
+    async def api_update_rollback() -> dict:
+        from .. import updater
+
+        return await _update(updater.rollback)
+
+    @app.post("/api/update/auto")
+    async def api_update_auto(body: dict) -> dict:
+        from .. import updater
+
+        updater.set_auto(bool(body.get("on", True)))
+        return updater.status()
+
+    @app.post("/api/update/restart")
+    def api_update_restart() -> dict:
+        """Quit with the launcher's restart code; it installs the staged update (or rollback) and starts again."""
+        from .. import updater
+
+        if not updater.enabled():
+            raise HTTPException(400, "Restart to update only works in the installed app")
+        if any(j["status"] == "running" for j in EXPORTS.values()):
+            raise HTTPException(409, "An export is running. Restart when it has finished.")
+        threading.Timer(0.4, lambda: os._exit(updater.RESTART_CODE)).start()  # let this response reach the page first
         return {"ok": True}
 
     # ---- references + generation (home tabs) ---------------------------------------------
@@ -1052,7 +1104,7 @@ def run(pdir: Path | None, host: str = "127.0.0.1", port: int = 5173, browser: b
     import uvicorn
 
     url = f"http://{host}:{port}" + ("/editor" if pdir else "")
-    print(f"claude-cut  {url}\n(Ctrl+C to stop)")
+    print(f"aiklips  {url}\n(Ctrl+C to stop)")
     if browser:
         threading.Timer(1.5 if dev else 1.0, lambda: webbrowser.open(url)).start()
     if not dev:

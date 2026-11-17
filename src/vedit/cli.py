@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,7 +25,7 @@ from .project import (
 )
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False,
-                  help="claude-cut: a video editor you drive with Claude Code. All edits are non-destructive and undoable.")
+                  help="aiklips: a video editor you drive with Claude Code. All edits are non-destructive and undoable.")
 text_app = typer.Typer(help="Text overlays")
 image_app = typer.Typer(help="Image overlays (logos, stickers)")
 layer_app = typer.Typer(help="List / change / remove overlay layers")
@@ -60,10 +61,19 @@ text_app.add_typer(look_app, name="look")
 STATE: dict[str, Any] = {"json": False, "project": None}
 
 
+def _print_version() -> None:
+    from . import __version__
+
+    print(__version__)
+    raise typer.Exit()
+
+
 @app.callback()
 def _global(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project folder (default: active project)"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
+    show_version: bool = typer.Option(False, "--version", help="Print the version and exit", is_eager=True,
+                                      callback=lambda v: _print_version() if v else None),
 ):
     STATE["project"] = project
     STATE["json"] = as_json
@@ -639,7 +649,7 @@ def look_apply(
 @look_app.command("save")
 def look_save(name: str, from_: str = typer.Option(..., "--from", help="Layer to copy the look from"),
               about: str = typer.Option("", help="When to use it (shown in `text look list`)")):
-    """Save a layer's style + animation as a reusable look (stored in ~/.claude-cut, works in every project)."""
+    """Save a layer's style + animation as a reusable look (stored in ~/.aiklips, works in every project)."""
     from .ops import text_looks
 
     look = text_looks.save(name, load(pdir()).layer(from_), about)
@@ -971,14 +981,77 @@ def _clear_effect(p: Project, clip: str | None, types: tuple[str, ...]) -> list[
 @bg_app.command("remove")
 def bg_remove(
     clip: Optional[str] = typer.Option(None, help="Only this clip (default: all clips)"),
-    mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow)"),
+    mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow) | chroma (green/blue screen, instant)"),
     replace: str = typer.Option("color:#00B140", help="color:#RRGGBB | blur[:sigma] | image:path | video:path"),
-    smooth: float = typer.Option(0.5, help="Temporal smoothing 0..0.9 (less flicker)"),
+    smooth: float = typer.Option(0.5, help="fast/quality: temporal smoothing 0..0.9 (less flicker)"),
+    key: str = typer.Option("auto", help="chroma: screen colour #RRGGBB, or auto (sampled from each clip)"),
+    similarity: float = typer.Option(0.12, help="chroma: how far from the key colour still counts as screen (0.01-0.6)"),
+    blend: float = typer.Option(0.08, help="chroma: edge softness (0-0.5)"),
+    spill: float = typer.Option(0.6, help="chroma: remove green/blue cast on the person's edges (0-1)"),
+    shrink: int = typer.Option(1, help="chroma: pull the matte edge in by N px (0-4) to hide fringes"),
 ):
     """Remove the background behind people and replace it."""
+    from .ops import chroma
+
+    if mode not in ("fast", "quality", "chroma"):
+        raise VeditError("--mode must be fast, quality or chroma")
+    d = pdir()
     with edit(f"remove background ({mode}, {replace})") as tx:
-        ids = _set_effect(tx.project, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
-    emit({"clips": ids}, f"Background removal on {', '.join(ids)}. Run `vedit preview` to compute it (one-time, may take a while).")
+        p = tx.project
+        if mode != "chroma":
+            ids = _set_effect(p, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
+        else:
+            base = chroma.clean({"key": key, "similarity": similarity, "blend": blend, "spill": spill, "shrink": shrink})
+            ids, keys = [], {}
+            for c in ([p.clip(clip)] if clip else p.clips):
+                if c.gap:
+                    continue
+                k = base["key"]
+                if k == "auto":
+                    k = chroma.clip_key(d, p, c)
+                keys[c.id] = k
+                c.effects = [e for e in c.effects if e.type != "bg"]
+                c.effects.append(Effect(type="bg", params={**base, "mode": "chroma", "key": k, "replace": replace}))
+                ids.append(c.id)
+    if mode == "chroma":
+        emit({"clips": ids, "keys": keys},
+             f"Green screen keyed on {', '.join(ids)} ({', '.join(sorted(set(keys.values())))}). Check edges with `vedit frame`; "
+             "tune with `vedit bg tune --similarity/--spill/--shrink`.")
+    else:
+        emit({"clips": ids}, f"Background removal on {', '.join(ids)}. Run `vedit preview` to compute it (one-time, may take a while).")
+
+
+@bg_app.command("tune")
+def bg_tune(
+    clip: Optional[str] = typer.Option(None, help="Only this clip (default: every clip with a green-screen key)"),
+    key: Optional[str] = typer.Option(None, help="Screen colour #RRGGBB, or auto"),
+    similarity: Optional[float] = typer.Option(None, help="Higher = more is keyed out (try +0.03 if screen shows through)"),
+    blend: Optional[float] = typer.Option(None, help="Edge softness"),
+    spill: Optional[float] = typer.Option(None, help="Green/blue cast removal 0-1"),
+    shrink: Optional[int] = typer.Option(None, help="Pull the edge in by N px (0-4)"),
+):
+    """Adjust a green-screen key (instant: nothing is recomputed)."""
+    from .ops import chroma
+
+    vals = chroma.clean({k: v for k, v in {"key": key, "similarity": similarity, "blend": blend, "spill": spill,
+                                            "shrink": shrink}.items() if v is not None})
+    if not vals:
+        raise VeditError("Give at least one of --key --similarity --blend --spill --shrink")
+    d = pdir()
+    with edit("tune green screen") as tx:
+        p = tx.project
+        n = 0
+        for c in ([p.clip(clip)] if clip else p.clips):
+            for e in c.effects:
+                if e.type == "bg" and e.params.get("mode") == "chroma":
+                    upd = dict(vals)
+                    if upd.get("key") == "auto":
+                        upd["key"] = chroma.clip_key(d, p, c)
+                    e.params.update(upd)
+                    n += 1
+        if not n:
+            raise VeditError("No green-screen key on these clips. Use `vedit bg remove --mode chroma` first.")
+    emit({"updated": n, **vals}, f"Green screen tuned on {n} clip(s)")
 
 
 @bg_app.command("replace")
@@ -1184,34 +1257,71 @@ def mask_remove(mask_id: str = typer.Argument(..., help="Mask id, or 'all'")):
 def focus_add(
     box: Optional[str] = typer.Option(None, help="x,y,w,h of the object on the canvas (px or %)"),
     obj: Optional[str] = typer.Option(None, "--object", help="Detect it: person, car, dog, bottle, cell phone, any..."),
+    paint: Optional[str] = typer.Option(None, help='Object painted with a brush, JSON in canvas px: [{"pts":[[x,y],...],"r":20}, '
+                                        '{"rect":[x,y,w,h]}, {"rect":[...],"erase":true}] (hugs its shape)'),
     clip: Optional[str] = typer.Option(None, help="Clip (default: the clip under --at)"),
     at: Optional[float] = typer.Option(None, help="Timeline seconds where the box is right"),
-    mode: str = typer.Option("spotlight", help="spotlight (blur + dim around it) | follow (camera pans with it) | both"),
+    mode: str = typer.Option("spotlight", help="spotlight (highlight it in place) | follow (camera pans with it) | both"),
+    style: str = typer.Option("spotlight", help="How to highlight: spotlight (blur + dim around) | colorpop (rest black & white) | "
+                              "brighten (lift the object) | glow (coloured halo) | outline (coloured stroke)"),
+    color: Optional[str] = typer.Option(None, help="glow / outline colour (default #FFD400)"),
+    width: Optional[float] = typer.Option(None, help="glow / outline width in px at 1080p (default 30 glow, 6 outline)"),
+    strength: Optional[float] = typer.Option(None, help="colorpop / brighten / glow strength 0-2 (default 1)"),
     zoom: Optional[float] = typer.Option(None, help="follow: how tight the shot is (default: 1.0 when reframing wide video, else 1.4)"),
     blur: float = typer.Option(14, help="spotlight: background blur sigma (0 = none)"),
     dim: float = typer.Option(0.35, help="spotlight: background darkening 0-1"),
-    feather: float = typer.Option(0.12, help="spotlight: edge softness"),
-    expand: float = typer.Option(1.35, help="spotlight: room around the object"),
+    feather: Optional[float] = typer.Option(None, help="Edge softness (default 0.12 for a box, 0.03 painted)"),
+    expand: Optional[float] = typer.Option(None, help="Room around the object (default 1.35 for a box, 1.0 painted)"),
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     track_: bool = typer.Option(True, "--track/--no-track"),
     space: str = typer.Option("canvas", help="canvas | source"),
 ):
-    """Put the focus on one object: spotlight it, or reframe the shot to follow it."""
-    if mode not in ("spotlight", "follow", "both"):
-        raise VeditError("--mode must be spotlight, follow or both")
+    """Put the focus on one object: highlight it (spotlight, colour pop, glow, outline...) or reframe to follow it."""
+    from .ops import track
+
+    try:
+        paint_items = json.loads(paint) if paint else None
+    except json.JSONDecodeError as e:
+        raise VeditError(f"--paint must be JSON: {e}") from None
     d = pdir()
-    with edit(f"focus ({mode})") as tx:
+    with edit(f"focus ({mode}, {style})") as tx:
         p = tx.project
         if clip is None and at is None and len(p.clips) > 1:
             raise VeditError("Say which clip with --clip, or give --at <timeline seconds>")
-        c, params, note = _region(p, d, clip, at, box, obj, space)
-        params.update({"mode": mode, "blur": blur, "dim": dim, "feather": feather, "expand": expand,
-                       "smooth": smooth, "track": track_, "shape": "ellipse", "invert": True})
-        if zoom is not None:
-            params["zoom"] = zoom
+        c, params, note = _region(p, d, clip, at, box, obj, space, paint_items)
+        params = track.focus_params(params, mode, style, color=color, width=width, strength=strength, blur=blur, dim=dim,
+                                    feather=feather, expand=expand, smooth=smooth, track=track_, zoom=zoom)
         c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
-    emit({"clip": c.id, "mode": mode, "box_source": params["box"], "note": note},
-         f"Focus ({mode}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+    emit({"clip": c.id, "mode": mode, "style": style, "shape": params["shape"], "box_source": params["box"], "note": note},
+         f"Focus ({mode}, {style}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
+
+
+@focus_app.command("set")
+def focus_set(
+    clip: Optional[str] = typer.Option(None, help="Only this clip (default: every clip with a focus)"),
+    style: Optional[str] = typer.Option(None, help="spotlight | colorpop | brighten | glow | outline"),
+    color: Optional[str] = typer.Option(None, help="glow / outline colour"),
+    width: Optional[float] = typer.Option(None, help="glow / outline width (px at 1080p)"),
+    strength: Optional[float] = typer.Option(None, help="0-2"),
+    blur: Optional[float] = typer.Option(None, help="spotlight: background blur"),
+    dim: Optional[float] = typer.Option(None, help="spotlight: background darkening 0-1"),
+):
+    """Change how a focused object is highlighted (instant: the tracking is reused)."""
+    from .ops import track
+
+    vals = {k: v for k, v in {"style": style, "color": color, "width": width, "strength": strength, "blur": blur, "dim": dim}.items()
+            if v is not None}
+    if not vals:
+        raise VeditError("Give at least one of --style --color --width --strength --blur --dim")
+    if style is not None and style not in track.FOCUS_STYLES:
+        raise VeditError(f"--style must be one of {', '.join(track.FOCUS_STYLES)}")
+    with edit("focus look") as tx:
+        hits = [e for c in ([tx.project.clip(clip)] if clip else tx.project.clips) for e in c.effects if e.type == "focus"]
+        if not hits:
+            raise VeditError("No focus on these clips. Use `vedit focus add` first.")
+        for e in hits:
+            e.params.update(vals)
+    emit({"updated": len(hits), **vals}, f"Focus updated on {len(hits)} clip(s)")
 
 
 @focus_app.command("clear")
@@ -1993,7 +2103,7 @@ def app_cmd(
     browser: bool = typer.Option(False, "--browser", help="Open in the web browser instead of a native window"),
     port: Optional[int] = None,
 ):
-    """Open claude-cut: home screen with your projects, then the 4-pane editor."""
+    """Open aiklips: home screen with your projects, then the 4-pane editor."""
     from .editor.window import launch
 
     d = None
@@ -2026,7 +2136,7 @@ def serve(
     browser: bool = True,
     dev: bool = typer.Option(False, "--dev", help="Auto-reload: restart on Python changes, refresh the page on HTML/JS changes"),
 ):
-    """Open claude-cut in your browser on a fixed port (same as `vedit app --browser`)."""
+    """Open aiklips in your browser on a fixed port (same as `vedit app --browser`)."""
     from .preview_server.app import run
 
     try:
@@ -2197,6 +2307,66 @@ def gen_list():
 
     rows = batch.list_batches()
     emit({"batches": rows}, "\n".join(f"{b['id']}  {b['status']:<9} {b['done']}/{b['count']}  {b['name']}" for b in rows) or "No batches yet")
+
+
+update_app = typer.Typer(help="App updates (installed desktop app; in a git checkout use `git pull`)")
+app.add_typer(update_app, name="update")
+
+
+def _update_line(st: dict) -> str:
+    if not st["enabled"]:
+        return f"aiklips {st['current']} (source checkout: update with `git pull`)"
+    if st.get("staged"):
+        return f"aiklips {st['current']}; {st['staged']} is downloaded and installs when you restart the app"
+    if st["available"]:
+        return f"aiklips {st['current']}; {st['latest']} is available: `vedit update apply`"
+    return f"aiklips {st['current']} is up to date" + (f" (checked {time.strftime('%Y-%m-%d %H:%M', time.localtime(st['checked_at']))})"
+                                                         if st.get("checked_at") else "")
+
+
+@update_app.command("status")
+def update_status():
+    """Current version, and whether an update is available or downloaded."""
+    from . import updater
+
+    st = updater.status()
+    emit(st, _update_line(st))
+
+
+@update_app.command("check")
+def update_check():
+    """Ask GitHub for the newest release now."""
+    from . import updater
+
+    st = updater.check(force=True)
+    emit(st, _update_line(st))
+
+
+@update_app.command("apply")
+def update_apply():
+    """Download the newest release; it is verified and installed when the app restarts."""
+    from . import updater
+
+    st = updater.stage()
+    emit(st, f"Downloaded {st['staged']}. Restart aiklips to install it (your projects are not touched).")
+
+
+@update_app.command("rollback")
+def update_rollback():
+    """Go back to the previously installed version (on the next restart)."""
+    from . import updater
+
+    st = updater.rollback()
+    emit(st, f"Restart aiklips to go back to {st['current_after_restart']}.")
+
+
+@update_app.command("auto")
+def update_auto(on: bool = typer.Argument(..., help="true / false")):
+    """Turn the automatic update check (every 6 hours) on or off."""
+    from . import updater
+
+    updater.set_auto(on)
+    emit({"auto": on}, f"Automatic update check {'on' if on else 'off'}")
 
 
 def main() -> None:

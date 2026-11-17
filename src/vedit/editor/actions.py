@@ -183,20 +183,76 @@ def _mask_set(p: Project, a: dict) -> str:
     return f"mask {a['id']}: update"
 
 
+@op("bg_remove")
+def _bg_remove(p: Project, a: dict) -> str:
+    """Background removal on one clip (or every clip): mode chroma (green screen) | fast | quality | off."""
+    from ..ops import chroma
+
+    mode = a.get("mode") or "chroma"
+    targets = [p.clip(a["clip"])] if a.get("clip") else [c for c in p.clips if not c.gap]
+    if mode == "off":
+        for c in targets:
+            c.effects = [e for e in c.effects if e.type != "bg"]
+        return "background removal off"
+    if mode not in ("chroma", "fast", "quality"):
+        raise VeditError("mode must be chroma, fast, quality or off")
+    replace = a.get("replace") or "color:#00B140"
+    for c in targets:
+        if mode == "chroma":
+            prm = chroma.clean({k: a[k] for k in chroma.PARAMS if a.get(k) not in (None, "")})
+            prm = {**chroma.DEFAULTS, **prm}
+            if prm["key"] in ("", "auto") or "key" not in a:
+                prm["key"] = chroma.clip_key(_PDIR[0], p, c)
+        else:
+            prm = {"smooth": float(a.get("smooth") or 0.5)}
+        c.effects = [e for e in c.effects if e.type != "bg"] + [Effect(type="bg", params={**prm, "mode": mode, "replace": replace})]
+    return f"{', '.join(c.id for c in targets)}: background removal ({mode})"
+
+
+@op("bg_set")
+def _bg_set(p: Project, a: dict) -> str:
+    """Change a clip's background settings (key colour, tolerance, spill, replacement): compositing only."""
+    from ..ops import chroma
+
+    vals = chroma.clean({k: a[k] for k in (*chroma.PARAMS, "replace") if a.get(k) not in (None, "")})
+    targets = [p.clip(a["clip"])] if a.get("clip") else p.clips
+    hits = [(c, e) for c in targets for e in c.effects if e.type == "bg"]
+    if not hits:
+        raise VeditError("No background removal on this clip")
+    for c, e in hits:
+        upd = {k: v for k, v in vals.items() if k == "replace" or e.params.get("mode") == "chroma"}
+        if upd.get("key") == "auto":
+            upd["key"] = chroma.clip_key(_PDIR[0], p, c)
+        e.params.update(upd)
+    return f"background: {', '.join(f'{k}={v}' for k, v in vals.items())}"
+
+
 @op("focus_add")
 def _focus_add(p: Project, a: dict) -> str:
     from ..ops import track
 
-    mode = a.get("mode") or "spotlight"
-    if mode not in ("spotlight", "follow", "both"):
-        raise VeditError("mode must be spotlight, follow or both")
-    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"))
-    params.update({"mode": mode, "blur": 14.0, "dim": 0.35, "feather": 0.12, "expand": 1.35, "smooth": 0.6,
-                   "track": bool(a.get("track", True)), "shape": "ellipse", "invert": True})
-    if _num(a, "zoom"):
-        params["zoom"] = float(a["zoom"])
+    c, params, _ = track.region(p, _PDIR[0], a.get("clip"), _num(a, "at"), a.get("box"), a.get("object"),
+                                paint=a.get("paint") or None, keep=a.get("keep") or None)
+    params = track.focus_params(params, a.get("mode") or "spotlight", a.get("style") or "spotlight",
+                                color=a.get("color") or None, width=_num(a, "width"), strength=_num(a, "strength"),
+                                track=bool(a.get("track", True)), zoom=_num(a, "zoom") or None)
     c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
-    return f"{c.id}: focus ({mode})"
+    return f"{c.id}: focus ({params['mode']}, {params['style']})"
+
+
+@op("focus_set")
+def _focus_set(p: Project, a: dict) -> str:
+    from ..ops import track
+
+    if a.get("style") and a["style"] not in track.FOCUS_STYLES:
+        raise VeditError(f"style must be one of {', '.join(track.FOCUS_STYLES)}")
+    hits = [e for c in ([p.clip(a["clip"])] if a.get("clip") else p.clips) for e in c.effects if e.type == "focus"]
+    if not hits:
+        raise VeditError("No focus on this clip")
+    vals = {k: (a[k] if k in ("style", "color") else float(a[k])) for k in track.FOCUS_LOOK if a.get(k) not in (None, "")}
+    for e in hits:
+        e.params.update(vals)
+    return f"focus: {', '.join(f'{k}={v}' for k, v in vals.items())}"
 
 
 @op("remove_clip")
