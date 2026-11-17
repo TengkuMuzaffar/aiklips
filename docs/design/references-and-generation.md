@@ -7,7 +7,7 @@ Status: **implemented (P1–P4)** · Date: 2026-11-16 · see §12 for what diffe
 Add two features next to **Projects** on the home screen:
 
 1. **References.** The user uploads videos they like. The AI studies each one and works out its pattern: pacing, cuts, animation, text style, transitions and sound.
-2. **Generate.** A wizard. The user ticks the references to copy the style of, gives their own footage and a short brief, and picks how many videos they want. The system makes N edits that look clearly different from each other, all in the referenced style. Each result is a normal claude-cut project the user can open and keep editing.
+2. **Generate.** A wizard. The user ticks the references to copy the style of, gives their own footage and a short brief, and picks how many videos they want. The system makes N edits that look clearly different from each other, all in the referenced style. Each result is a normal aiklips project the user can open and keep editing.
 
 ## 2. The constraint that shapes everything
 
@@ -178,7 +178,7 @@ Each variation is a normal vedit project, so the editor, undo history and export
 projects/batches/<batch-id>/
   batch.json            BatchSpec (refs, footage, brief, N, axes) + merged DNA snapshot
   footage_index.json
-  v01/ project.json …   ← normal claude-cut project, registered in the library (hidden from Projects until "Keep")
+  v01/ project.json …   ← normal aiklips project, registered in the library (hidden from Projects until "Keep")
   v02/ …
 ```
 
@@ -273,7 +273,7 @@ The editor call returns a JSON **EditPlan**, a list of typed ops that map one-to
 CREATE TABLE refs (
   id INTEGER PRIMARY KEY, sha256 TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
   path TEXT NOT NULL,                -- original file (never modified, never copied unless the user opts in)
-  dir TEXT NOT NULL,                 -- ~/.claude-cut/references/<sha>/  (metrics, sheets, dna.json)
+  dir TEXT NOT NULL,                 -- ~/.aiklips/references/<sha>/  (metrics, sheets, dna.json)
   status TEXT NOT NULL,              -- queued | studying | ready | failed
   tags TEXT, overrides TEXT,         -- JSON
   prompt_version INTEGER, created_at REAL, error TEXT
@@ -358,8 +358,8 @@ Implemented: phases P1–P4. P5 (learning from keep/discard) is not built yet; t
 
 Where the code differs from the proposal, and why:
 - **LLM transport.** Calls go through the Claude Agent SDK, with no tools, a JSON-schema `output_format` and images inline as base64. That's the same login as the editor's chat, so it works on the user's subscription and on any provider from Manage models.
-- **Quality levels** (best / balanced / economy) pick the model per tier. `~/.claude-cut/ai.json` or `$VEDIT_AI_MODEL` can override them.
-- **Uploads are copied** into `~/.claude-cut/references/` and `~/.claude-cut/uploads/`, because the browser hands us bytes, not paths. They're deduplicated by content hash, and originals are never touched.
+- **Quality levels** (best / balanced / economy) pick the model per tier. `~/.aiklips/ai.json` or `$VEDIT_AI_MODEL` can override them.
+- **Uploads are copied** into `~/.aiklips/references/` and `~/.aiklips/uploads/`, because the browser hands us bytes, not paths. They're deduplicated by content hash, and originals are never touched.
 - **Progress uses polling** (every 2–2.5 s while something is active) instead of new SSE events. It's simpler, and the existing `/api/events` stream stays editor-only.
 - **The footage log** is one vision call per 4 files. The result is cached per file, so a clip is only described once across batches.
 - **`enforce()`** re-applies the style directives after the editor call (text style and animation, captions, music, jump-cut zoom, transitions). The model only decides clips, order and wording, so weaker or cheaper models still produce on-style edits.

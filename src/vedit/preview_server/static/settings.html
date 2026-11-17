@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings · claude-cut</title>
+<title>Settings · aiklips</title>
 <link rel="icon" href="data:,">
 <style>
 :root {
@@ -204,7 +204,7 @@ td small { display: block; color: var(--faint); font: 11px ui-monospace, monospa
 </head>
 <body>
 <header>
-  <div class="logo">claude<span>-</span>cut</div>
+  <div class="logo">ai<span>klips</span></div>
   <h1>Settings</h1>
   <div class="spacer"></div>
   <button class="ghost" id="b-close"></button>
@@ -252,6 +252,7 @@ const ICONS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
 };
 function icon(name) {
   const el = document.createElement("span"); el.className = "ic";
@@ -267,7 +268,7 @@ async function api(url, body) {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
     return r.json();
-  } catch { toast("Can't reach claude-cut — is it still running?", true); return null; }
+  } catch { toast("Can't reach aiklips — is it still running?", true); return null; }
 }
 const get = async (url) => { try { const r = await fetch(url, { cache: "no-store" }); return r.ok ? r.json() : null; } catch { return null; } };
 const num = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
@@ -285,9 +286,9 @@ function avatar(id, name) {
 
 // ---------- state + routing ----------
 const TABS = [
-  ["models", "Models", "cpu"], ["providers", "Providers & keys", "plug"], ["permissions", "Permissions", "shield"], ["usage", "Usage", "chart"]];
+  ["models", "Models", "cpu"], ["providers", "Providers & keys", "plug"], ["permissions", "Permissions", "shield"], ["usage", "Usage", "chart"], ["updates", "Updates", "download"]];
 let TAB = "models";
-let PUB = null, AI = null, SET = null, ROLES = null, AUDIT = null, PERM = null, USAGE = null, USAGE_DAYS = 30;
+let PUB = null, AI = null, SET = null, ROLES = null, AUDIT = null, PERM = null, USAGE = null, USAGE_DAYS = 30, UPD = null, UPD_BUSY = "";
 let WIZ = null, ADDM = null, LOGIN = null, POLL = null;
 const TESTS = {};
 
@@ -300,11 +301,12 @@ function route() {
   if (TAB === "providers" && sub === "edit" && PUB) { const pv = PUB.providers.find((p) => p.id === decodeURIComponent(arg || "")); if (pv && !pv.builtin) editProvider(pv, false); }
   if (TAB === "usage" && !USAGE) loadUsage();
   if (TAB === "permissions" && !PERM) loadPerm();
+  if (TAB === "updates" && !UPD) loadUpdates();
   render();
 }
 window.addEventListener("hashchange", route);
 
-// where Back goes: the claude-cut page that opened Settings (home or a tab of it), else the home screen
+// where Back goes: the aiklips page that opened Settings (home or a tab of it), else the home screen
 const RETURN_TO = (() => {
   try { const u = new URL(document.referrer); if (u.origin === location.origin && u.pathname !== "/settings") return u.pathname + u.search + u.hash; } catch {}
   return "/";
@@ -335,7 +337,7 @@ function render() {
     icon(ic), label, id === "providers" && unready ? h("span", { class: "n", title: "Some providers need sign-in or a key" }, "●") : "")));
   const page = $("#page");
   if (!PUB) return page.replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…"));
-  page.replaceChildren(...{ models: pageModels, providers: pageProviders, permissions: pagePermissions, usage: pageUsage }[TAB]());
+  page.replaceChildren(...{ models: pageModels, providers: pageProviders, permissions: pagePermissions, usage: pageUsage, updates: pageUpdates }[TAB]());
 }
 
 // ---------- Models ----------
@@ -523,7 +525,7 @@ function wizStep2() {
         h("input", { type: "password", autocomplete: "off", value: f.api_key, oninput: (e) => (f.api_key = e.target.value),
           placeholder: ed?.key_stored ? "•••••••• saved — leave blank to keep" : "Paste your API key", onkeydown: (e) => e.key === "Enter" && save() }),
         t.key_url ? ext(t.key_url, "Get a key") : "")),
-      h("p", { class: "full hint", style: { margin: 0 } }, icon("lock"), " Saved only on this computer (~/.claude-cut/models.json, readable by you only). Never shown again."),
+      h("p", { class: "full hint", style: { margin: 0 } }, icon("lock"), " Saved only on this computer (~/.aiklips/models.json, readable by you only). Never shown again."),
       h("details", { class: "full adv" }, h("summary", {}, "Advanced"),
         h("div", { class: "fields", style: { marginTop: "8px" } },
           custom || ed ? [] : field("Base URL", inp("base_url")),
@@ -651,7 +653,7 @@ function pagePermissions() {
     h("section", {}, h("h3", {}, "Your always-allow list"),
       h("p", { class: "sub" }, "Programs or tools you've said yes to for good. “Always allow” in the chat adds to this project's list."),
       h("div", { class: "card" },
-        allowList("global", PERM.always_allow, "All projects", "~/.claude-cut/permissions.json"),
+        allowList("global", PERM.always_allow, "All projects", "~/.aiklips/permissions.json"),
         PERM.project != null ? allowList("project", PERM.project_allow || [], `This project · ${PERM.project}`, "only while it's open") : "")),
     h("section", {}, h("h3", {}, "Built-in rules"), h("p", { class: "sub" }, "These can't be changed, so the AI can never delete your footage or run arbitrary code unasked."),
       h("div", { class: "rules" },
@@ -690,6 +692,52 @@ function pageUsage() {
     h("section", {}, h("h3", {}, "By model"), table(USAGE.models, "Model", (r) => [r.label, h("small", {}, r.key), h("i", { class: "bar", style: { width: `${(r.calls / max) * 100}%` } })])),
     h("section", {}, h("h3", {}, "By job"), table(USAGE.tasks, "Job", (r) => TASKS[r.key] || r.key)),
     partial ? h("p", { class: "hint" }, "* some calls in this row had no reported price.") : "",
+  ];
+}
+
+// ---------- Updates ----------
+async function loadUpdates() { UPD = await get("/api/update"); render(); }
+async function updAction(label, url, body) {
+  UPD_BUSY = label; render();
+  const r = await api(url, body);
+  UPD_BUSY = "";
+  if (r) UPD = r;
+  render();
+  return r;
+}
+async function restartApp() {
+  UPD_BUSY = "Restarting…"; render();
+  if (await api("/api/update/restart")) {
+    $("#page").replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Restarting aiklips — this window reopens in a moment."));
+  } else { UPD_BUSY = ""; render(); }
+}
+function pageUpdates() {
+  const head = [h("h2", {}, "Updates"), h("p", { class: "lede" }, "New versions come from the project's GitHub releases. They're signed, checked before installing, and your projects are never touched.")];
+  if (!UPD) return [...head, h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…")];
+  const U = UPD;
+  if (!U.enabled) return [...head, h("div", { class: "card", style: { padding: "18px" } },
+    h("b", {}, `aiklips ${U.current} (running from source)`),
+    h("p", { class: "hint", style: { margin: "6px 0 10px" } }, "This copy runs from a source checkout, so it updates with git instead:"), codeLine("git pull && uv sync"))];
+  const when = U.checked_at ? new Date(U.checked_at * 1000).toLocaleString() : "never";
+  const busy = !!UPD_BUSY;
+  let main;
+  if (U.staged) main = [h("b", {}, `Version ${U.staged} is downloaded`), h("p", { class: "hint" }, "Restart to install it. If it doesn't start properly, aiklips goes back to this version on its own."),
+    h("button", { class: "primary", disabled: busy, onclick: restartApp }, "Restart to update")];
+  else if (U.available) main = [h("b", {}, `Version ${U.latest} is available`), h("p", { class: "hint" }, `You have ${U.current}.`),
+    h("button", { class: "primary", disabled: busy, onclick: () => updAction("Downloading…", "/api/update/apply").then((r) => r && toast(`Downloaded ${r.staged}`)) }, icon("download"), "Download update")];
+  else main = [h("b", {}, `aiklips ${U.current} is up to date`), h("p", { class: "hint" }, `Last checked: ${when}`)];
+  return [...head,
+    h("div", { class: "card", style: { padding: "18px", display: "grid", gap: "8px", justifyItems: "start" } }, ...main,
+      busy ? h("p", { class: "hint" }, h("span", { class: "spin" }), " ", UPD_BUSY) : ""),
+    U.available && U.notes ? h("section", {}, h("h3", {}, `What's new in ${U.latest}`), h("pre", { class: "card", style: { padding: "12px", whiteSpace: "pre-wrap", margin: 0 } }, U.notes)) : "",
+    h("section", {}, h("h3", {}, "Options"), h("div", { class: "card", style: { padding: "14px", display: "grid", gap: "10px", justifyItems: "start" } },
+      h("label", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+        h("input", { type: "checkbox", checked: U.auto, onchange: (e) => updAction("", "/api/update/auto", { on: e.target.checked }) }), "Check for updates automatically"),
+      h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
+        h("button", { disabled: busy, onclick: () => updAction("Checking…", "/api/update/check") }, "Check now"),
+        U.previous ? h("button", { class: "ghost", disabled: busy, title: "Use the version you had before; takes effect on restart",
+          onclick: async () => { if (confirm(`Go back to version ${U.previous}?`) && await updAction("", "/api/update/rollback")) restartApp(); } }, `Go back to ${U.previous}`) : "",
+        U.url ? ext(U.url, "Release notes") : ""))),
   ];
 }
 

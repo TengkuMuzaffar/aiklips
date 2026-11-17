@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -373,11 +373,32 @@ def find_project_dir(explicit: str | None = None) -> Path:
     )
 
 
+# project.json format migrations: MIGRATIONS[n] turns a version-n dict into version n+1. When the format changes,
+# bump SCHEMA_VERSION and add a step here, so projects saved by older versions keep opening.
+MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def migrate(data: dict) -> dict:
+    """Bring a project dict up to SCHEMA_VERSION. A project saved by a *newer* aiklips is refused rather than
+    loaded and re-saved without the fields this version doesn't know (that would silently lose work after a
+    rollback to an older version)."""
+    v = int(data.get("version", 1))
+    if v > SCHEMA_VERSION:
+        raise VeditError(f"This project was saved by a newer version of aiklips (format {v}; this version reads up to "
+                         f"{SCHEMA_VERSION}). Update aiklips to open it.")
+    while v < SCHEMA_VERSION:
+        data = MIGRATIONS[v](data)
+        v += 1
+        data["version"] = v
+    return data
+
+
 def load(pdir: Path) -> Project:
     try:
         data = json.loads((pdir / PROJECT_FILE).read_text())
     except json.JSONDecodeError as e:
         raise VeditError(f"project.json is not valid JSON: {e}") from e
+    data = migrate(data)
     try:
         p = Project.model_validate(data)
     except Exception as e:  # pydantic ValidationError

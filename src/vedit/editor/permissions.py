@@ -5,7 +5,7 @@ Three layers, checked in this order by `ChatSession._permission`:
 1. Built-in rules (code, not editable): reading/searching files, `vedit` commands, read-only shell
    programs and edits inside the project (never `.vedit/` or the original media) are always allowed;
    connectors (`mcp__*`) and programs in `_NEVER_ALWAYS` (rm, curl, python…) always ask.
-2. "Always allow" lists: global (here, ~/.claude-cut/permissions.json) and per project (chat.json,
+2. "Always allow" lists: global (here, ~/.aiklips/permissions.json) and per project (chat.json,
    filled by the "Always allow" button in the chat). Items are program names (ffmpeg) or tool names (WebFetch).
 3. Everything else: `ask` the user in the chat (default), or `deny` without asking (for unattended runs).
 """
@@ -91,6 +91,6 @@ def declaration() -> dict:
                                                     "or contact sheets rendered from your footage and references. "
                                                     "Whole video files are not uploaded."},
             {"title": "Where it goes", "detail": "Only to the provider of the model you picked (Claude by default). "
-                                                 "API keys stay in ~/.claude-cut/models.json on this computer."},
+                                                 "API keys stay in ~/.aiklips/models.json on this computer."},
         ],
     }

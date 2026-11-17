@@ -1,6 +1,6 @@
 """Taste memory (P5): what this user kept and discarded, fed back to the planner as examples.
 
-Every Keep / Discard on a generated variation appends one line to ~/.claude-cut/taste.jsonl with what made
+Every Keep / Discard on a generated variation appends one line to ~/.aiklips/taste.jsonl with what made
 that video what it was: angle, hook, concept, structure, opening shot and its reason, axes, audit score.
 `examples()` turns the most recent ones into a short prompt block. Local to this machine, never uploaded.
 """

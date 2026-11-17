@@ -34,6 +34,31 @@ REMOVE_VERSION = "remove-6"  # bump when the reconstruction changes (part of the
 MASK_VERSION = "mask-2"  # bump when region_mask changes (part of the cache key); 2 = erase strokes survive the feather
 DETECTOR_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite"
 STYLES = ("remove", "blur", "pixelate", "fill", "dim")
+FOCUS_MODES = ("spotlight", "follow", "both")
+# how a focused object is highlighted (render/graph.py `_focus_composite`); all compositing only, no re-tracking
+FOCUS_STYLES = ("spotlight", "colorpop", "brighten", "glow", "outline")
+FOCUS_LOOK = ("style", "color", "width", "strength", "blur", "dim")  # params `focus set` may change
+
+
+def focus_params(params: dict, mode: str = "spotlight", style: str = "spotlight", *, color: str | None = None,
+                 width: float | None = None, strength: float | None = None, blur: float = 14, dim: float = 0.35,
+                 feather: float | None = None, expand: float | None = None, smooth: float = 0.6, track: bool = True,
+                 zoom: float | None = None) -> dict:
+    """Complete a focus effect's params from a picked region (`region()` output). Painted regions keep their shape and
+    hug the object (no margin, light feather); boxes become a roomy feathered ellipse, as before."""
+    if mode not in FOCUS_MODES:
+        raise VeditError(f"mode must be one of {', '.join(FOCUS_MODES)}")
+    if style not in FOCUS_STYLES:
+        raise VeditError(f"style must be one of {', '.join(FOCUS_STYLES)}")
+    painted = params.get("shape") == "paint"
+    out = {**params, "mode": mode, "style": style, "blur": blur, "dim": dim, "smooth": smooth, "track": track,
+           "shape": "paint" if painted else "ellipse", "invert": True,
+           "feather": feather if feather is not None else (0.03 if painted else 0.12),
+           "expand": expand if expand is not None else (1.0 if painted else 1.35)}
+    for k, v in (("color", color), ("width", width), ("strength", strength), ("zoom", zoom)):
+        if v is not None:
+            out[k] = v
+    return out
 
 
 # ---- geometry: canvas <-> source ---------------------------------------------------

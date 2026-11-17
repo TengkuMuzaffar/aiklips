@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claude-cut</title>
+<title>aiklips</title>
 <link rel="icon" href="data:,">
 <style>
 :root {
@@ -274,7 +274,7 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
 </head>
 <body>
 <header>
-  <div class="logo">claude<span>-</span>cut</div>
+  <div class="logo">ai<span>klips</span></div>
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="projects" title="Your editing projects">Projects</button>
     <button class="tab" role="tab" data-tab="references" title="Videos the AI studies for style">References<span class="n" id="n-refs"></span></button>
@@ -285,6 +285,7 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <button class="primary" id="b-new" data-for="projects" title="Create a new video project">＋ New project</button>
   <button class="primary" id="b-ref-add" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
   <button class="primary" id="b-gen-new" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <a class="ghost settings-link" id="b-update" href="/settings#updates" hidden title="A new version of aiklips is ready">Update available</a>
   <a class="ghost settings-link" id="b-settings" href="/settings" title="Settings: AI models, providers &amp; keys, permissions, usage" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="hide-sm">Settings</span></a>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
@@ -414,7 +415,7 @@ function render() {
   $("#foot").textContent = `New projects are saved in ${DATA.root}`;
   if (!DATA.projects.length) {
     list.append(h("div", { class: "empty" },
-      h("h2", {}, "Welcome to claude-cut"),
+      h("h2", {}, "Welcome to aiklips"),
       h("p", {}, "Create your first project, drop in a raw video, and edit by dragging or by asking the AI."),
       h("button", { class: "primary", title: "Create a new video project", onclick: openNew }, "＋ New project")));
     return;
@@ -1307,6 +1308,9 @@ setTab(TAB);
 if (TAB === "references" && HASH_REF) openRef(HASH_REF);
 loadRefs();
 loadBatches();
+fetch("/api/update").then((r) => (r.ok ? r.json() : null)).then((u) => {
+  if (u?.enabled && (u.available || u.staged)) document.getElementById("b-update").hidden = false;
+}).catch(() => {});
 </script>
 </body>
 </html>

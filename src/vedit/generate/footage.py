@@ -1,6 +1,6 @@
 """The user's own material for generation: uploads, and a shot log the AI can plan with.
 
-Files: ~/.claude-cut/uploads/<id>/   (id = first 16 hex chars of the content hash)
+Files: ~/.aiklips/uploads/<id>/   (id = first 16 hex chars of the content hash)
     file.<ext>   the uploaded file
     meta.json    kind (video / audio / image), duration, size; beats for audio
     index.json   video segments (cuts, long takes split into ≤3.5 s pieces)

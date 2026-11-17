@@ -99,6 +99,102 @@ def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float
     return out
 
 
+def _focus_composite(g: Graph, prm: dict, cur: str, mk: str, out: str, sw: int, sh: int, fps: float, dur: float) -> None:
+    """Highlight the tracked object. `mk` is white *outside* the object (focus masks are inverted).
+
+    spotlight  blur + darken everything around it        colorpop  everything around it black & white
+    brighten   lift the object itself                     glow      soft coloured halo around it
+    outline    crisp coloured stroke around it
+    Every style is compositing only (no re-tracking), and the ring for glow / outline is built at half size."""
+    style = prm.get("style", "spotlight")
+    k = min(max(float(prm.get("strength", 1.0)), 0.0), 2.0)
+    if style in ("spotlight", "colorpop"):  # change the outside
+        s1, s2, fxl, fxm = g.label("s"), g.label("s"), g.label("mf"), g.label("mm")
+        g.add(f"[{cur}]split=2[{s1}][{s2}]")
+        if style == "colorpop":
+            chain = f"hue=s={_f(max(0.0, 1 - k))}"
+        else:
+            sigma, dim = float(prm.get("blur", 14)), min(max(float(prm.get("dim", 0.35)), 0.0), 1.0)
+            kk = _f(1 - dim)
+            chain = (f"gblur=sigma={_f(sigma)}," if sigma > 0 else "") + f"colorchannelmixer=rr={kk}:gg={kk}:bb={kk}"
+        g.add(f"[{s1}]{chain}[{fxl}]")
+        g.add(f"[{fxl}][{mk}]alphamerge[{fxm}]")
+        g.add(f"[{s2}][{fxm}]overlay=0:0:format=auto[{out}]")
+        return
+    obj = g.label("obj")
+    g.add(f"[{mk}]negate[{obj}]")
+    if style == "brighten":
+        s1, s2, fxl, fxm = g.label("s"), g.label("s"), g.label("mf"), g.label("mm")
+        g.add(f"[{cur}]split=2[{s1}][{s2}]")
+        g.add(f"[{s1}]eq=brightness={_f(0.09 * k)}:contrast={_f(1 + 0.08 * k)}:saturation={_f(1 + 0.3 * k)}[{fxl}]")
+        g.add(f"[{fxl}][{obj}]alphamerge[{fxm}]")
+        g.add(f"[{s2}][{fxm}]overlay=0:0:format=auto[{out}]")
+        return
+    if style not in ("glow", "outline"):
+        raise VeditError(f"Unknown focus style {style}")
+    # ring = (the object grown outwards) minus the object; width is in px of a 1080p frame
+    wpx = max(1.0, float(prm.get("width", 30 if style == "glow" else 6)) * min(sw, sh) / 1080)
+    o1, o2, grown, ring, col, halo = (g.label(x) for x in ("o", "o", "grow", "ring", "rc", "halo"))
+    # hard-edge the object first: growing a feathered mask from its faint outer tail would add the feather to the width
+    g.add(f"[{obj}]lut=y='if(gt(val,128),255,0)',split=2[{o1}][{o2}]")
+    hw, hh = max(2, sw // 4 * 2), max(2, sh // 4 * 2)
+    if style == "glow":  # soft falloff, strongest at the edge
+        g.add(f"[{o1}]scale={hw}:{hh},gblur=sigma={_f(wpx / 2)},scale={sw}:{sh}[{grown}]")
+        g.add(f"[{grown}][{o2}]blend=all_expr='min(255,max(A-B,0)*{_f(3.0 * k)})'[{ring}]")
+    else:  # outline: grow by ~width (blur + threshold), cut out the object, anti-alias
+        g.add(f"[{o1}]scale={hw}:{hh},gblur=sigma={_f(wpx / 3)},lut=y='if(gt(val,16),255,0)',scale={sw}:{sh}[{grown}]")
+        g.add(f"[{grown}][{o2}]blend=all_expr='if(gt(B,128),0,A)',gblur=sigma=0.8[{ring}]")
+    g.add(f"color=c={ffcolor(str(prm.get('color') or '#FFD400'))}:s={sw}x{sh}:r={_f(fps)}:d={_f(dur)}[{col}]")
+    g.add(f"[{col}][{ring}]alphamerge[{halo}]")
+    g.add(f"[{cur}][{halo}]overlay=0:0:shortest=1:format=auto[{out}]")
+
+
+def _chroma_fg(g: Graph, src: str, params: dict) -> str:
+    """Green / blue screen keyed out of `src` (RGBA out), with spill removed and the matte edge pulled in."""
+    from ..ops import chroma
+
+    keyed = g.label("ck")
+    g.add(f"[{src}]{chroma.key_chain(params)}[{keyed}]")
+    shrink = chroma.shrink_chain(int(params.get("shrink", chroma.DEFAULTS["shrink"])))
+    if not shrink:
+        return keyed
+    a, b, m, fg = g.label("s"), g.label("s"), g.label("ckm"), g.label("fg")
+    g.add(f"[{keyed}]split=2[{a}][{b}]")
+    g.add(f"[{b}]{shrink}[{m}]")
+    g.add(f"[{a}][{m}]alphamerge[{fg}]")
+    return fg
+
+
+def _bg_composite(g: Graph, project: Project, pdir: Path, eff, cur: str, make_fg, out: str,
+                  sw: int, sh: int, fps: float, dur_src: float) -> None:
+    """Put the cut-out person (`make_fg(label)` -> RGBA label) over the replacement background -> `out`.
+    Shared by the AI modes (alpha from a mask video) and chroma keying (alpha from the key)."""
+    kind, _, val = str(eff.params.get("replace", "color:#00b140")).partition(":")
+    if kind == "blur":
+        s1, s2, bb = g.label("s"), g.label("s"), g.label("bb")
+        g.add(f"[{cur}]split=2[{s1}][{s2}]")
+        g.add(f"[{s1}]gblur=sigma={_f(float(val or 25))}[{bb}]")
+        fg = make_fg(s2)
+        g.add(f"[{bb}][{fg}]overlay=0:0:format=auto[{out}]")
+        return
+    fg = make_fg(cur)
+    bgl = g.label("bgsrc")
+    if kind in ("image", "video"):
+        p = resolve_media(pdir, val)
+        if not p.exists():
+            raise VeditError(f"Background {kind} not found: {p}")
+        args = (["-loop", "1"] if kind == "image" else ["-stream_loop", "-1"]) + ["-t", _f(dur_src), "-i", str(p)]
+        bi = g.add_input(args)
+        g.add(
+            f"[{bi}:v]fps={_f(fps)},scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
+            f"setsar=1,setpts=PTS-STARTPTS[{bgl}]"
+        )
+    else:
+        color = val if kind == "color" else project.canvas.background
+        g.add(f"color=c={ffcolor(color)}:s={sw}x{sh}:r={_f(fps)}:d={_f(dur_src)}[{bgl}]")
+    g.add(f"[{bgl}][{fg}]overlay=0:0:shortest=1:format=auto[{out}]")
+
+
 def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, fps: float, log,
                   src_start: float | None = None, src_len: float | None = None) -> str:
     if not any(e.type != "fx" for e in clip.effects):  # filters ("fx") run later, at canvas size
@@ -113,38 +209,23 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
         if eff.type == "fx":
             continue
         art = effects.prepare(eff, project, pdir, clip.source, log)
+        if eff.type == "bg" and eff.params.get("mode") == "chroma":
+            out = g.label("fx")
+            _bg_composite(g, project, pdir, eff, cur, lambda src: _chroma_fg(g, src, eff.params), out, sw, sh, fps, dur_src)
+            cur = out
+            continue
         if "mask" in art:
             mi = g.add_input(["-ss", _f(s0), "-t", _f(dur_src), "-i", str(art["mask"])])
             mk = g.label("mask")
             g.add(f"[{mi}:v]setpts=PTS-STARTPTS,scale={sw}:{sh},format=gray[{mk}]")
             out = g.label("fx")
             if eff.type == "bg":
-                rep = str(eff.params.get("replace", "color:#00b140"))
-                kind, _, val = rep.partition(":")
-                fg = g.label("fg")
-                if kind == "blur":
-                    s1, s2, bb = g.label("s"), g.label("s"), g.label("bb")
-                    g.add(f"[{cur}]split=2[{s1}][{s2}]")
-                    g.add(f"[{s1}]gblur=sigma={_f(float(val or 25))}[{bb}]")
-                    g.add(f"[{s2}][{mk}]alphamerge[{fg}]")
-                    g.add(f"[{bb}][{fg}]overlay=0:0:format=auto[{out}]")
-                else:
-                    g.add(f"[{cur}][{mk}]alphamerge[{fg}]")
-                    bgl = g.label("bgsrc")
-                    if kind in ("image", "video"):
-                        p = resolve_media(pdir, val)
-                        if not p.exists():
-                            raise VeditError(f"Background {kind} not found: {p}")
-                        args = (["-loop", "1"] if kind == "image" else ["-stream_loop", "-1"]) + ["-t", _f(dur_src), "-i", str(p)]
-                        bi = g.add_input(args)
-                        g.add(
-                            f"[{bi}:v]fps={_f(fps)},scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
-                            f"setsar=1,setpts=PTS-STARTPTS[{bgl}]"
-                        )
-                    else:
-                        color = val if kind == "color" else project.canvas.background
-                        g.add(f"color=c={ffcolor(color)}:s={sw}x{sh}:r={_f(fps)}:d={_f(dur_src)}[{bgl}]")
-                    g.add(f"[{bgl}][{fg}]overlay=0:0:shortest=1:format=auto[{out}]")
+                def alpha_from_mask(src: str, mk=mk) -> str:
+                    fg = g.label("fg")
+                    g.add(f"[{src}][{mk}]alphamerge[{fg}]")
+                    return fg
+
+                _bg_composite(g, project, pdir, eff, cur, alpha_from_mask, out, sw, sh, fps, dur_src)
             elif eff.type == "face_blur":
                 s1, s2, bl, blm = g.label("s"), g.label("s"), g.label("bl"), g.label("blm")
                 g.add(f"[{cur}]split=2[{s1}][{s2}]")
@@ -155,28 +236,24 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
                     g.add(f"[{s1}]gblur=sigma={_f(float(eff.params.get('strength', 30)))}[{bl}]")
                 g.add(f"[{bl}][{mk}]alphamerge[{blm}]")
                 g.add(f"[{s2}][{blm}]overlay=0:0:format=auto[{out}]")
-            elif eff.type in ("mask", "focus"):
+            elif eff.type == "focus":
+                _focus_composite(g, eff.params, cur, mk, out, sw, sh, fps, dur_src)
+            elif eff.type == "mask":
                 prm = eff.params
                 s1, s2, fxl, fxm = g.label("s"), g.label("s"), g.label("mf"), g.label("mm")
                 g.add(f"[{cur}]split=2[{s1}][{s2}]")
-                if eff.type == "focus":  # spotlight: soften + darken everything around the object
-                    sigma, dim = float(prm.get("blur", 14)), min(max(float(prm.get("dim", 0.35)), 0.0), 1.0)
-                    k = _f(1 - dim)
-                    chain = (f"gblur=sigma={_f(sigma)}," if sigma > 0 else "") + f"colorchannelmixer=rr={k}:gg={k}:bb={k}"
-                    g.add(f"[{s1}]{chain}[{fxl}]")
-                else:
-                    style = prm.get("style", "blur")
-                    if style == "pixelate":
-                        block = max(2, int(prm.get("strength", 28)))
-                        g.add(f"[{s1}]scale=max(2\\,trunc(iw/{block})):max(2\\,trunc(ih/{block})),scale={sw}:{sh}:flags=neighbor[{fxl}]")
-                    elif style == "fill":
-                        g.add(f"[{s1}]drawbox=c={ffcolor(str(prm.get('color', '#000000')))}:t=fill[{fxl}]")
-                    elif style == "dim":
-                        k = _f(1 - min(max(float(prm.get("strength", 0.6)), 0.0), 1.0))
-                        g.add(f"[{s1}]colorchannelmixer=rr={k}:gg={k}:bb={k}[{fxl}]")
-                    else:  # blur: two passes so even big, high-contrast text is unreadable
-                        sigma = float(prm.get("strength", 40))
-                        g.add(f"[{s1}]gblur=sigma={_f(sigma)}:steps=3,gblur=sigma={_f(sigma / 2)}[{fxl}]")
+                style = prm.get("style", "blur")
+                if style == "pixelate":
+                    block = max(2, int(prm.get("strength", 28)))
+                    g.add(f"[{s1}]scale=max(2\\,trunc(iw/{block})):max(2\\,trunc(ih/{block})),scale={sw}:{sh}:flags=neighbor[{fxl}]")
+                elif style == "fill":
+                    g.add(f"[{s1}]drawbox=c={ffcolor(str(prm.get('color', '#000000')))}:t=fill[{fxl}]")
+                elif style == "dim":
+                    k = _f(1 - min(max(float(prm.get("strength", 0.6)), 0.0), 1.0))
+                    g.add(f"[{s1}]colorchannelmixer=rr={k}:gg={k}:bb={k}[{fxl}]")
+                else:  # blur: two passes so even big, high-contrast text is unreadable
+                    sigma = float(prm.get("strength", 40))
+                    g.add(f"[{s1}]gblur=sigma={_f(sigma)}:steps=3,gblur=sigma={_f(sigma / 2)}[{fxl}]")
                 g.add(f"[{fxl}][{mk}]alphamerge[{fxm}]")
                 g.add(f"[{s2}][{fxm}]overlay=0:0:format=auto[{out}]")
             else:

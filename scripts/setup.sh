@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-cut setup for macOS / Linux.  Usage: scripts/setup.sh [--ai] [--captions] [--all]
+# aiklips setup for macOS / Linux.  Usage: scripts/setup.sh [--ai] [--captions] [--all]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,4 +28,4 @@ fi
 
 uv sync "${extras[@]}"
 echo
-uv run vedit --help >/dev/null && echo "✅ claude-cut is ready. Open this folder in Claude Code (run: claude) and say what you want to edit."
+uv run vedit --help >/dev/null && echo "✅ aiklips is ready. Open this folder in Claude Code (run: claude) and say what you want to edit."

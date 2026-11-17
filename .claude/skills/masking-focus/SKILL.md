@@ -69,6 +69,27 @@ uv run vedit --json focus clear [--clip c2]
 - Spotlight: `--blur 14 --dim 0.35 --expand 1.35 --feather 0.12`.
 - One focus per clip (adding replaces it).
 
+### Highlight styles (`--style`, changed instantly with `focus set`, no re-tracking)
+
+```
+uv run vedit --json focus add --at 2 --paint '[{"pts":[[400,900],[700,950]],"r":60}]' --style glow --color "#FFD400"
+uv run vedit --json focus add --at 2 --box 30%,40%,25%,20% --style colorpop      # rest of the shot black & white
+uv run vedit --json focus set --style outline --color "#FF3B6B" --width 8
+uv run vedit --json focus set --style brighten --strength 0.6
+```
+
+| Style | Look | Good for |
+|---|---|---|
+| `spotlight` (default) | blur + dim around it | talking about one thing in a busy shot |
+| `colorpop` | everything else black & white | product reveals, "this one" moments |
+| `brighten` | lifts the object itself | subtle emphasis that keeps the shot natural |
+| `glow` | soft coloured halo (`--width` 30, `--color`) | product shots, social hooks |
+| `outline` | crisp coloured stroke (`--width` 6) | tutorials, pointing out a UI element or part |
+
+- `--paint` (same JSON as `mask add`) hugs the object's real shape: use it for glow / outline so the ring follows the
+  object instead of an ellipse. In the editor: **Focus** button → Brush / Grid / Box, then pick the style.
+- One signature highlight per video is plenty; keep glow / outline colours on brand.
+
 ## Check it
 
 Masks: `frame --at` at the **start, middle and end** of the clip. Look at the edges: no letters may peek out.

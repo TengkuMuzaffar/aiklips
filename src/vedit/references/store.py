@@ -1,6 +1,6 @@
 """Reference library: add videos, study them (measure + AI), keep the Style DNA.
 
-Files: ~/.claude-cut/references/<sha16>/
+Files: ~/.aiklips/references/<sha16>/
     source.<ext>   copy of the uploaded video (the user's original is never touched)
     metrics.json   measured by code (references.analysis)
     thumb.jpg, sheet-1.jpg, sheet-2.jpg

@@ -14,7 +14,7 @@ from vedit.project import load
 CLI_FOR_OP = {
     "move_clip": "move", "retime_clip": "trim", "clip_set": "speed", "clip_why": "why",
     "color_look": "color look", "color_match": "color match", "color_set": "color set", "color_clear": "color clear",
-    "transition_set": "transition", "mask_add": "mask add", "mask_set": "mask set", "focus_add": "focus add",
+    "transition_set": "transition", "bg_remove": "bg remove", "bg_set": "bg tune", "mask_add": "mask add", "mask_set": "mask set", "focus_add": "focus add", "focus_set": "focus set",
     "remove_clip": "remove-clip", "remove_effect": "fx remove",
     "fx_add": "fx add", "fx_set": "fx set", "fx_reset": "fx set", "fx_remove": "fx remove", "fx_replace": "fx replace",
     "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide",

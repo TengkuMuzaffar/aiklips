@@ -1,8 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [develop]   # main is tested by release.yml, which calls this workflow before publishing
   pull_request:
+  workflow_call:
 
 jobs:
   test:
@@ -21,3 +22,39 @@ jobs:
         if: runner.os == 'macOS'
       - run: uv sync --extra ai
       - run: uv run pytest -q
+
+  launcher:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: launcher/go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Cross-compile every target
+        run: |
+          for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
+            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null . && echo "built $t"
+          done
+
+  # a merge into main publishes a release, so it must carry a new version number
+  version-bump:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: pyproject.toml version is newer than the latest release tag
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          last=$(git tag --list 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
+          echo "pyproject: $v   latest tag: ${last:-none}"
+          if [ -n "$last" ] && [ "$(printf '%s\n%s\n' "$last" "$v" | sort -V | tail -1)" != "$v" -o "$last" = "$v" ]; then
+            echo "::error file=pyproject.toml::Bump the version in pyproject.toml (latest release is $last). Merging into main publishes a release."
+            exit 1
+          fi

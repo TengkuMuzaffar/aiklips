@@ -20,15 +20,22 @@ from .. import media
 from ..project import Effect, Project, Source, VeditError, resolve_media, state_dir
 
 EFFECT_VERSION = "1"
-MODEL_DIR = Path.home() / ".cache" / "claude-cut" / "models"
+MODEL_DIR = Path.home() / ".cache" / "aiklips" / "models"
 
 # parameters that only change compositing (no recompute needed)
-_COMPOSITE_ONLY = {"bg": {"replace"}, "face_blur": {"style", "strength"},
+_COMPOSITE_ONLY = {"bg": {"replace", "key", "similarity", "blend", "spill", "shrink"}, "face_blur": {"style", "strength"},
                    "mask": {"style", "strength", "color", "label", "id"},
-                   "focus": {"blur", "dim", "zoom", "camera_smooth", "mode", "label", "id"}}
+                   "focus": {"blur", "dim", "zoom", "camera_smooth", "mode", "label", "id", "style", "color", "width", "strength"}}
 
 
 def model_path(name: str, url: str) -> Path:
+    old = MODEL_DIR.parents[1] / "claude-cut" / "models"  # downloaded under the app's old name: reuse, don't re-download
+    if old.is_dir() and not MODEL_DIR.exists():
+        MODEL_DIR.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            old.rename(MODEL_DIR)
+        except OSError:
+            pass
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     p = MODEL_DIR / name
     if not p.exists():
@@ -50,7 +57,13 @@ def require(module: str, extra: str):
     try:
         return __import__(module)
     except ImportError:
-        raise VeditError(f"This effect needs the optional '{extra}' extra. Run: uv sync --extra {extra}") from None
+        pass
+    from .. import updater
+
+    if updater.enabled():  # installed app: fetch the extra now (one time) instead of asking the user to run uv
+        updater.install_extra(extra)
+        return __import__(module)
+    raise VeditError(f"This effect needs the optional '{extra}' extra. Run: uv sync --extra {extra}")
 
 
 def read_frames(path: Path, w: int, h: int, fps: float) -> Iterator[np.ndarray]:
@@ -139,6 +152,8 @@ def prepare(eff: Effect, project: Project, pdir: Path, source_id: str, log: Call
     path = resolve_media(pdir, src.path)
     key = _key(path, eff)
     cdir = cache_dir(pdir)
+    if eff.type == "bg" and eff.params.get("mode") == "chroma":
+        return {}  # keyed inside the FFmpeg graph: nothing to precompute (ops/chroma.py)
     if eff.type in ("bg", "face_blur"):
         out = cdir / f"{eff.type}-{key}.mp4"
         if not out.exists():

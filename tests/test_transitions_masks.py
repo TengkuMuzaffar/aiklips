@@ -265,3 +265,50 @@ def test_paint_erase_survives_feather():
     p["paint"].append({"rect": [0.45, 0.2, 0.1, 0.3]})
     m = region_mask(cv2, p, p["box"], mw, mh)
     assert m[int(0.35 * mh), int(0.5 * mw)] == 255
+
+
+# ---- focus: painted object + highlight styles -------------------------------------------
+
+@needs_ffmpeg
+@needs_cv2
+def test_painted_focus_styles_and_instant_restyle(cli, moving_label):
+    import io
+
+    from PIL import Image
+
+    from vedit.ops import effects
+    from vedit.render.frame import render_frame
+    from vedit.render.graph import filter_text
+
+    cli("canvas", "--preset", "landscape")  # 1920x1080: canvas px = 3x the 640x360 source
+    cli("import", str(moving_label))
+    paint = '[{"rect":[600,420,540,210]}]'  # the label at t=0
+    r = cli("focus", "add", "--paint", paint, "--at", "0", "--style", "outline", "--color", "#FF00FF", "--width", "12")
+    assert r["shape"] == "paint" and r["style"] == "outline"
+    d = cli.project
+    e = load(d).clips[0].effects[0]
+    assert e.params["expand"] == 1.0 and e.params["feather"] == 0.03  # painted: hugs the object
+    assert "lut=y=" in filter_text(load(d), d)  # also computes the tracked mask (one-time)
+
+    # restyling is compositing only: same cache key, so nothing is re-tracked
+    p = load(d)
+    path = d.parent / "unused"
+    src = __import__("vedit.project", fromlist=["resolve_media"]).resolve_media(d, p.sources["s1"].path)
+    key0 = effects._key(src, p.clips[0].effects[0])
+    for style, marker in (("glow", "blend=all_expr"), ("colorpop", "hue=s=0"), ("brighten", "eq=brightness"), ("spotlight", "colorchannelmixer")):
+        cli("focus", "set", "--style", style)
+        p = load(d)
+        assert effects._key(src, p.clips[0].effects[0]) == key0
+        assert marker in filter_text(p, d), style
+    cli("focus", "set", "--style", "sparkles", ok=False)
+
+    # the outline is drawn just outside the label, in the chosen colour; the label itself is untouched
+    cli("focus", "set", "--style", "outline")
+    p = load(d)
+    img = Image.open(io.BytesIO(render_frame(p, d, 0.0))).convert("RGB")
+    sx = img.width / 1920
+    top = img.getpixel((int(870 * sx), int(401 * sx)))  # ~20px above the label's top edge (canvas 420), mid-width
+    inside = img.getpixel((int(640 * sx), int(440 * sx)))
+    assert top[0] > 150 and top[2] > 150 and top[1] < 120, top  # magenta ring
+    assert min(inside) > 200, inside  # the white label stays white
+    cli("focus", "add", "--paint", "not json", "--at", "0", ok=False)

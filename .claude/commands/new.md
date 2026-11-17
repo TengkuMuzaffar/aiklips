@@ -2,7 +2,7 @@
 description: Start a new video project from one or more files
 argument-hint: <name> <video files...>
 ---
-Create a new claude-cut project from: $ARGUMENTS
+Create a new aiklips project from: $ARGUMENTS
 
 1. The first word is the project name. The rest are file paths. If no files are given, ask for them.
 2. Run `uv run vedit init projects/<name>`, then `uv run vedit --json import <files...>`.

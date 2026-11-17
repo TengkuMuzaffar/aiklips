@@ -4,7 +4,7 @@ project.json (inside each project folder) stays the source of truth for the edit
 the library only remembers *where* projects are and when they were used, so the
 home screen can list, open, rename, duplicate and remove them.
 
-Database: ~/.claude-cut/library.db   (override with $VEDIT_HOME)
+Database: ~/.aiklips/library.db   (override with $VEDIT_HOME)
 New projects: <repo>/projects/<slug>  (override with $VEDIT_PROJECTS_DIR)
 """
 
@@ -37,8 +37,57 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FORMATS = {"reels": (1080, 1920), "portrait45": (1080, 1350), "square": (1080, 1080), "landscape": (1920, 1080)}
 
 
+OLD_HOME = Path.home() / ".claude-cut"  # the app was called claude-cut before 0.2
+_PATHS_FIXED = False
+
+
+def adopt_old_home(new: Path) -> None:
+    """Once: move the old-name folder to `new`, and leave a link at the old place so absolute paths stored in
+    projects (uploaded footage, references) keep working."""
+    if new.exists() or not OLD_HOME.is_dir() or OLD_HOME.is_symlink():
+        return
+    try:
+        OLD_HOME.rename(new)
+    except OSError:  # held open by another process (Windows): start fresh, the old folder is left as it was
+        return
+    try:
+        os.symlink(new, OLD_HOME, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":  # symlinks need admin rights there; a directory junction doesn't
+            try:
+                import _winapi
+
+                _winapi.CreateJunction(str(new), str(OLD_HOME))
+            except OSError:
+                pass
+
+
+def _fix_old_paths(home: Path, con: sqlite3.Connection) -> None:
+    """Once per install: point the library's own records at the new folder (the link covers everything else)."""
+    global _PATHS_FIXED
+    _PATHS_FIXED = True
+    marker = home / ".paths-renamed"
+    if marker.exists() or not (OLD_HOME.is_symlink() or OLD_HOME.exists()):
+        return
+    old, new = str(OLD_HOME) + os.sep, str(home) + os.sep
+    try:
+        con.execute("UPDATE refs SET dir = replace(dir, ?, ?) WHERE dir LIKE ?", (old, new, old + "%"))
+        con.commit()
+    except sqlite3.OperationalError:  # no references table yet
+        pass
+    for meta in home.glob("uploads/*/meta.json"):
+        txt = meta.read_text()
+        if old in txt:
+            meta.write_text(txt.replace(old, new))
+    marker.write_text("claude-cut -> aiklips\n")
+
+
 def home_dir() -> Path:
-    d = Path(os.environ.get("VEDIT_HOME") or Path.home() / ".claude-cut")
+    if os.environ.get("VEDIT_HOME"):
+        d = Path(os.environ["VEDIT_HOME"])
+    else:
+        d = Path.home() / ".aiklips"
+        adopt_old_home(d)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -46,10 +95,11 @@ def home_dir() -> Path:
 def projects_root() -> Path:
     if os.environ.get("VEDIT_PROJECTS_DIR"):
         d = Path(os.environ["VEDIT_PROJECTS_DIR"])
-    elif (REPO_ROOT / "pyproject.toml").exists():
+    elif (REPO_ROOT / "pyproject.toml").exists() and not os.environ.get("VEDIT_LAUNCHER"):
+        # a git checkout keeps projects next to the code; an installed app version folder is replaced on update
         d = REPO_ROOT / "projects"
     else:
-        d = Path.home() / "claude-cut-projects"
+        d = Path.home() / "aiklips-projects"
     d.mkdir(parents=True, exist_ok=True)
     return d.resolve()
 
@@ -58,6 +108,8 @@ def _db() -> sqlite3.Connection:
     con = sqlite3.connect(home_dir() / "library.db", timeout=10)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    if not _PATHS_FIXED and not os.environ.get("VEDIT_HOME"):
+        _fix_old_paths(home_dir(), con)
     return con
 
 
@@ -81,7 +133,7 @@ def register(pdir: Path, name: str | None = None) -> int:
     """Add an existing project folder to the library (no-op if already there)."""
     pdir = pdir.resolve()
     if not (pdir / PROJECT_FILE).exists():
-        raise VeditError(f"{pdir} is not a claude-cut project (no project.json)")
+        raise VeditError(f"{pdir} is not a aiklips project (no project.json)")
     if name is None:
         try:
             name = load(pdir).name
@@ -245,7 +297,7 @@ def remove(pid: int, delete_files: bool = False) -> None:
     pdir = Path(row["path"])
     if delete_files and pdir.exists():
         if not (pdir / PROJECT_FILE).exists():
-            raise VeditError(f"Refusing to delete {pdir}: it doesn't look like a claude-cut project")
+            raise VeditError(f"Refusing to delete {pdir}: it doesn't look like a aiklips project")
         _rmtree_project(pdir)
     with closing(_db()) as con, con:
         if delete_files:
