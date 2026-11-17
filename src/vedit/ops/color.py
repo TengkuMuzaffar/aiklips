@@ -272,7 +272,7 @@ def consistency(project: Project, pdir: Path) -> dict:
     Graded stats are estimated by applying the correction maths to the measured stats."""
     rows = []
     for c in project.clips:
-        s = clip_stats(project, pdir, c)
+        s = None if c.gap else clip_stats(project, pdir, c)
         if s:
             rows.append((c, s))
     if len(rows) < 2:

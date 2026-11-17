@@ -303,23 +303,25 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         s0, slen = clip.in_ - ext_in, dur_src + ext_in + ext_out
         idx = g.add_input(["-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
         v0 = g.label("v")
-        if src.has_video:
+        show = src.has_video and not project.main_hidden
+        if show:
             g.add(f"[{idx}:v]setpts=PTS-STARTPTS[{v0}]")
-        else:  # audio-only source: show the canvas background
+        else:  # audio-only source, or the main track is hidden: show the canvas background
             g.add(f"color=c={ffcolor(canvas.background)}:s={W}x{H}:r={_f(fps)}:d={_f(slen)}[{v0}]")
-        cur = apply_effects(g, project, pdir, clip, v0, fps, log, s0, slen) if src.has_video else v0
+        cur = apply_effects(g, project, pdir, clip, v0, fps, log, s0, slen) if show else v0
         sp = g.label("sp")
         g.add(f"[{cur}]setpts=PTS/{_f(clip.speed)}[{sp}]")
         vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur + pre + post, hold_head, hold_tail)
-        grade = color.filter_chain(clip.grade, pdir) if src.has_video else None
+        grade = color.filter_chain(clip.grade, pdir) if show else None
         if grade:  # at canvas size: cheaper than at source size, and the blurred fill gets the same grade
             gl = g.label("grade")
             g.add(f"[{vlab}]{grade},format=yuv420p[{gl}]")
             vlab = gl
-        if src.has_video and any(e.type == "fx" for e in clip.effects):  # filters: blur, vignette, grain, shake...
+        if show and any(e.type == "fx" for e in clip.effects):  # filters: blur, vignette, grain, shake...
             from ..ops import fx_filters
 
-            vlab = fx_filters.apply_filters(g, clip, vlab, fx_filters.Ctx(W, H, scale, fps))
+            # the clip's first frame is at `pre` here (the transition handle before it): timed filters count from it
+            vlab = fx_filters.apply_filters(g, clip, vlab, fx_filters.Ctx(W, H, scale, fps), offset=pre, dur=dur)
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:
@@ -376,7 +378,7 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
 
 
     # layers=False (the editor's base video) still applies adjustment layers: they change the picture itself
-    for layer in (project.layers if layers else [l for l in project.layers if l.type == "adjust"]):
+    for layer in [l for l in project.layers if not l.hidden and (layers or l.type == "adjust")]:
         start, ldur = layer_span(layer, total)
         if layer.type == "adjust":
             vcur = _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
@@ -409,6 +411,8 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             continue
         src = project.sources[m.source]
         L = total - m.start
+        if m.end is not None:
+            L = min(L, m.end - m.start)
         if not m.loop:
             L = min(L, src.duration - m.in_)
         if L <= 0.05:

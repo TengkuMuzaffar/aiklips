@@ -153,6 +153,9 @@ class Clip(_Model):
     fade_in: float = 0.0  # sound fade in / out, seconds (the picture is untouched: use a transition for that)
     fade_out: float = 0.0
     voice: Literal["off", "clean", "studio"] = "off"  # speech clean-up: rumble, noise, level (render/graph.py VOICE_CHAINS)
+    # empty space on the main track (a clip dragged later leaves one): plays a generated background-colour file with no
+    # sound (ops/cut.py `gap_source`), so cuts, render and export treat it like any clip. Audits and sound skip it.
+    gap: bool = False
 
     @property
     def duration(self) -> float:
@@ -211,10 +214,13 @@ SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
 class Layer(_Model):
     """An overlay drawn on top of the timeline: text, image, captions, video (picture-in-picture, b-roll, light leaks)
     a shape, or an adjustment layer (filters + colour over a time range). The list order of project.layers is the stacking
-    order (later = on top)."""
+    order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
     type: Literal["text", "image", "captions", "video", "shape", "adjust"]
+    # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
+    # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
+    track: int | None = None
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -237,6 +243,12 @@ class Layer(_Model):
     source: str | None = None
     src_in: float = 0.0
     loop: bool = False  # repeat the clip when the layer is longer than it
+    # framing, like a main-track clip: free = `width` wide (picture-in-picture), cover = fill the canvas (crop),
+    # contain = the whole picture as big as fits. flip_h / flip_v mirror it (orientation; rotation is `rotation`)
+    fit: Literal["free", "cover", "contain"] = "free"
+    hidden: bool = False  # track hidden on the timeline (eye): not drawn in the preview or the export; sound still plays
+    flip_h: bool = False
+    flip_v: bool = False
     volume: float = 0.0  # overlay sound (0 = muted, the usual for b-roll / textures)
     # frame of image / video / shape layers (canvas px): rounded corners, an inside border, circle cut-out, green screen
     radius: int = 0
@@ -259,6 +271,7 @@ class MusicTrack(_Model):
     source: str
     start: float = 0.0  # timeline seconds
     in_: float = Field(default=0.0, alias="in")
+    end: float | None = None  # timeline seconds where it stops; None = the end of the timeline (or of the file)
     volume: float = 0.25
     loop: bool = True
     duck: bool = False
@@ -285,6 +298,7 @@ class Project(_Model):
     music: list[MusicTrack] = Field(default_factory=list)
     notes: EditNotes | None = None
     markers: list[Marker] = Field(default_factory=list)
+    main_hidden: bool = False  # main video track hidden (eye): its picture becomes the background; sound still plays
 
     # ---- timeline helpers -------------------------------------------------
     @property
@@ -365,16 +379,86 @@ def load(pdir: Path) -> Project:
     except json.JSONDecodeError as e:
         raise VeditError(f"project.json is not valid JSON: {e}") from e
     try:
-        return Project.model_validate(data)
+        p = Project.model_validate(data)
     except Exception as e:  # pydantic ValidationError
         raise VeditError(f"project.json is invalid: {e}") from e
+    normalize_tracks(p)  # projects from before tracks existed
+    return p
 
 
 def dump_json(project: Project) -> str:
     return json.dumps(project.to_dict(), indent=2) + "\n"
 
 
+def _span(layer: Layer) -> tuple[float, float]:
+    return layer.start, float("inf") if layer.end is None else layer.end
+
+
+def spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return a[0] < b[1] - 1e-3 and b[0] < a[1] - 1e-3
+
+
+def normalize_tracks(project: Project) -> None:
+    """Keep overlay tracks consistent (CapCut-style rows), in place:
+
+    - a new layer (track None) goes on the top track if it is free at that time, else on a new track above it, so the
+      layer added last is drawn on top, as before tracks existed;
+    - two layers on one track never overlap in time: the later one in the list moves to a new track just above;
+    - tracks are numbered 0..n-1 with no gaps, and project.layers is sorted by track (stable), so the list order the
+      renderers use (later = on top) always matches the timeline rows.
+    """
+    layers = project.layers
+    top = max((l.track for l in layers if l.track is not None), default=-1)
+    for l in layers:
+        if l.track is None:
+            if top >= 0 and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
+                l.track = top
+            else:
+                top += 1
+                l.track = top
+    # resolve overlaps on a track: bump the later layer to a new track right above (fractional, renumbered below)
+    rows: dict[float, list[Layer]] = {}
+    for l in layers:
+        rows.setdefault(l.track, []).append(l)
+    pos: dict[str, float] = {}
+    for t, row in rows.items():
+        placed: list[list[Layer]] = []
+        for l in row:
+            for k, sub in enumerate(placed):
+                if not any(spans_overlap(_span(l), _span(o)) for o in sub):
+                    sub.append(l)
+                    break
+            else:
+                placed.append([l])
+        for k, sub in enumerate(placed):
+            for l in sub:
+                pos[l.id] = t + k / (len(placed) + 1)
+    order = sorted(set(pos.values()))
+    rank = {v: i for i, v in enumerate(order)}
+    for l in layers:
+        l.track = rank[pos[l.id]]
+    layers.sort(key=lambda l: l.track)
+
+
+def normalize_gaps(project: Project) -> None:
+    """Main-track gaps: merge neighbours, drop empty ones and any at the very end (nothing comes after them)."""
+    out: list[Clip] = []
+    for c in project.clips:
+        if c.gap and c.duration < 0.01:
+            continue
+        if c.gap and out and out[-1].gap and out[-1].source == c.source:
+            prev = out[-1]
+            prev.out = min(project.sources[c.source].duration, prev.out + (c.out - c.in_))
+            continue
+        out.append(c)
+    while out and out[-1].gap:
+        out.pop()
+    project.clips = out
+
+
 def save(pdir: Path, project: Project) -> None:
+    normalize_tracks(project)
+    normalize_gaps(project)
     validate(project)
     tmp = pdir / (PROJECT_FILE + ".tmp")
     tmp.write_text(dump_json(project))

@@ -58,6 +58,16 @@ def frame_project(project: Project, t: float, clip_override: dict | None = None)
     if c.zoom_to:  # slow zoom: freeze it at the zoom it has reached here
         z = max(1.0, c.zoom) + (max(1.0, c.zoom_to) - max(1.0, c.zoom)) * (local / max(c.duration, 1e-6))
         c.zoom, c.zoom_to = z, z
+    # filters timed to part of the clip: the mini clip starts `shift` s into the clip, so their windows move back by it
+    shift = (src_t - clip.in_) / c.speed
+    for e in c.effects:
+        if e.type == "fx" and (e.params.get("start") or e.params.get("end") not in (None, "")
+                               or e.params.get("fade_in") or e.params.get("fade_out")):
+            e.params["start"] = float(e.params.get("start") or 0) - shift
+            if e.params.get("end") not in (None, ""):
+                e.params["end"] = float(e.params["end"]) - shift
+            elif e.params.get("fade_out"):
+                e.params["end"] = clip.duration - shift
     c.in_, c.out, c.transition = src_t, end, None
     # adjustment layers over this moment still apply (they change the picture), from the frame's time 0
     adjust = [l.model_copy(update={"start": 0.0, "end": None, "keyframes": [], "presets": []}) for l in project.layers

@@ -249,31 +249,88 @@ def chain(eff: Effect, ctx: Ctx) -> str | None:
     return fx.build(resolved(eff), ctx)
 
 
-def apply_filters(g, clip, cur: str, ctx: Ctx) -> str:
-    """Add the filters of a clip (or adjustment layer) to the graph `g` after `cur`; returns the new label."""
+TIMING = ("start", "end", "fade_in", "fade_out")  # when a filter applies, in seconds from its clip / layer start
+
+
+def window(eff: Effect, dur: float | None) -> tuple[float, float, float, float] | None:
+    """(start, end, fade_in, fade_out) of a filter limited to part of its clip / layer (seconds from its start), or None
+    when it covers the whole of it with no fades (the plain, cheaper chain)."""
+    p = eff.params
+    s = float(p.get("start") or 0)  # may be negative in the editor's single-frame render (render/frame.py)
+    e = p.get("end")
+    e = None if e in (None, "") else float(e)
+    if dur is not None and e is not None and e >= dur - 1e-3:
+        e = None
+    fi, fo = max(0.0, float(p.get("fade_in") or 0)), max(0.0, float(p.get("fade_out") or 0))
+    if abs(s) < 1e-3 and e is None and fi < 1e-3 and fo < 1e-3:
+        return None
+    end = e if e is not None else (dur if dur is not None else 1e9)
+    return s, end, min(fi, (end - s) / 2), min(fo, (end - s) / 2)
+
+
+def _timed(text: str, w: tuple[float, float, float, float], offset: float, n: int) -> str:
+    """The filter `text` limited to window `w`: the stream splits, the filtered copy (faded in / out) goes over the
+    original only between start and end. Returns the graph body to put after the input pad (its output is unlabelled)."""
+    s, e, fi, fo = w[0] + offset, w[1] + offset, w[2], w[3]
+    fade = ""
+    if fi > 1e-3 or fo > 1e-3:
+        fade = ",format=yuva420p" + (f",fade=t=in:st={s:.4f}:d={fi:.4f}:alpha=1" if fi > 1e-3 else "") \
+            + (f",fade=t=out:st={e - fo:.4f}:d={fo:.4f}:alpha=1" if fo > 1e-3 else "")
+    base, src, out = f"wb{n}", f"wf{n}", f"wo{n}"
+    return f"split[{base}][{src}];[{src}]{text}{fade}[{out}];[{base}][{out}]overlay=0:0:format=auto:enable='between(t,{s:.4f},{e:.4f})'"
+
+
+def _renamed(eff: Effect, text: str, pre: str) -> str:
+    if get(str(eff.params["key"])).split:  # internal pads must be unique across the whole graph
+        text = text.replace("[a]", f"[{pre}a]").replace("[b]", f"[{pre}b]").replace("[g]", f"[{pre}g]")
+    return text
+
+
+def apply_filters(g, clip, cur: str, ctx: Ctx, offset: float | None = None, dur: float | None = None) -> str:
+    """Add the filters of a clip (or adjustment layer) to the graph `g` after `cur`; returns the new label.
+    With `offset` (graph time of the clip's first frame) and `dur`, filters limited to part of the clip apply only there."""
     for eff in clip.effects:
         if not is_filter(eff):
             continue
         text = chain(eff, ctx)
         if not text or text == "null":
             continue
-        fx = get(str(eff.params["key"]))
         out = g.label("fxf")
-        if fx.split:  # internal pads must be unique across the whole graph
-            pre = g.label("p")
-            body = text.replace("[a]", f"[{pre}a]").replace("[b]", f"[{pre}b]").replace("[g]", f"[{pre}g]")
-            g.add(f"[{cur}]{body}[{out}]")
+        text = _renamed(eff, text, g.label("p"))
+        w = window(eff, dur) if offset is not None else None
+        if w is not None:
+            g.add(f"[{cur}]{_timed(text, w, offset, g.n)}[{out}]")
         else:
             g.add(f"[{cur}]{text}[{out}]")
         cur = out
     return cur
 
 
+def simple_chain(holder, ctx: Ctx, offset: float = 0.0, dur: float | None = None) -> str:
+    """The holder's filters as one comma-joined chain for a single-input `-vf` (video overlays are decoded by their own
+    FFmpeg command). Starts with "," when not empty, so it can be appended to an existing chain. `offset` = the -vf's
+    time of the layer's first frame (filters limited to part of the layer apply only there)."""
+    out, n = "", 0
+    for eff in holder.effects:
+        if not is_filter(eff):
+            continue
+        text = chain(eff, ctx)
+        if not text or text == "null":
+            continue
+        n += 1
+        text = _renamed(eff, text, f"v{n}")
+        w = window(eff, dur)
+        if w is not None:
+            text = _timed(text, w, offset, n)
+        out += "," + text
+    return out
+
+
 # ---- editing --------------------------------------------------------------------------------------------------
 
 def _holders(project: Project) -> list:
-    """Everything that carries filters: clips and adjustment layers."""
-    return [*project.clips, *(l for l in project.layers if l.type == "adjust")]
+    """Everything that carries filters: clips, adjustment layers and video overlays."""
+    return [*project.clips, *(l for l in project.layers if l.type in ("adjust", "video"))]
 
 
 def _new_id(project: Project) -> str:
@@ -285,9 +342,9 @@ def _new_id(project: Project) -> str:
 
 
 def add(project: Project, clip, key: str, params: dict | None = None) -> Effect:
-    """Add filter `key` to a clip or an adjustment layer."""
-    if getattr(clip, "type", "adjust") != "adjust":  # layers other than adjustment layers have no filters
-        raise VeditError(f"{clip.id} is a {clip.type} layer: filters go on clips or adjustment layers")
+    """Add filter `key` to a clip, an adjustment layer or a video overlay."""
+    if getattr(clip, "type", "adjust") not in ("adjust", "video"):  # text / images / shapes have no filters
+        raise VeditError(f"{clip.id} is a {clip.type} layer: filters go on clips, video overlays or adjustment layers")
     fx = get(key)
     vals = {p.name: p.default for p in fx.params}
     for k, v in (params or {}).items():
@@ -309,16 +366,54 @@ def find(project: Project, fx_id: str):
         f"{e.params.get('id')} ({e.params.get('key')} on {c.id})" for c in _holders(project) for e in c.effects if is_filter(e)) or "none"))
 
 
+def holder_duration(project: Project, holder) -> float:
+    """How long a filter holder is on the timeline: a clip's length, or a layer's span."""
+    if hasattr(holder, "speed"):
+        return holder.duration
+    end = project.duration if holder.end is None else min(holder.end, project.duration)
+    return max(0.0, end - holder.start)
+
+
+def _set_timing(project: Project, holder, eff: Effect, k: str, v) -> None:
+    dur = holder_duration(project, holder)
+    if k == "end":
+        eff.params["end"] = None if v in (None, "", "none") or float(v) >= dur - 1e-3 else round(max(0.05, float(v)), 3)
+    elif k == "start":
+        eff.params["start"] = round(min(max(0.0, float(v)), max(0.0, dur - 0.05)), 3)
+    else:
+        eff.params[k] = round(min(max(0.0, float(v)), 10.0), 3)
+
+
 def set_params(project: Project, fx_id: str, values: dict) -> Effect:
-    _, eff = find(project, fx_id)
+    holder, eff = find(project, fx_id)
     fx = get(str(eff.params["key"]))
+    # timing first, all together, then one check: moving an effect sends a new start and end at once, and the new
+    # start may be past the old end
+    for k in TIMING:
+        if k in values:
+            _set_timing(project, holder, eff, k, values[k])
+    s, e = float(eff.params.get("start") or 0), eff.params.get("end")
+    if e is not None and float(e) - s < 0.05:
+        raise VeditError("An effect's end must be after its start")
     for k, v in values.items():
+        if k in TIMING:
+            continue
         if k == "on":
             eff.params["on"] = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         elif k in fx.fields:
             eff.params[k] = fx.fields[k].coerce(v)
         else:
-            raise VeditError(f"{fx.label} has no setting '{k}'. Settings: {', '.join(fx.fields) or 'none'}")
+            raise VeditError(f"{fx.label} has no setting '{k}'. Settings: {', '.join([*fx.fields, *TIMING]) or 'none'}")
+    return eff
+
+
+def replace(project: Project, fx_id: str, key: str) -> Effect:
+    """Swap an applied filter for another one (blur -> glow), keeping its id, place in the stack, timing and on/off.
+    Settings start from the new filter's defaults."""
+    _, eff = find(project, fx_id)
+    fx = get(key)
+    keep = {k: eff.params[k] for k in ("id", "on", *TIMING) if k in eff.params}
+    eff.params = {"key": key, **{p.name: p.default for p in fx.params}, **keep}
     return eff
 
 

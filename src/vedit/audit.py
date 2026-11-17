@@ -171,7 +171,7 @@ def check_color(p: Project, pdir: Path) -> list[dict]:
     from .ops import color
 
     out = []
-    video = [c for c in p.clips if p.sources[c.source].has_video]
+    video = [c for c in p.clips if p.sources[c.source].has_video and not c.gap]
     if len(video) < 2:
         return out
     looks = {(c.grade.look if c.grade else None) for c in video}
@@ -203,7 +203,7 @@ def check_pacing(p: Project, pdir: Path) -> list[dict]:
     target = p.notes.target_shot_s if p.notes else None
     limit = max(1.5, 3 * target) if target else 6.0
     for c, start in zip(p.clips, p.clip_starts()):
-        if c.duration > limit:
+        if c.duration > limit and not c.gap:
             out.append(_finding("note", "pacing", f"Clip {c.id} holds for {c.duration:.1f}s"
                                 + (f", over 3x the {target:g}s target shot." if target else "."), start,
                                 f"{c.duration:.2f}s > {limit:.1f}s", f"vedit split --at {start + c.duration / 2:.2f}"))
@@ -216,7 +216,7 @@ def check_footage(p: Project, pdir: Path) -> list[dict]:
     for i, a in enumerate(p.clips):
         for j in range(i + 1, len(p.clips)):
             b = p.clips[j]
-            if a.source != b.source:
+            if a.source != b.source or a.gap:
                 continue
             ov = min(a.out, b.out) - max(a.in_, b.in_)
             if ov > 0.3:
@@ -279,7 +279,7 @@ def check_justification(p: Project, pdir: Path) -> list[dict]:
     if not beats:
         return out
     for c in p.clips:
-        if not (c.meta and c.meta.why):
+        if not c.gap and not (c.meta and c.meta.why):
             out.append(_finding("note", "justification", f"Clip {c.id} has no stated reason.", starts[c.id], "",
                                 f'vedit why {c.id} "<what it shows and which beat it serves>" --beat <id>'))
     used = {c.meta.beat for c in p.clips if c.meta and c.meta.beat}

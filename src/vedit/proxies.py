@@ -11,10 +11,12 @@ previews: those effects were computed in the original's pixel coordinates.
 from __future__ import annotations
 
 import hashlib
+import os
+import uuid
 from pathlib import Path
 
 from . import media
-from .project import Clip, Project, Source, resolve_media, state_dir
+from .project import Clip, Project, Source, VeditError, resolve_media, state_dir
 
 PROXY_LONG_SIDE = 1280  # enough for the half-size preview of a 1080x1920 canvas
 
@@ -66,7 +68,8 @@ def make(pdir: Path, src: Source, should_stop=None) -> Path | None:
     orig = resolve_media(pdir, src.path)
     if not orig.exists():
         return None
-    tmp = out.with_name(f"tmp-{out.name}")
+    # a temp name of its own: a proxy job left running by a crashed / force-quit editor must never write the same file
+    tmp = out.with_name(f"tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}-{out.name}")
     L = PROXY_LONG_SIDE
     cmd = [media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(orig),
            "-vf", f"scale='if(gt(iw,ih),{L},-2)':'if(gt(iw,ih),-2,{L})':flags=bicubic,format=yuv420p",
@@ -74,6 +77,8 @@ def make(pdir: Path, src: Source, should_stop=None) -> Path | None:
            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(tmp)]
     try:
         media.run_with_progress(cmd, src.duration, None, should_stop)
+        if media.probe(tmp).get("duration", 0) < min(0.5, src.duration / 2):  # unreadable / cut short: not a proxy
+            raise VeditError(f"Proxy for {orig.name} came out unreadable; previews use the original")
         tmp.replace(out)
     finally:
         tmp.unlink(missing_ok=True)

@@ -28,6 +28,26 @@ from ..project import PROJECT_FILE, VeditError, load, resolve_media, state_dir
 from ..render.runner import preview_dir, render_preview
 
 STATIC = Path(__file__).parent / "static"
+SRC = Path(__file__).resolve().parents[1]  # src/vedit, watched by `vedit serve --dev`
+# `--dev`: remembers the open project so a code reload drops you back into the same editor
+DEV_OPEN = Path(tempfile.gettempdir()) / "claude-cut-dev-open"
+BOOT = str(time.time())  # changes every time the server (re)starts
+
+# Injected into pages in dev mode: reloads the page when the server restarts or a static file changes.
+DEV_SCRIPT = """<script>(() => {
+  let last = null;
+  setInterval(async () => {
+    try {
+      const s = await (await fetch("/api/dev/stamp", {cache: "no-store"})).text();
+      if (last !== null && s !== last) location.reload();
+      last = s;
+    } catch (e) { /* server restarting: try again next tick */ }
+  }, 700);
+})();</script>"""
+
+
+def _dev_stamp() -> str:
+    return BOOT + ":" + str(max((p.stat().st_mtime for p in STATIC.iterdir()), default=0))
 
 
 def _rev(pdir: Path) -> float:
@@ -130,8 +150,8 @@ class Renderer:
 class Host:
     """Holds the currently open project (one at a time) and its renderer + AI chat."""
 
-    def __init__(self, watch: bool, chat: bool):
-        self.watch, self.chat = watch, chat
+    def __init__(self, watch: bool, chat: bool, dev: bool = False):
+        self.watch, self.chat, self.dev = watch, chat, dev
         self.pdir: Path | None = None
         self.renderer: Renderer | None = None
         self.session = None
@@ -151,6 +171,8 @@ class Host:
         pdir = pdir.resolve()
         library.touch(pdir)
         self.pdir = pdir
+        if self.dev:
+            DEV_OPEN.write_text(str(pdir), encoding="utf-8")
         self.renderer = Renderer(pdir, self.watch)
         if self.chat:
             from ..editor.agent import ChatSession
@@ -163,6 +185,8 @@ class Host:
         if self.session:
             await self.session._reset()
         self.pdir, self.renderer, self.session = None, None, None
+        if self.dev:
+            DEV_OPEN.unlink(missing_ok=True)
 
     def need(self) -> Path:
         if self.pdir is None:
@@ -188,9 +212,9 @@ def _thumb(pdir: Path, sid: str) -> Path:
     return out
 
 
-def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) -> FastAPI:
+def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, dev: bool = False) -> FastAPI:
     app = FastAPI(title="claude-cut")
-    host = Host(watch, chat)
+    host = Host(watch, chat, dev)
 
     if pdir is not None:
         host.open_now(pdir)
@@ -199,15 +223,24 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         return HTTPException(400, str(e))
 
     # ---- pages -----------------------------------------------------------------
+    def page(name: str) -> str:
+        html = (STATIC / name).read_text(encoding="utf-8")
+        return html.replace("</body>", DEV_SCRIPT + "</body>", 1) if dev else html
+
     @app.get("/", response_class=HTMLResponse)
     def home() -> str:
-        return (STATIC / "home.html").read_text(encoding="utf-8")
+        return page("home.html")
 
     @app.get("/editor", response_class=HTMLResponse)
     def editor():
         if host.pdir is None:
             return RedirectResponse("/")
-        return (STATIC / "index.html").read_text(encoding="utf-8")
+        return page("index.html")
+
+    if dev:
+        @app.get("/api/dev/stamp", response_class=Response)
+        def dev_stamp() -> Response:
+            return Response(_dev_stamp(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
     @app.get("/static/{name}")
     def static_file(name: str):
@@ -678,6 +711,40 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
             raise HTTPException(404)
         return FileResponse(f, headers={"Cache-Control": "no-cache"})
 
+    LOOK_LOCK = threading.Lock()
+
+    @app.get("/api/layer/{lid}/media")
+    def layer_media(lid: str):
+        """A video overlay's whole source with its colour grade + filters applied (H.264, preview size), for the live
+        preview: the browser can't run FFmpeg filters, so it plays this instead of the raw source. Cached per look."""
+        import hashlib
+
+        from ..render.layers import video_look
+
+        d = host.need()
+        p = load(d)
+        l = next((x for x in p.layers if x.id == lid and x.type == "video"), None)
+        if l is None or l.source not in p.sources:
+            raise HTTPException(404)
+        src = p.sources[l.source]
+        from .. import proxies
+
+        f = proxies.available(d, src) or resolve_media(d, src.path)
+        w = 540 if (src.width or 1920) >= (src.height or 1080) else 360
+        h = int(round(w * (src.height or 1080) / (src.width or 1920) / 2)) * 2
+        vf = f"scale={w}:{h},setsar=1" + video_look(p, d, l, w, h, w / max(1, p.canvas.width), offset=l.src_in)
+        key = hashlib.sha1(f"{f}|{f.stat().st_mtime}|{vf}".encode()).hexdigest()[:16]
+        out = state_dir(d) / "cache" / "looks" / f"{lid}-{key}.mp4"
+        with LOOK_LOCK:
+            if not out.exists():
+                out.parent.mkdir(parents=True, exist_ok=True)
+                tmp = out.with_suffix(".part.mp4")
+                media.run([media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(f), "-vf", vf,
+                           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+                           "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tmp)], "preview look")
+                tmp.replace(out)
+        return FileResponse(out, headers={"Cache-Control": "no-cache"})
+
     @app.post("/api/version")
     def save_version(body: dict) -> dict:
         """Name the current state (History tab: jump back to it any time)."""
@@ -892,11 +959,29 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
     return app
 
 
-def run(pdir: Path | None, host: str = "127.0.0.1", port: int = 5173, browser: bool = True) -> None:
+def dev_app() -> FastAPI:
+    """App factory for `vedit serve --dev`: uvicorn re-imports this in a fresh process after each code change."""
+    d = DEV_OPEN.read_text(encoding="utf-8").strip() if DEV_OPEN.exists() else ""
+    pdir = Path(d) if d and (Path(d) / PROJECT_FILE).exists() else None
+    return create_app(pdir, dev=True)
+
+
+def run(pdir: Path | None, host: str = "127.0.0.1", port: int = 5173, browser: bool = True, dev: bool = False) -> None:
+    # timeout_graceful_shutdown: the open editor keeps /api/events streaming forever, and uvicorn would otherwise wait
+    # for it to close on Ctrl+C (and on every --dev reload), so the server never stops
     import uvicorn
 
     url = f"http://{host}:{port}" + ("/editor" if pdir else "")
     print(f"claude-cut  {url}\n(Ctrl+C to stop)")
     if browser:
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(pdir), host=host, port=port, log_level="warning")
+        threading.Timer(1.5 if dev else 1.0, lambda: webbrowser.open(url)).start()
+    if not dev:
+        uvicorn.run(create_app(pdir), host=host, port=port, log_level="warning", timeout_graceful_shutdown=1)
+        return
+    print("Dev mode: Python changes restart the server, HTML/JS changes refresh the page.")
+    if pdir:
+        DEV_OPEN.write_text(str(pdir.resolve()), encoding="utf-8")
+    else:
+        DEV_OPEN.unlink(missing_ok=True)
+    uvicorn.run("vedit.preview_server.app:dev_app", factory=True, host=host, port=port, log_level="warning",
+                reload=True, reload_dirs=[str(SRC)], reload_includes=["*.py"], timeout_graceful_shutdown=1)
