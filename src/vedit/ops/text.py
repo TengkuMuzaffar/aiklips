@@ -66,9 +66,12 @@ def find_font(name: str | None) -> str | None:
             return best
         if sys.platform.startswith("linux"):
             try:
-                out = subprocess.run(["fc-match", "-f", "%{file}", name], capture_output=True, text=True).stdout
-                if out and Path(out).exists():
-                    return out
+                # fc-match never fails: it falls back to some default font (DejaVu…). Only accept a real match.
+                out = subprocess.run(["fc-match", "-f", "%{family}\n%{file}", name], capture_output=True, text=True).stdout
+                family, _, file = out.partition("\n")
+                fams = [x.lower().replace(" ", "").replace("-", "") for x in family.split(",")]
+                if file and Path(file).exists() and any(f and (f in want or want.startswith(f)) for f in fams):
+                    return file
             except FileNotFoundError:
                 pass
         raise VeditError(f"Font '{name}' not found. Bundled fonts: {', '.join(font_lib.FONTS)} (`vedit fonts`). "
