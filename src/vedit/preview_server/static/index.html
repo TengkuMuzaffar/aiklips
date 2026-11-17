@@ -1663,13 +1663,15 @@ function renderOverlays() {
     grid.innerHTML = "";
     const lib = OVL.filter((o) => o.kind !== "shape" && match(`${o.label} ${o.about} ${o.tags.join(" ")} ${o.blend}`));
     if (lib.length) grid.append(h("div", { class: "fx-cat" }, "Library"), h("div", { class: "fx-grid" }, lib.map((o) =>
-      card({ background: `#111 url(/api/overlays/${o.key}/thumb.jpg) center / cover no-repeat` }, o.label, o.about,
+      // stickers and frames are shown whole (contain); textures fill the card (cover)
+      card({ background: `${o.kind === "image" ? "#283039" : "#111"} url(/api/overlays/${o.key}/thumb.jpg) center / ${o.kind === "image" ? "contain" : "cover"} no-repeat` }, o.label, o.about,
         () => overlayAdd({ op: "overlay_add", a: { key: o.key } }), o.blend !== "normal" ? o.blend : null))));
-    const shapes = [...SHAPES.map(([k, n, a]) => ({ k, n, a, op: "layer_add_shape", args: { shape: k } })),
-      ...OVL.filter((o) => o.kind === "shape").map((o) => ({ k: o.key, n: o.label, a: o.about, op: "overlay_add", args: { key: o.key } }))]
+    // real previews of each shape (drawn by the export's own renderer), animated ones marked
+    const shapes = [...SHAPES.map(([k, n, a]) => ({ thumb: `shape-${k}`, n, a, op: "layer_add_shape", args: { shape: k }, badge: null })),
+      ...OVL.filter((o) => o.kind === "shape").map((o) => ({ thumb: o.key, n: o.label, a: o.about, op: "overlay_add", args: { key: o.key }, badge: "animated" }))]
       .filter((x) => match(`${x.n} ${x.a} shape`));
     if (shapes.length) grid.append(h("div", { class: "fx-cat" }, "Shapes"), h("div", { class: "fx-grid" }, shapes.map((x) =>
-      card({ background: "linear-gradient(135deg, #1b2a2c, #24383a)" }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), null, "shape"))));
+      card({ background: `#5c6470 url(/api/overlays/${x.thumb}/thumb.jpg) center / contain no-repeat` }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), x.badge))));
     if (match("adjustment layer grade colour look filter stretch section")) grid.append(h("div", { class: "fx-cat" }, "Adjustment"), h("div", { class: "fx-grid" },
       card({ background: "repeating-linear-gradient(135deg, #33304a 0 10px, #2a2f3a 10px 20px)" }, "Adjustment layer",
         "Colour or filters for a stretch of the edit, on everything under it", () => overlayAdd({ op: "layer_add_adjust", a: {} }).then(() => {
