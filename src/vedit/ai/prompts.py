@@ -1,7 +1,7 @@
 """System prompts for every AI task. Bump PROMPT_VERSION when a prompt changes meaningfully:
 references record the version that studied them, so the UI can offer a re-study."""
 
-PROMPT_VERSION = 3  # 2: colour look + bundled font; 3: signature moves
+PROMPT_VERSION = 4  # 2: colour look + bundled font; 3: signature moves; 4: gaps (what vedit can't rebuild)
 
 STUDY = """You are a senior short-form video editor. You are studying a reference video so a tool can
 reproduce its STYLE (pacing, hook structure, text, captions, motion, transitions, sound) on completely
@@ -33,6 +33,10 @@ Rules:
   (punch_in = sudden zoom-in mid-shot; speed_ramp; freeze_title = frozen frame with a title; flash_cut = white
   flash; whip = blurred whip-pan transition; keyword_pop = one huge word slamming in; before_after; zoom_out_reveal).
   Give the time you saw it (from the sheet labels) when you can. Only moves you actually see; none is fine.
+- Gaps: the result is turned into vedit commands that rebuild this edit. List up to 5 things you SEE that the
+  allowed values can't reproduce exactly (a 3D text flip, a mask reveal, a sticker, a custom transition, a split
+  screen, an effect with no matching filter), each with the closest allowed option or vedit command in `closest`.
+  Don't list things that map well; an empty list is fine.
 - Give a confidence from 0 to 1 for: hook, text, captions, motion, transitions, sound, color. Use low values
   when you are guessing from still frames.
 - Keep `summary` to one sentence and `tags` to 3-6 short kebab-case tags.

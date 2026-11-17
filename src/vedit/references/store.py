@@ -21,7 +21,7 @@ from .. import jobs, library
 from ..ai import client as ai
 from ..ai import prompts
 from ..project import VeditError
-from . import analysis, dna as dnamod
+from . import analysis, dna as dnamod, recipe as recipemod
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS refs (
@@ -142,6 +142,8 @@ def get(rid: int, full: bool = False) -> dict:
         if full:
             row["card"] = dnamod.card(style)
             row["base_dna"] = base
+            row["recipe"] = recipemod.build(style, m, rid)
+            row["gaps"] = recipemod.gaps(style)
     if full and m:
         a = m.get("audio") or {}
         row["metrics"] = {

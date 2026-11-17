@@ -717,6 +717,7 @@ async function openRef(id, editing = false) {
     right.append(h("div", { class: "sect" }, "Style DNA", Object.keys(r.overrides || {}).length ? h("span", { class: "chip on", style: { marginLeft: "8px" } }, `${Object.keys(r.overrides).length} edited by you`) : null),
       h("table", { class: "traits" }, r.card.map((t) => h("tr", {}, h("td", {}, t.label, t.confidence != null ? h("span", { class: "conf", title: `AI confidence ${pct(t.confidence)}`, style: { background: confColor(t.confidence) } }) : null), h("td", {}, t.value)))));
     if (r.dna && r.dna.notes) right.append(h("p", { style: { color: "var(--faint)", fontSize: "12px" } }, r.dna.notes));
+    if (r.recipe && r.recipe.length) right.append(recipeBlock(r));
   }
   if (editing && r.dna) right.append(await traitForm(r));
   if (m && m.sheets && m.sheets.length && !editing)
@@ -728,6 +729,24 @@ async function openRef(id, editing = false) {
   if (first) window.scrollTo(0, 0);
   clearTimeout(openRef.t);
   if (refBusy(r) && !editing) openRef.t = setTimeout(() => REF_OPEN === id && openRef(id), 2500);
+}
+function recipeBlock(r) {
+  const copy = (btn, text) => { navigator.clipboard?.writeText(text).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1200); }); };
+  const all = h("button", { style: { marginLeft: "8px", padding: "1px 8px", fontSize: "11px" } }, "Copy all");
+  all.onclick = () => copy(all, r.recipe.map((s) => s.command).join("\n"));
+  const rows = r.recipe.map((s, i) => {
+    const b = h("button", { style: { padding: "1px 8px", fontSize: "11px" } }, "Copy");
+    b.onclick = () => copy(b, s.command);
+    return h("tr", {}, h("td", {}, `${i + 1}. ${s.area}`),
+      h("td", {}, h("code", { style: { display: "block", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px" } }, s.command),
+        h("div", { style: { color: "var(--faint)", fontSize: "12px", marginTop: "3px" } }, s.why)), h("td", { style: { width: "1%" } }, b));
+  });
+  const out = h("div", {}, h("div", { class: "sect" }, "Rebuild in vedit", all),
+    h("p", { style: { color: "var(--faint)", fontSize: "12px", margin: "0 0 4px" } }, "Run these on your own footage, in order. Fill in the <…> parts."),
+    h("table", { class: "traits" }, rows));
+  if (r.gaps && r.gaps.length) out.append(h("div", { class: "sect" }, "Not exactly possible in vedit"),
+    h("table", { class: "traits" }, r.gaps.map((g) => h("tr", {}, h("td", {}, g.what), h("td", {}, g.closest ? ["Closest: ", h("code", {}, g.closest)] : "—")))));
+  return out;
 }
 function getPath(o, p) { return p.split(".").reduce((a, k) => (a == null ? a : a[k]), o); }
 async function traitForm(r) {
