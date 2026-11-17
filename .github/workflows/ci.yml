@@ -18,11 +18,15 @@ jobs:
       # FFmpeg from each OS's own package manager (a third-party setup action failed on GitHub API hiccups)
       - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
         if: runner.os == 'Linux'
-      - run: choco install ffmpeg -y --no-progress
+      # choco's bin\ffmpeg.exe is a shim that starts the real one as a child; put the real binaries first on PATH
+      - run: |
+          choco install ffmpeg -y --no-progress
+          "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
         if: runner.os == 'Windows'
       - run: brew install ffmpeg
         if: runner.os == 'macOS'
-      - run: ffmpeg -hide_banner -version
+      - run: ffmpeg -hide_banner -version && (command -v ffmpeg || where ffmpeg)
+        shell: bash
       - run: uv sync --extra ai
       - run: uv run pytest -q
 
