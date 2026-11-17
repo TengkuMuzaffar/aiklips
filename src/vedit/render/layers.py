@@ -68,11 +68,34 @@ def _caption_groups(layer: Layer) -> list[list[int]]:
 def video_size(project: Project, layer: Layer, scale: float) -> tuple[int, int]:
     """Pixel size of a video layer's frames at this render scale (before a circle cut-out squares them)."""
     src = project.sources[layer.source]  # type: ignore[index]
-    w = even(video_width(layer, project.canvas) * scale)
     aspect = (src.height or 1080) / (src.width or 1920)
+    W, H = project.canvas.width, project.canvas.height
+    if layer.fit == "cover":  # fills the canvas; the decoder crops the overflow
+        return even(W * scale), even(H * scale)
+    if layer.fit == "contain":  # the whole picture, as big as fits
+        w = W if aspect <= H / W else W * (H / W) / aspect
+        return even(w * scale), even(w * aspect * scale)
+    w = even(video_width(layer, project.canvas) * scale)
     if layer.mask == "circle" and aspect < 1:  # the circle's diameter is the width: scale the short side to it
         return even(w / aspect), w
     return w, even(w * aspect)
+
+
+def video_look(project: Project, pdir: Path, layer: Layer, w: int, h: int, scale: float, offset: float = 0.0) -> str:
+    """Colour grade + filters of a video overlay as filter text to append after its scale (or ""). `offset`: the
+    filter time of the layer's first frame (0 when decoding from src_in; src_in for the whole-source preview copy)."""
+    from ..ops import color, fx_filters
+
+    grade = color.filter_chain(layer.grade, pdir)
+    look = ("," + grade) if grade else ""
+    _, dur = layer_span(layer, project.duration)
+    return look + fx_filters.simple_chain(layer, fx_filters.Ctx(w, h, scale, project.canvas.fps), offset, dur)
+
+
+def _fit_vf(layer: Layer, w: int, h: int) -> str:
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=bicubic,crop={w}:{h}" if layer.fit == "cover"
+          else f"scale={w}:{h}:flags=bicubic")
+    return vf + (",hflip" if layer.flip_h else "") + (",vflip" if layer.flip_v else "")
 
 
 class _VideoFrames:
@@ -86,7 +109,8 @@ class _VideoFrames:
         self.proc = subprocess.Popen(
             [media.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", *(["-stream_loop", "-1"] if layer.loop else []),
              "-ss", f"{layer.src_in:.3f}", "-t", f"{dur + 1 / fps:.3f}", "-i", str(self._media(pdir, src, scale)),
-             "-vf", f"fps={fps},scale={self.w}:{self.h}:flags=bicubic,setsar=1", "-an",
+             "-vf", f"fps={fps},{_fit_vf(layer, self.w, self.h)},setsar=1"
+                    + video_look(project, pdir, layer, self.w, self.h, scale) + ",format=rgb24", "-an",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )

@@ -1160,7 +1160,7 @@ def fx_filters_list():
 
 @fx_app.command("add")
 def fx_add(key: str, clip: Optional[str] = typer.Option(None, help="Clip id (default: every clip)"),
-           layer: Optional[str] = typer.Option(None, help="An adjustment layer instead of clips"),
+           layer: Optional[str] = typer.Option(None, help="An adjustment layer or video overlay instead of clips"),
            set_: Optional[list[str]] = typer.Option(None, "--set", help="Setting name=value (repeatable), e.g. --set amount=20")):
     """Add a filter to a clip (or all clips). It stacks after the clip's other filters."""
     from .ops import fx_filters
@@ -1844,7 +1844,12 @@ def projects():
 
 
 @app.command()
-def serve(port: int = 5173, host: str = "127.0.0.1", browser: bool = True):
+def serve(
+    port: int = 5173,
+    host: str = "127.0.0.1",
+    browser: bool = True,
+    dev: bool = typer.Option(False, "--dev", help="Auto-reload: restart on Python changes, refresh the page on HTML/JS changes"),
+):
     """Open claude-cut in your browser on a fixed port (same as `vedit app --browser`)."""
     from .preview_server.app import run
 
@@ -1852,7 +1857,7 @@ def serve(port: int = 5173, host: str = "127.0.0.1", browser: bool = True):
         d = pdir()
     except VeditError:
         d = None  # no active project: start on the home screen
-    run(d, host, port, browser)
+    run(d, host, port, browser, dev)
 
 
 # ---- references + generation ------------------------------------------------------------

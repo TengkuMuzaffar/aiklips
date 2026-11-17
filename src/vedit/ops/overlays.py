@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import media
-from ..project import BLEND_MODES, SHAPE_KINDS, Layer, Project, Source, VeditError, store_media_path
+from ..project import BLEND_MODES, SHAPE_KINDS, Layer, Project, Source, VeditError, normalize_tracks, spans_overlap, store_media_path
 
 # ---- adding / changing layers ----------------------------------------------------------------------------------
 
@@ -104,6 +104,9 @@ FRAME_FIELDS: dict[str, Callable[[Any], Any]] = {
     "volume": lambda v: min(2.0, max(0.0, float(v))), "shape": str,
     "height": lambda v: None if v in (None, "") else max(1, int(float(v))),
     "fill": lambda v: (str(v) or None) if v not in (None, "", "none") else None,
+    "fit": str,
+    "flip_h": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"),
+    "flip_v": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"),
 }
 
 
@@ -123,6 +126,10 @@ def set_fields(layer: Layer, values: dict) -> list[str]:
         raise VeditError(f"Blend must be one of: {', '.join(BLEND_MODES)}")
     if layer.mask not in ("rect", "circle"):
         raise VeditError("Mask must be rect or circle")
+    if layer.fit not in ("free", "cover", "contain"):
+        raise VeditError("Fit must be free, cover (fill the screen) or contain (fit the screen)")
+    if "fit" in changed and layer.fit != "free":  # filling / fitting the screen centres it
+        layer.x, layer.y = "50%", "50%"
     if layer.shape not in SHAPE_KINDS:
         raise VeditError(f"Shape must be one of: {', '.join(SHAPE_KINDS)}")
     for k in ("border_color", "chroma", "fill"):
@@ -137,21 +144,84 @@ def set_fields(layer: Layer, values: dict) -> list[str]:
     return changed
 
 
-def move_layer(p: Project, layer_id: str, to: str | int) -> int:
-    """Change stacking order: up / down / front / back, or an index (0 = bottom). Returns the new index."""
+def _shift(p: Project, layer: Layer, from_track: int) -> None:
+    """Open an empty track at `from_track`: every other layer on that track or above moves up one."""
+    for o in p.layers:
+        if o is not layer and o.track is not None and o.track >= from_track:
+            o.track += 1
+
+
+def _free(p: Project, layer: Layer, track: int, start: float, end: float | None) -> bool:
+    span = (start, float("inf") if end is None else end)
+    return not any(o.track == track and spans_overlap(span, (o.start, float("inf") if o.end is None else o.end))
+                   for o in p.layers if o is not layer)
+
+
+def place_layer(p: Project, layer_id: str, track: int, start: float | None = None, end: float | None = ...,
+                new_track: bool = False) -> Layer:
+    """Put a layer on a timeline track (0 = bottom overlay track, higher = on top), optionally at new times.
+
+    `new_track` opens a new track at that position (the ones from there up move up one). Dropped on a track where it
+    would overlap another layer, it goes on a new track right above that one instead, like CapCut."""
+    normalize_tracks(p)
     layer = p.layer(layer_id)
-    i = p.layers.index(layer)
-    n = len(p.layers)
-    target = {"up": i + 1, "down": i - 1, "front": n - 1, "top": n - 1, "back": 0, "bottom": 0}.get(str(to))
-    if target is None:
+    if start is not None:
+        layer.start = max(0.0, float(start))
+    if end is not ...:
+        layer.end = None if end is None else float(end)
+    if layer.end is not None and layer.end - layer.start < 0.05:
+        raise VeditError("Layer end must be after its start")
+    n = 1 + max((o.track for o in p.layers if o is not layer), default=-1)
+    track = max(0, min(n, int(track)))
+    if new_track:
+        _shift(p, layer, track)
+    elif not _free(p, layer, track, layer.start, layer.end):
+        track += 1
+        _shift(p, layer, track)
+    layer.track = track
+    normalize_tracks(p)
+    return layer
+
+
+def move_layer(p: Project, layer_id: str, to: str | int) -> int:
+    """Change stacking order: up / down / front / back, or a track number (0 = bottom).
+
+    Moves the layer one track up or down (to a new track when the one there is busy at that time), or above / below
+    every other layer. Returns the layer's new index in project.layers (0 = drawn first, at the bottom)."""
+    normalize_tracks(p)
+    layer = p.layer(layer_id)
+    t = layer.track
+    others = [o for o in p.layers if o is not layer]
+    top = max((o.track for o in others), default=-1)
+    key = str(to)
+    if key in ("front", "top"):
+        if others and t <= top:  # not already alone on the highest track
+            layer.track = top + 1
+    elif key in ("back", "bottom"):
+        if any(o.track <= t for o in others):
+            _shift(p, layer, 0)
+            layer.track = 0
+    elif key in ("up", "down"):
+        target = t + 1 if key == "up" else t - 1
+        if 0 <= target <= top:
+            if _free(p, layer, target, layer.start, layer.end):
+                layer.track = target
+            elif key == "up":
+                _shift(p, layer, target + 1)
+                layer.track = target + 1
+            else:
+                _shift(p, layer, target)
+                layer.track = target
+        elif key == "up" and any(o.track == t for o in others):
+            layer.track = t + 1  # shares the top track: give it its own track above
+    else:
         try:
             target = int(to)
         except (TypeError, ValueError):
-            raise VeditError("Order must be up, down, front, back or an index") from None
-    target = max(0, min(n - 1, target))
-    p.layers.pop(i)
-    p.layers.insert(target, layer)
-    return target
+            raise VeditError("Order must be up, down, front, back or a track number") from None
+        place_layer(p, layer_id, target, new_track=not _free(p, layer, max(0, target), layer.start, layer.end))
+    normalize_tracks(p)
+    return p.layers.index(layer)
 
 
 # ---- library ------------------------------------------------------------------------------------------------
