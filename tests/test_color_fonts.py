@@ -309,3 +309,27 @@ def test_editor_clip_colour_ops(cli, tmp_path):
 
 def load_grade(client, cid):
     return next(c["grade"] for c in client.get("/api/state").json()["project"]["clips"] if c["id"] == cid)
+
+
+def test_linux_fontconfig_fallback_is_not_a_match(monkeypatch, tmp_path):
+    """fc-match always answers (falls back to DejaVu…): an unknown name must still be an error, a real match not."""
+    import subprocess
+    import types
+
+    from vedit.ops import text as text_mod
+
+    real = tmp_path / "Montserrat-Bold.ttf"
+    real.write_bytes(b"x")
+    fallback = tmp_path / "DejaVuSans.ttf"
+    fallback.write_bytes(b"x")
+    monkeypatch.setattr(text_mod.sys, "platform", "linux")
+    monkeypatch.setattr(text_mod, "_font_dirs", lambda: [])
+
+    def fake_run(cmd, **kw):
+        fam, path = ("Montserrat", real) if "Montserrat" in cmd[-1] else ("DejaVu Sans", fallback)
+        return types.SimpleNamespace(stdout=f"{fam}\n{path}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert find_font("Montserrat Bold") == str(real)
+    with pytest.raises(VeditError, match="Bundled fonts"):
+        find_font("No Such Font Anywhere")
