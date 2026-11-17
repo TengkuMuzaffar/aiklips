@@ -81,7 +81,8 @@ def settings_path() -> Path:
 
 
 def settings() -> dict:
-    """Per-tier model overrides: {"vision": "<provider>/<model>", "planner": ..., "editor": ...}."""
+    """Per-tier model overrides: {"vision": "<provider>/<model>", "planner": ..., "editor": ...}, plus
+    "chat": the AI editor's model for projects that haven't picked one."""
     try:
         return json.loads(settings_path().read_text())
     except (OSError, json.JSONDecodeError):
@@ -98,6 +99,10 @@ def save_settings(data: dict) -> dict:
             registry.resolve(v)  # raises RegistryError for unknown models
             clean[tier] = registry.normalize_key(v)
     clean = check_models(clean)
+    chat = str(data.get("chat") or "").strip()
+    if chat:
+        registry.resolve(chat)
+        clean["chat"] = registry.normalize_key(chat)
     settings_path().write_text(json.dumps(clean, indent=2))
     return clean
 
@@ -203,6 +208,43 @@ def usage_stats(task: str | None = None, last: int = 200) -> dict:
             continue
         out.setdefault(d.get("task", "?"), []).append(float(d.get("seconds") or 0))
     return {k: round(sum(v) / len(v), 1) for k, v in out.items() if v}
+
+
+def usage_summary(days: float = 30) -> dict:
+    """Calls, tokens and cost per model and per task over the last `days` (Settings → Usage).
+    Cost is only known when the provider reports it (the Claude login does; most others don't)."""
+    since = time.time() - days * 86400
+    try:
+        lines = (home_dir() / "ai-usage.jsonl").read_text().splitlines()
+    except OSError:
+        lines = []
+
+    def blank() -> dict:
+        return {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "cost_known": 0, "seconds": 0.0}
+
+    total, by_model, by_task, by_day = blank(), {}, {}, {}
+    for ln in lines:
+        try:
+            d = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        t = float(d.get("time") or 0)
+        if t < since:
+            continue
+        day = time.strftime("%Y-%m-%d", time.localtime(t))
+        for row in (total, by_model.setdefault(d.get("model") or "?", blank()), by_task.setdefault(d.get("task") or "?", blank()),
+                    by_day.setdefault(day, blank())):
+            row["calls"] += 1
+            row["input_tokens"] += int(d.get("input_tokens") or 0) + int(d.get("cache_read") or 0)
+            row["output_tokens"] += int(d.get("output_tokens") or 0)
+            row["seconds"] += float(d.get("seconds") or 0)
+            if d.get("cost_usd") is not None:
+                row["cost_usd"] += float(d["cost_usd"])
+                row["cost_known"] += 1
+    rnd = lambda r: {**r, "cost_usd": round(r["cost_usd"], 4), "seconds": round(r["seconds"], 1)}  # noqa: E731
+    order = lambda m: sorted(({"key": k, **rnd(v)} for k, v in m.items()), key=lambda x: -x["calls"])  # noqa: E731
+    return {"days": days, "total": rnd(total), "models": order(by_model), "tasks": order(by_task),
+            "daily": [{"day": k, **rnd(v)} for k, v in sorted(by_day.items())]}
 
 
 # ---- images ----------------------------------------------------------------------------------

@@ -18,6 +18,8 @@ button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 button.ghost:hover { color: var(--text); border-color: var(--line2); }
+.settings-link { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 7px; border: 1px solid transparent; color: var(--muted); text-decoration: none; }
+.settings-link:hover { color: var(--text); border-color: var(--line2); }
 button.danger { background: #3a1717; border-color: #6b2a2a; color: #fecaca; }
 button.danger:hover { border-color: var(--danger); }
 input, select { background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
@@ -283,6 +285,7 @@ textarea { font: inherit; color: inherit; background: var(--bg); border: 1px sol
   <button class="primary" id="b-new" data-for="projects" title="Create a new video project">＋ New project</button>
   <button class="primary" id="b-ref-add" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
   <button class="primary" id="b-gen-new" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <a class="ghost settings-link" id="b-settings" href="/settings" title="Settings: AI models, providers &amp; keys, permissions, usage" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="hide-sm">Settings</span></a>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
   <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
@@ -1243,7 +1246,7 @@ async function renderTeam(box) {
     h("button", { class: "mini", title: "Use these choices for every future generation and for the editor's AI auditor",
       onclick: async () => { const body = { _quality: W.quality }; for (const [t] of ROLE_ORDER) body[t] = W.models[t] || (info.roles.find((x) => x.tier === t) || {}).saved || ""; const r = await call("POST", "/api/ai/roles", body); if (r) { toast("Saved as your defaults"); W.models = {}; renderTeam(box); } } },
       "Make these my defaults"),
-    h("span", { class: "hint" }, "References that are already studied keep their study.")));
+    h("span", { class: "hint" }, "References that are already studied keep their study. ", h("a", { href: "/settings#providers", target: "_blank" }, "Add models in Settings"))));
 }
 function wizReview(el) {
   const names = REFS.filter((r) => W.refs.has(r.id)).map((r) => r.name + (W.lead === r.id ? " ★" : ""));
