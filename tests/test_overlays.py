@@ -221,3 +221,21 @@ def test_sprite_api_draws_shapes_and_styled_images(cli, test_clip, tmp_path):
     assert client.get(f"/api/source/{next(iter(st['project']['sources']))}/media").status_code == 200
     assert client.get("/api/source/nope/media").status_code == 404
     assert len(client.get("/api/overlays").json()["library"]) == len(overlays.LIBRARY)
+
+
+def test_shape_previews(cli, test_clip):
+    import io
+
+    from fastapi.testclient import TestClient
+
+    from vedit.preview_server.app import create_app
+
+    cli("import", str(test_clip))
+    client = TestClient(create_app(cli.project, watch=False, chat=False))
+    for key in ("shape-rect", "shape-ellipse", "shape-line", "shape-arrow", "arrow", "circle_callout", "lower_box"):
+        r = client.get(f"/api/overlays/{key}/thumb.jpg")
+        assert r.status_code == 200, key
+        img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        bg = img.getpixel((2, 2))
+        assert any(img.getpixel((x, img.height // 2)) != bg for x in range(0, img.width, 4)), f"{key}: nothing drawn"
+    assert client.get("/api/overlays/shape-star/thumb.jpg").status_code == 404

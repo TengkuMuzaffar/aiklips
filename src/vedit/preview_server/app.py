@@ -720,8 +720,19 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         """A still of a library overlay (generating the overlay on first use; cached afterwards)."""
         from ..ops import overlays
 
-        if key not in overlays.LIBRARY or overlays.LIBRARY[key].kind == "shape":
+        if key.startswith("shape-"):  # the plain shapes: shape-rect, shape-ellipse, shape-line, shape-arrow
+            try:
+                png = overlays.shape_thumb(key[6:])
+            except VeditError:
+                raise HTTPException(404)
+            return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=3600"})
+        if key not in overlays.LIBRARY:
             raise HTTPException(404)
+        it = overlays.LIBRARY[key]
+        if it.kind == "shape":
+            extra = dict(it.layer)
+            png = overlays.shape_thumb(extra.pop("shape"), extra)
+            return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=3600"})
         p = load(host.need())
 
         def make() -> Path:

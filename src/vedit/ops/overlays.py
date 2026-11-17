@@ -56,14 +56,39 @@ def add_video(p: Project, source: str, start: float = 0.0, end: float | None = N
     return layer
 
 
+SHAPE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "rect": {"width": 600, "height": 220, "radius": 24, "fill": "#000000B0"},
+    "ellipse": {"width": 360, "height": 360, "fill": None, "border_width": 10, "border_color": "#FFE600"},
+    "line": {"width": 600, "height": 14, "fill": "#FFFFFF"},
+    "arrow": {"width": 320, "height": 110, "fill": "#FFE600"},
+}
+
+
+def shape_thumb(shape: str, extra: dict | None = None, size: tuple[int, int] = (320, 200)) -> bytes:
+    """PNG preview of a shape with its default look, on a mid-grey card (dark boxes and white lines both show)."""
+    import io
+
+    from PIL import Image
+
+    from .overlay_style import render_shape
+
+    if shape not in SHAPE_DEFAULTS:
+        raise VeditError(f"Shape must be one of: {', '.join(SHAPE_DEFAULTS)}")
+    fields = {k: v for k, v in {**SHAPE_DEFAULTS[shape], **(extra or {})}.items() if k in Layer.model_fields and k not in ("x", "y", "presets")}
+    img = render_shape(Layer(id="preview", type="shape", shape=shape, **fields), 1.0)
+    W, H = size
+    img.thumbnail((int(W * 0.8), int(H * 0.7)))
+    bg = Image.new("RGBA", size, (92, 100, 112, 255))
+    bg.alpha_composite(img, ((W - img.width) // 2, (H - img.height) // 2))
+    buf = io.BytesIO()
+    bg.convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
+
 def add_shape(p: Project, shape: str = "rect", start: float = 0.0, end: float | None = None, **kw: Any) -> Layer:
     if shape not in SHAPE_KINDS:
         raise VeditError(f"Shape must be one of: {', '.join(SHAPE_KINDS)}")
-    defaults = {"rect": {"width": 600, "height": 220, "radius": 24, "fill": "#000000B0"},
-                "ellipse": {"width": 360, "height": 360, "fill": None, "border_width": 10, "border_color": "#FFE600"},
-                "line": {"width": 600, "height": 14, "fill": "#FFFFFF"},
-                "arrow": {"width": 320, "height": 110, "fill": "#FFE600"}}[shape]
-    kw = {**defaults, **kw}
+    kw = {**SHAPE_DEFAULTS[shape], **kw}
     layer = Layer(id=p.new_id("sh"), type="shape", shape=shape, start=start,
                   end=end if end is not None else _end(p, start, 3.0), **kw)
     p.layers.append(layer)
@@ -270,11 +295,11 @@ LIBRARY: dict[str, Item] = {i.key: i for i in [
     Item("new_badge", "NEW badge", "image", "Yellow NEW badge", ("badge", "sticker", "sale", "launch"),
          span=3.0, make=_sticker("NEW", "#FFE600", "#111111"), layer={"x": "80%", "y": "18%", "width": 260, "rotation": -8,
                                                                   "presets": [{"name": "pop_in"}, {"name": "pulse"}]}),
-    Item("arrow", "Arrow", "shape", "Yellow arrow pointing at something (rotate it)", ("pointer", "callout", "look"),
+    Item("arrow", "Arrow · animated", "shape", "Pops in, then wiggles to point at something (rotate it)", ("pointer", "callout", "look"),
          span=3.0, layer={"shape": "arrow", "presets": [{"name": "pop_in"}, {"name": "wiggle", "params": {"degrees": 4}}]}),
-    Item("circle_callout", "Circle callout", "shape", "Yellow ring around a detail", ("highlight", "callout", "ring"),
+    Item("circle_callout", "Ring · pops in", "shape", "Yellow ring that pops in around a detail", ("highlight", "callout", "ring", "circle"),
          span=3.0, layer={"shape": "ellipse", "presets": [{"name": "pop_in"}]}),
-    Item("lower_box", "Caption box", "shape", "Dark rounded box behind a lower-third title", ("lower third", "box", "background"),
+    Item("lower_box", "Lower-third box · slides in", "shape", "Dark box that slides in low on screen, behind a name / title", ("lower third", "box", "background", "caption"),
          span=4.0, layer={"shape": "rect", "y": "78%", "presets": [{"name": "slide_in"}]}),
 ]}
 
