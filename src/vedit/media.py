@@ -51,6 +51,15 @@ def run(cmd: list[str], what: str = "ffmpeg") -> subprocess.CompletedProcess:
     return proc
 
 
+def kill_tree(proc: subprocess.Popen) -> None:
+    """Stop a process and anything it started. On Windows `ffmpeg` may be a launcher shim (Chocolatey, Scoop) whose
+    real ffmpeg child would otherwise keep running and keep the output file locked."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    proc.kill()
+    proc.wait()
+
+
 class Cancelled(VeditError):
     """The user stopped a render."""
 
@@ -63,8 +72,7 @@ def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float
     assert proc.stdout is not None
     for line in proc.stdout:
         if should_stop is not None and should_stop():
-            proc.kill()
-            proc.wait()
+            kill_tree(proc)
             raise Cancelled("Export cancelled")
         if line.startswith("out_time_us=") and on_progress and total > 0:
             try:

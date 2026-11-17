@@ -102,6 +102,17 @@ def _log(msg: str) -> None:
     sys.stderr.write(msg + "\n")
 
 
+def _remove(path: Path) -> None:
+    """Delete a temp file. Windows can hold a just-killed process's file open for a moment: retry briefly, and never
+    let a leftover temp file turn a cancel into an error."""
+    for _ in range(30):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(0.1)
+
+
 def render(project: Project, pdir: Path, out: Path, scale: float, quality: str, progress: bool = True,
            on_progress=None, encode: list[str] | None = None, audio: bool = True, should_stop=None,
            layers: bool = True) -> dict:
@@ -117,7 +128,7 @@ def render(project: Project, pdir: Path, out: Path, scale: float, quality: str, 
             sys.stderr.write("\n")
         tmp.replace(out)
     finally:
-        tmp.unlink(missing_ok=True)
+        _remove(tmp)
     info = media.probe(out)
     return {
         "output": str(out),

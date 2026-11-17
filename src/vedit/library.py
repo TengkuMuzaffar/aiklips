@@ -69,16 +69,18 @@ def _fix_old_paths(home: Path, con: sqlite3.Connection) -> None:
     marker = home / ".paths-renamed"
     if marker.exists() or not (OLD_HOME.is_symlink() or OLD_HOME.exists()):
         return
-    old, new = str(OLD_HOME) + os.sep, str(home) + os.sep
-    try:
-        con.execute("UPDATE refs SET dir = replace(dir, ?, ?) WHERE dir LIKE ?", (old, new, old + "%"))
-        con.commit()
-    except sqlite3.OperationalError:  # no references table yet
-        pass
+    pairs = {(str(OLD_HOME) + sep, str(home) + sep) for sep in ("/", "\\", os.sep)}  # paths may use either separator
+    for old, new in pairs:
+        try:
+            con.execute("UPDATE refs SET dir = replace(dir, ?, ?) WHERE dir LIKE ?", (old, new, old + "%"))
+            con.commit()
+        except sqlite3.OperationalError:  # no references table yet
+            break
     for meta in home.glob("uploads/*/meta.json"):
         txt = meta.read_text()
-        if old in txt:
-            meta.write_text(txt.replace(old, new))
+        for old, new in pairs:
+            txt = txt.replace(old, new).replace(json.dumps(old)[1:-1], json.dumps(new)[1:-1])  # also JSON-escaped "\\"
+        meta.write_text(txt)
     marker.write_text("claude-cut -> aiklips\n")
 
 
