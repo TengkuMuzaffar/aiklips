@@ -47,6 +47,10 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
   Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
   and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
+- **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
+  whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
+- **Stretches, not clips.** For a look on a section (flashback, ending), use one `adjust add` layer over it instead of
+  the same filter on each clip. Before a big change, `version save "before X"` so the user can compare.
 - **Filters** (`vedit fx add blur|sharpen|denoise|glow|vignette|grain|rgb_split|edges|posterize|invert|mirror|pixelate|letterbox|film|vhs|shake|zoom_pulse|trails`):
   use them to serve the look, not to decorate. Prefer one look across the whole edit (`fx add film` with no `--clip`
   adds it to every clip) over different filters per clip; for colour itself use `color look`, not filters.
@@ -96,7 +100,12 @@ audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
 fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
 fx filters | fx add <filter> [--clip ID --set amount=20 ...] | fx set <fxN> amount=30 on=false | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
-undo [--steps N] | redo | history | checkout <step>
+undo [--steps N] | redo | history | checkout <step> | version save "NAME" | version list
+marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
+sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
+adjust add [--start --end --look NAME --intensity --saturation --brightness --contrast --temperature --fx vignette ...]  (then `fx add <f> --layer adjN`)
+template save NAME --layer ID [--layer ID2 ...] | template list | template apply NAME --at T | template delete NAME
+proxy make | proxy status | proxy clean
 preview [--open] | frame --at T[,T2,...] | sheet | serve
 export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
 ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
@@ -144,6 +153,11 @@ Load the relevant one before doing that kind of edit.
     `ops/overlay_style.py` (shared by export and live sprites), video frames decoded per layer in `render/layers.py`,
     blend modes in `render/graph.py` `_blend_layer`. Live preview plays video layers in `<video>` elements (keyed on a
     canvas for green screen) with CSS mix-blend-mode, so #pv-hold / #pv-layers must not get a z-index.
+  - Editor tools: `ops/editing.py` (markers + chapters, keyframes, trim to playhead, paste attributes), clip sound
+    fades / voice chains in `render/graph.py` (`clip_audio_tail`, `VOICE_CHAINS`), scopes `render/scopes.py`, proxies
+    `proxies.py` (previews only; built in the editor's background thread), adjustment layers (`Layer.type == "adjust"`,
+    `_adjust_layer` in graph.py; part of the base preview and the instant frame), named versions in `history.py`
+    (a `version` key on a step), templates `ops/templates.py` (~/.claude-cut/templates).
   - Transitions: `Clip.transition` with `ops/cut.py` `transition_lengths`, rendered as `xfade` in `render/graph.py`
   - Colour: `Clip.grade` + `ops/color.py` (measure / match / looks -> FFmpeg filters, applied after fit in `render/graph.py`)
   - Fonts & text looks: `ops/fonts.py` (bundled font registry in `assets/fonts/`, feel -> font), `ops/text_looks.py`

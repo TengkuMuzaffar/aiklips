@@ -249,8 +249,8 @@ def chain(eff: Effect, ctx: Ctx) -> str | None:
     return fx.build(resolved(eff), ctx)
 
 
-def apply_filters(g, clip: Clip, cur: str, ctx: Ctx) -> str:
-    """Add this clip's filters to the graph `g` after `cur`; returns the new label."""
+def apply_filters(g, clip, cur: str, ctx: Ctx) -> str:
+    """Add the filters of a clip (or adjustment layer) to the graph `g` after `cur`; returns the new label."""
     for eff in clip.effects:
         if not is_filter(eff):
             continue
@@ -271,15 +271,23 @@ def apply_filters(g, clip: Clip, cur: str, ctx: Ctx) -> str:
 
 # ---- editing --------------------------------------------------------------------------------------------------
 
+def _holders(project: Project) -> list:
+    """Everything that carries filters: clips and adjustment layers."""
+    return [*project.clips, *(l for l in project.layers if l.type == "adjust")]
+
+
 def _new_id(project: Project) -> str:
-    used = {str(e.params.get("id")) for c in project.clips for e in c.effects}
+    used = {str(e.params.get("id")) for c in _holders(project) for e in c.effects}
     n = 1
     while f"fx{n}" in used:
         n += 1
     return f"fx{n}"
 
 
-def add(project: Project, clip: Clip, key: str, params: dict | None = None) -> Effect:
+def add(project: Project, clip, key: str, params: dict | None = None) -> Effect:
+    """Add filter `key` to a clip or an adjustment layer."""
+    if getattr(clip, "type", "adjust") != "adjust":  # layers other than adjustment layers have no filters
+        raise VeditError(f"{clip.id} is a {clip.type} layer: filters go on clips or adjustment layers")
     fx = get(key)
     vals = {p.name: p.default for p in fx.params}
     for k, v in (params or {}).items():
@@ -291,13 +299,14 @@ def add(project: Project, clip: Clip, key: str, params: dict | None = None) -> E
     return eff
 
 
-def find(project: Project, fx_id: str) -> tuple[Clip, Effect]:
-    for c in project.clips:
+def find(project: Project, fx_id: str):
+    """The clip or adjustment layer holding filter `fx_id`, and the filter."""
+    for c in _holders(project):
         for e in c.effects:
             if is_filter(e) and e.params.get("id") == fx_id:
                 return c, e
     raise VeditError(f"No effect '{fx_id}'. Effects: " + (", ".join(
-        f"{e.params.get('id')} ({e.params.get('key')} on {c.id})" for c in project.clips for e in c.effects if is_filter(e)) or "none"))
+        f"{e.params.get('id')} ({e.params.get('key')} on {c.id})" for c in _holders(project) for e in c.effects if is_filter(e)) or "none"))
 
 
 def set_params(project: Project, fx_id: str, values: dict) -> Effect:

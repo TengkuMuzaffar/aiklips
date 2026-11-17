@@ -198,6 +198,28 @@ def apply_effects(g: Graph, project: Project, pdir: Path, clip: Clip, cur: str, 
     return cur
 
 
+# speech clean-up per clip: "clean" = cut rumble + broadband noise + even out the level; "studio" adds a warmer,
+# clearer EQ, a de-esser and a limiter (the podcast sound)
+VOICE_CHAINS = {
+    "clean": "highpass=f=80,afftdn=nf=-25,acompressor=threshold=-20dB:ratio=3:attack=5:release=80:makeup=2",
+    "studio": "highpass=f=90,afftdn=nf=-28,equalizer=f=220:t=q:w=1:g=-2,equalizer=f=3500:t=q:w=1.2:g=3,"
+              "deesser=i=0.4,acompressor=threshold=-22dB:ratio=4:attack=5:release=60:makeup=3,alimiter=limit=0.95",
+}
+
+
+def clip_audio_tail(clip: Clip, dur: float) -> str:
+    """Voice clean-up + sound fades for a clip's audio, after it is trimmed to `dur` (empty string = nothing)."""
+    parts = []
+    if clip.voice in VOICE_CHAINS:
+        parts.append(VOICE_CHAINS[clip.voice])
+    fi, fo = min(clip.fade_in, dur / 2), min(clip.fade_out, dur / 2)
+    if fi > 0.01:
+        parts.append(f"afade=t=in:d={_f(fi)}")
+    if fo > 0.01:
+        parts.append(f"afade=t=out:st={_f(dur - fo)}:d={_f(fo)}")
+    return ",".join(parts)
+
+
 BLEND_FILTER = {"screen": "screen", "multiply": "multiply", "overlay": "overlay", "add": "addition",
                 "lighten": "lighten", "darken": "darken"}
 
@@ -221,6 +243,27 @@ def _blend_layer(g: Graph, base: str, li: int, start: float, mode: str, out: str
     return out
 
 
+def _adjust_layer(g: Graph, project: Project, pdir: Path, layer, base: str, start: float, ldur: float,
+                  W: int, H: int, scale: float, fps: float) -> str:
+    """An adjustment layer: a filtered + graded copy of the picture, shown over it only between start and end."""
+    from ..ops import fx_filters
+
+    grade = color.filter_chain(layer.grade, pdir)
+    active = any(e.type == "fx" and e.params.get("on", True) for e in layer.effects)
+    if ldur <= 0.01 or not (grade or active):
+        return base
+    a, b = g.label("adj"), g.label("adjf")
+    g.add(f"[{base}]split=2[{a}][{b}]")
+    cur = fx_filters.apply_filters(g, layer, b, fx_filters.Ctx(W, H, scale, fps))
+    if grade:
+        gl = g.label("adjg")
+        g.add(f"[{cur}]{grade},format=yuv420p[{gl}]")
+        cur = gl
+    out = g.label("V")
+    g.add(f"[{a}][{cur}]overlay=0:0:eof_action=pass:enable='between(t,{_f(start)},{_f(start + ldur - 1e-3)})'[{out}]")
+    return out
+
+
 def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None,
           encode: list[str] | None = None, audio: bool = True, layers: bool = True) -> tuple[list[str], float]:
     """`encode` replaces the default H.264 encoder arguments (codec, quality, pixel format, container flags) for exports
@@ -241,9 +284,12 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     trans = transition_lengths(project) + [0.0]
     starts = project.clip_starts()
 
+    from .. import proxies
+
+    preview = quality in ("preview", "frame")  # previews may decode small proxies; exports never do
     for k, clip in enumerate(project.clips):
         src = project.sources[clip.source]
-        path = resolve_media(pdir, src.path)
+        path = proxies.media_for(pdir, project, clip, preview)
         if not path.exists():
             raise VeditError(f"Source media missing: {path}")
         dur_src = clip.out - clip.in_
@@ -277,9 +323,10 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:
+            tail = clip_audio_tail(clip, dur)
             g.add(
                 f"[{idx}:a]atrim=start={_f(ext_in)},asetpts=PTS-STARTPTS,{atempo_chain(clip.speed)},volume={_f(clip.volume)},{fmt},"
-                f"apad,atrim=duration={_f(dur)},asetpts=PTS-STARTPTS[{alab}]"
+                f"apad,atrim=duration={_f(dur)},asetpts=PTS-STARTPTS{',' + tail if tail else ''}[{alab}]"
             )
         else:
             g.add(f"anullsrc=r=48000:cl=stereo,atrim=duration={_f(dur)},{fmt}[{alab}]")
@@ -328,8 +375,12 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
 
 
-    for layer in (project.layers if layers else []):
+    # layers=False (the editor's base video) still applies adjustment layers: they change the picture itself
+    for layer in (project.layers if layers else [l for l in project.layers if l.type == "adjust"]):
         start, ldur = layer_span(layer, total)
+        if layer.type == "adjust":
+            vcur = _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
+            continue
         f = ensure_layer(project, pdir, layer, scale)
         if f is None:
             continue

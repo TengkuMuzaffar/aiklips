@@ -10,7 +10,7 @@
   --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
   --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25;
   --clip: #23344f; --clip-b: #4a6fa8; --text-l: #2f4a2a; --text-b: #6aa860; --img-l: #3a2f4f; --img-b: #9a7fd0;
-  --cap-l: #4a3c18; --cap-b: #d0a640; --vid-l: #4a2330; --vid-b: #d0607e; --shp-l: #24383a; --shp-b: #5fb3b8; --mus-l: #173a45; --mus-b: #3fa5c0; --sel: #fbbf24; --danger: #f87171; --ok: #4ade80;
+  --cap-l: #4a3c18; --cap-b: #d0a640; --vid-l: #4a2330; --vid-b: #d0607e; --shp-l: #24383a; --shp-b: #5fb3b8; --adj-l: #33304a; --adj-b: #9d95e0; --mus-l: #173a45; --mus-b: #3fa5c0; --sel: #fbbf24; --danger: #f87171; --ok: #4ade80;
   --colf: 0.5; --rowf: 0.5;
 }
 * { box-sizing: border-box; }
@@ -201,6 +201,30 @@ label.scrub:hover { color: var(--accent); }
 .fxs-b label { font-size: 11.5px; color: var(--muted); }
 .fxs-b .pair { display: flex; gap: 6px; align-items: center; }
 .fxs-b .pair input[type=range] { flex: 1; min-width: 0; }
+/* timeline: markers, in/out range, keyframe diamonds, multi-select */
+.lane.ruler .mk { position: absolute; top: 0; width: 10px; height: 100%; margin-left: -5px; cursor: pointer; z-index: 3; }
+.lane.ruler .mk::before { content: ""; position: absolute; left: 1px; top: 2px; width: 8px; height: 10px; background: var(--c); clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%); }
+.lane.ruler .mk::after { content: ""; position: absolute; left: 4.5px; top: 12px; width: 1px; height: 12px; background: var(--c); opacity: .7; }
+.lane.ruler .mk.sel::before { outline: 2px solid var(--text); }
+.lane.ruler .io { position: absolute; top: 0; height: 100%; background: #5eead422; border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); pointer-events: none; }
+.blk .kf { position: absolute; bottom: 1px; width: 7px; height: 7px; margin-left: -3.5px; background: var(--sel); transform: rotate(45deg); pointer-events: none; }
+.blk.multi { outline: 2px dashed var(--sel); outline-offset: -2px; }
+#snap-ind.off { opacity: .4; text-decoration: line-through; }
+/* keyframe button next to a property */
+.kfb { background: none; border: none; padding: 0 3px; color: var(--faint); cursor: pointer; font-size: 12px; line-height: 1; }
+.kfb.has { color: var(--muted); } .kfb.on { color: var(--sel); }
+.fields label .kfb { margin-left: 4px; }
+/* paste attributes dialog, shortcut sheet */
+.modal { position: fixed; inset: 0; z-index: 85; background: #0008; display: flex; align-items: center; justify-content: center; }
+.modal .box { background: var(--pane2); border: 1px solid var(--line2); border-radius: 12px; padding: 16px 18px; min-width: 300px; max-width: min(720px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; box-shadow: 0 20px 60px #000c; }
+.modal h3 { margin: 0 0 10px; font-size: 14px; }
+.modal .opts { display: grid; gap: 6px; margin: 8px 0 14px; }
+.modal .opts label { display: flex; gap: 8px; align-items: center; }
+.keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 18px; font-size: 12.5px; }
+.keys div { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.keys kbd { white-space: nowrap; }
+.scopes { grid-column: 1 / 3; display: flex; gap: 8px; flex-wrap: wrap; }
+.scopes img { background: #000; border-radius: 6px; border: 1px solid var(--line2); max-width: 100%; }
 /* command palette (Cmd/Ctrl+K) */
 #palette { position: fixed; inset: 0; z-index: 80; background: #0008; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 #palette .pl-box { width: min(560px, calc(100vw - 32px)); background: var(--pane2); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 20px 60px #000c; overflow: hidden; }
@@ -386,6 +410,7 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .blk.captions { background: var(--cap-l); border-color: var(--cap-b); }
 .blk.video { background: var(--vid-l); border-color: var(--vid-b); }
 .blk.shape { background: var(--shp-l); border-color: var(--shp-b); }
+.blk.adjust { background: repeating-linear-gradient(135deg, var(--adj-l) 0 8px, #2a2f3a 8px 16px); border-color: var(--adj-b); }
 .head.dragover { box-shadow: inset 0 2px 0 var(--accent); }
 .badge.blend { text-transform: uppercase; font-size: 9px; letter-spacing: .04em; }
 .blk.music { background: var(--mus-l); border-color: var(--mus-b); }
@@ -789,7 +814,7 @@ async function api(url, body) {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     if (!r.ok) { let d = "Error"; try { d = (await r.json()).detail; } catch {} toast(d, true); return null; }
     ok = true;
-    if (url === "/api/op" && frameOp(body?.op)) requestFrame();
+    if (url === "/api/op" && frameOp(body?.op)) { requestFrame(); refreshScopes(); }
     if (url === "/api/undo" || url === "/api/redo") requestFrame();
     return r.json();
   } finally { if (lbl) pvEnd(ok); }
@@ -808,7 +833,7 @@ const OP_LABELS = {
 };
 // edits that only change overlay layers: in live mode the browser redraws them, no video render needed
 const OVERLAY_OPS = new Set(["layer_set", "text_look", "layer_add_text", "layer_remove", "preset_add", "preset_remove", "keyframes_clear", "clip_why", "rename",
-  "layer_add_video", "layer_add_shape", "overlay_add", "layer_move"]);
+  "layer_add_video", "layer_add_shape", "overlay_add", "layer_move", "marker_add", "marker_set", "marker_remove", "keyframe_set", "keyframe_remove"]);
 function editLabel(url, body) {
   if (url === "/api/op" && liveMode() && OVERLAY_OPS.has(body?.op)) return null;
   if (url === "/api/op" && frameOp(body?.op)) return null; // shown at once by the instant frame
@@ -1000,7 +1025,7 @@ function drawVideoLayer(v, l, pr, box, cv, T) {
   const src = P().sources[l.source];
   const want = src && layerVideoTime(l, src, T);
   if (!src || want == null || pr.opacity <= 0.001 || pr.scale <= 0.001) { v.el.style.display = "none"; if (!v.vid.paused) v.vid.pause(); return; }
-  if (v.src !== l.source) { v.src = l.source; v.vid.src = `/api/source/${encodeURIComponent(l.source)}/media`; }
+  if (v.src !== l.source) { v.src = l.source; v.vid.src = `/api/source/${encodeURIComponent(l.source)}/media?k=${mediaKey(l.source)}`; }
   // sound: the live preview's base video has none of the overlays' sound, so the layer plays its own
   v.vid.muted = !(l.volume > 0); v.vid.volume = Math.min(1, Math.max(0, l.volume || 0));
   syncLayerVideo(v, want);
@@ -1037,6 +1062,7 @@ function drawOverlays() {
     v.el.style.mixBlendMode = BLEND_CSS[l.blend] || "normal";
     const end = l.end == null ? D : Math.min(l.end, D), ldur = Math.max(0, end - l.start), t = T - l.start;
     if (ldur <= 0.01 || t < 0 || t >= ldur) { v.el.style.display = "none"; if (v.vid && !v.vid.paused) v.vid.pause(); return; }
+    if (l.type === "adjust") { v.el.style.display = "none"; return; } // already in the base video
     const pr = VAnim.propsAt(l, t, ldur, cv);
     if (l.type === "video") return drawVideoLayer(v, l, pr, box, cv, T);
     const [key, extra] = spriteFor(l, T, pr);
@@ -1093,22 +1119,57 @@ function showFrame(img) {
 // drop the instant frame: the real preview is back (or the user moved on)
 function dropFrame() { if (!FRAME.active) return; FRAME.active = false; FRAME.shown = FRAME.gen; releaseFrame(); }
 video.addEventListener("play", dropFrame);
+video.addEventListener("seeked", () => {
+  if (SEL?.kind !== "layer" || TAB !== "inspector" || !video.paused) return;
+  const l = P().layers.find((x) => x.id === SEL.id);
+  const editing = $("#insp-body").contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (l && !editing) renderInspector();
+});
 // ops whose result the instant frame can show (the slow ones keep their progress card: OP_LABELS)
 function frameOp(name) { return !OVERLAY_OPS.has(name) && !OP_LABELS[name]; }
 // live drag of a clip setting: change the local copy and ask for a frame with it
 let DRAGGING = false;
 document.addEventListener("pointerdown", (e) => { if (e.target.matches?.("input[type=range]")) DRAGGING = true; }, true);
 document.addEventListener("pointerup", () => { DRAGGING = false; }, true);
-function scrubClip(c) { requestFrame(c); }
+function scrubClip(c) { if (c.type === "adjust") return; requestFrame(c); refreshScopes(c); }
+// scopes follow the frame (and the dragged values): one request in flight, the newest wins
+const SCOPES = { on: false, busy: false, next: undefined, w: null, v: null };
+function refreshScopes(clip = null) {
+  if (!SCOPES.on || !ST || !P().clips.length) return;
+  SCOPES.next = { t: video.currentTime, clip: clip ? JSON.parse(JSON.stringify(clip)) : null };
+  if (!SCOPES.busy) pumpScopes();
+}
+async function pumpScopes() {
+  const req = SCOPES.next; SCOPES.next = undefined;
+  if (!req) return;
+  SCOPES.busy = true;
+  try {
+    const get = (kind) => fetch("/api/scope", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...req, kind }) })
+      .then((r) => (r.ok ? r.blob() : null));
+    const [w, v] = await Promise.all([get("waveform"), get("vectorscope")]);
+    if (w) { if (SCOPES.w) URL.revokeObjectURL(SCOPES.w); SCOPES.w = URL.createObjectURL(w); const el = $("#scope-w"); if (el) el.src = SCOPES.w; }
+    if (v) { if (SCOPES.v) URL.revokeObjectURL(SCOPES.v); SCOPES.v = URL.createObjectURL(v); const el = $("#scope-v"); if (el) el.src = SCOPES.v; }
+  } catch {}
+  SCOPES.busy = false;
+  if (SCOPES.next) pumpScopes();
+}
+video.addEventListener("seeked", () => refreshScopes());
 async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
 function layerLabel(l) {
   if (l.type === "text") return l.text || "";
   if (l.type === "image") return (l.image || "").split(/[\\/]/).pop();
   if (l.type === "video") { const s = ST && P().sources[l.source]; return s ? sourceName(s) : l.source || ""; }
   if (l.type === "shape") return l.shape;
+  if (l.type === "adjust") return [l.grade?.look, ...(l.effects || []).filter((e) => e.type === "fx").map((e) => e.params.key), l.grade && !l.grade.look ? "colour" : null].filter(Boolean).join(" + ") || "adjustment";
   return l.words.slice(0, 6).map((w) => w.text).join(" ");
 }
 function sourceName(s) { return s.path.split(/[\\/]/).pop(); }
+// Cache keys for per-source URLs. Source ids (s1, s2...) repeat in every project, so a URL like
+// /api/source/s1/thumb.jpg alone would let the browser show another project's picture.
+function hashStr(t) { let x = 2166136261; for (let i = 0; i < t.length; i++) { x ^= t.charCodeAt(i); x = Math.imul(x, 16777619); } return (x >>> 0).toString(36); }
+function projKey() { return hashStr(ST?.project_dir || ""); }
+function mediaKey(id) { const s = P().sources[id]; return hashStr(`${ST.project_dir}|${id}|${s?.path}|${s?.duration}`); }
+function srcThumb(id) { return `/api/source/${encodeURIComponent(id)}/thumb.jpg?k=${mediaKey(id)}`; }
 
 // ---------- state ----------
 async function refresh() {
@@ -1132,9 +1193,17 @@ function selExists() {
   if (SEL.kind === "layer") return p.layers.some((l) => l.id === SEL.id);
   if (SEL.kind === "music") return p.music.some((m) => m.id === SEL.id);
   if (SEL.kind === "source") return SEL.id in p.sources;
+  if (SEL.kind === "marker") return (p.markers || []).some((m) => m.id === SEL.id);
   return false;
 }
-function select(sel) { SEL = sel; if (!(TAB === "effects" && (!sel || sel.kind === "clip"))) TAB = "inspector"; setTabs(); renderInspector(); renderTimeline(); updateCtx(); }
+function select(sel) {
+  const adj = sel?.kind === "layer" && P().layers.find((x) => x.id === sel.id)?.type === "adjust";
+  // Shift+click adds clips / layers of the same kind to a multi-selection (for paste attributes and delete)
+  if (sel && SHIFT_DOWN && SEL && SEL.kind === sel.kind && (sel.kind === "clip" || sel.kind === "layer") && sel.id !== SEL.id) {
+    MULTI.has(sel.id) ? MULTI.delete(sel.id) : MULTI.add(sel.id); SHIFT_DOWN = false; renderTimeline(); return;
+  }
+  MULTI.clear();
+  SEL = sel; if (!(TAB === "effects" && (!sel || sel.kind === "clip" || adj))) TAB = "inspector"; setTabs(); renderInspector(); renderTimeline(); updateCtx(); }
 function setStatus(r) {
   const el = $("#status");
   el.className = "pill " + (r.error ? "error" : r.status === "rendering" ? "rendering" : "ready");
@@ -1356,6 +1425,7 @@ function renderInspector() {
   else if (SEL.kind === "layer") body.append(...renderLayer(p.layers.find((l) => l.id === SEL.id)));
   else if (SEL.kind === "music") body.append(...renderMusic(p.music.find((m) => m.id === SEL.id)));
   else if (SEL.kind === "source") body.append(...renderSource(SEL.id, p.sources[SEL.id]));
+  else if (SEL.kind === "marker") body.append(...renderMarker(p.markers.find((m) => m.id === SEL.id)));
   applyPropSearch();
 }
 
@@ -1409,14 +1479,26 @@ function applyPropSearch() {
 // ---------- Effects tab: searchable filter library + signature moves ----------
 let FX = null, FX_Q = "", FX_CAT = "";
 fetch("/api/effects").then((r) => r.json()).then((d) => { FX = d; if (TAB === "effects") renderInspector(); }).catch(() => {});
-function fxTargetClip() {
+function fxTargetClip() { // a clip, or an adjustment layer (filters over a stretch of the edit)
   if (SEL?.kind === "clip") return P().clips.find((c) => c.id === SEL.id) || null;
+  if (SEL?.kind === "layer") { const l = P().layers.find((x) => x.id === SEL.id); return l?.type === "adjust" ? l : null; }
   return null;
 }
 function fxApply(key, clipId) {
   const c = clipId ? P().clips.find((x) => x.id === clipId) : fxTargetClip();
-  if (!c) { toast("Select a clip on the timeline first (or drag the effect onto one)", true); return; }
-  op("fx_add", { clip: c.id, key }).then((r) => r && toast(r.message));
+  if (!c) { toast("Select a clip (or an adjustment layer) first, or drag the effect onto a clip", true); return; }
+  op("fx_add", c.type === "adjust" ? { layer: c.id, key } : { clip: c.id, key }).then((r) => r && toast(r.message));
+}
+// Effects tab: click toggles an effect on the selected clip / adjustment layer (removes the newest copy if it's
+// there); Shift+click always adds another copy (stacking, e.g. two blurs).
+function fxToggle(key, stack) {
+  const c = fxTargetClip();
+  const mine = (c?.effects || []).filter((e) => e.type === "fx" && e.params.key === key);
+  if (c && mine.length && !stack) {
+    const id = mine[mine.length - 1].params.id;
+    return op("fx_remove", { id }).then((r) => r && toast(`Removed ${FX.filters.find((f) => f.key === key)?.label || key} from ${c.id}`));
+  }
+  fxApply(key);
 }
 function moveApply(m, clipId) {
   const c = clipId ? P().clips.find((x) => x.id === clipId) : fxTargetClip();
@@ -1435,13 +1517,14 @@ function renderEffects() {
   if (!FX) return [h("div", { class: "empty" }, "Loading effects…")];
   const c = fxTargetClip(), p = P();
   const thumbSrc = c ? c.source : p.clips[0]?.source;
-  const thumb = thumbSrc && p.sources[thumbSrc]?.has_video ? `url(/api/source/${thumbSrc}/thumb.jpg)` : "none";
+  const thumb = thumbSrc && p.sources[thumbSrc]?.has_video ? `url(${srcThumb(thumbSrc)})` : "none";
   const applied = new Map();
   (c?.effects || []).filter((e) => e.type === "fx").forEach((e) => applied.set(e.params.key, (applied.get(e.params.key) || 0) + 1));
   // every word must appear somewhere in the name, description, category or tags ("retro tape", "cinematic bars")
   const match = (txt) => FX_Q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => txt.toLowerCase().includes(w));
   const grid = h("div");
-  const card = (cls, name, about, onclick, drag, badge) => h("button", { class: `fx-card ${cls}`, title: `${about}\nClick to add to the selected clip, or drag onto a clip`,
+  const card = (cls, name, about, onclick, drag, badge) => h("button", { class: `fx-card ${cls}` + (badge && !cls.includes("fxp-move") ? " on" : ""),
+    title: badge ? `${about}\nOn this clip: click to remove it · Shift+click to add another copy` : `${about}\nClick to add to the selected clip, or drag onto a clip`,
     draggable: true, onclick, ondragstart: (e) => { e.dataTransfer.setData(drag[0], drag[1]); e.dataTransfer.effectAllowed = "copy"; } },
     h("div", { class: "fx-th", style: { "--thumb": thumb } }, h("i"), h("b"), badge ? h("span", { class: "fx-badge" }, badge) : null, cls.includes("fxp-move") ? icon("sparkle") : null),
     h("div", { class: "fx-nm" }, name), h("div", { class: "fx-ab" }, about));
@@ -1454,7 +1537,7 @@ function renderEffects() {
       if (!items.length) continue;
       n += items.length;
       grid.append(h("div", { class: "fx-cat" }, cat), h("div", { class: "fx-grid" }, items.map((f) =>
-        card(`fxp-${f.key}`, f.label, f.about, () => fxApply(f.key), ["application/x-vedit-fx", f.key], applied.get(f.key) ? `✓${applied.get(f.key) > 1 ? applied.get(f.key) : ""}` : null))));
+        card(`fxp-${f.key}`, f.label, f.about, (e) => fxToggle(f.key, e.shiftKey), ["application/x-vedit-fx", f.key], applied.get(f.key) ? `✓${applied.get(f.key) > 1 ? applied.get(f.key) : ""}` : null))));
     }
     if (!FX_CAT || FX_CAT === "Signature moves") {
       const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} signature move`));
@@ -1470,9 +1553,12 @@ function renderEffects() {
     oninput: (e) => { FX_Q = e.target.value; draw(); } });
   const chips = h("div", { class: "fp-chips" }, ["", ...FX.categories, "Signature moves"].map((cat) =>
     h("button", { class: "fp-chip" + (FX_CAT === cat ? " on" : ""), onclick: (e) => { FX_CAT = cat; e.target.parentNode.querySelectorAll(".fp-chip").forEach((b) => b.classList.toggle("on", b === e.target)); draw(); } }, cat || "All")));
-  const target = h("div", { class: "fx-target" }, c ? ["Adding to ", h("b", {}, `clip ${c.id}`), ` · ${(c.effects || []).filter((e) => e.type === "fx").length} effect(s) on it`]
+  const target = h("div", { class: "fx-target" }, c ? ["Adding to ", h("b", {}, `${c.type === "adjust" ? "adjustment layer" : "clip"} ${c.id}`), ` · ${(c.effects || []).filter((e) => e.type === "fx").length} effect(s) on it`]
     : "Select a clip on the timeline, or drag an effect onto one.");
-  const all = c ? null : h("button", { class: "ghost", disabled: !p.clips.length, title: "Choose an effect, then add it to every clip",
+  const nFx = (c?.effects || []).filter((e) => e.type === "fx").length;
+  const all = c ? (nFx ? h("button", { class: "ghost danger", title: `Remove every effect from ${c.id}`,
+    onclick: async () => { for (const e of c.effects.filter((x) => x.type === "fx")) await op("fx_remove", { id: e.params.id }); toast(`Removed all effects from ${c.id}`); } }, "Remove all") : null)
+    : h("button", { class: "ghost", disabled: !p.clips.length, title: "Choose an effect, then add it to every clip",
     onclick: () => { const k = prompt("Effect to add to every clip (e.g. film, vignette, grain):", "film"); if (k) op("fx_add", { key: k.trim() }); } }, "Add to all clips…");
   draw();
   setTimeout(() => { if (TAB === "effects" && document.activeElement === document.body) search.focus(); });
@@ -1489,6 +1575,19 @@ function paletteItems() {
   act("Redo", "⇧⌘Z", () => $("#b-redo").click());
   act("Export…", "", () => openExport());
   act("Balance layout", "⇧0", () => setLayout(0.5, 0.5));
+  act("Add marker", "M", () => addMarker());
+  act("Add adjustment layer", "", () => overlayAdd({ op: "layer_add_adjust", a: {} }));
+  act("Save version…", "", () => saveVersion());
+  for (const t of TPL) items.push({ k: "Template", t: t.name, d: t.about || `${t.layers} layer(s)`, run: () => overlayAdd({ op: "template_apply", a: { key: t.key } }) });
+  act("Copy YouTube chapters", "", () => copyChapters());
+  act(SNAP_ON ? "Snapping off" : "Snapping on", "N", () => { toggleSnap(); renderTimeline(); });
+  act("Mark in", "I", () => setMark("in"));
+  act("Mark out", "O", () => setMark("out"));
+  act("Remove in–out range", "X", () => extractMarked());
+  act("Trim clip start to playhead", "Q", () => op("trim_to", { at: video.currentTime, side: "start" }));
+  act("Trim clip end to playhead", "W", () => op("trim_to", { at: video.currentTime, side: "end" }));
+  act("Keyboard shortcuts", "?", () => showShortcuts());
+  for (const m of P().markers || []) items.push({ k: "Marker", t: m.label || m.id, d: fmt(m.t), run: () => { seek(m.t); select({ kind: "marker", id: m.id }); } });
   act(liveMode() ? "Preview: switch to Final render" : "Preview: switch to Live", "", () => $("#t-mode").click());
   act("Open Effects", "", () => { TAB = "effects"; setTabs(); renderInspector(); });
   act("Open Media", "", () => { TAB = "media"; setTabs(); renderInspector(); });
@@ -1538,7 +1637,17 @@ function openPalette() {
 }
 
 // ---------- Overlays tab: the overlay library, shapes, and your own videos as picture-in-picture ----------
-let OVL = null, OVL_Q = "";
+let OVL = null, OVL_Q = "", TPL = [];
+function loadTemplates() { return fetch("/api/templates").then((r) => r.json()).then((d) => { TPL = d.templates; }).catch(() => {}); }
+loadTemplates();
+async function saveTemplate(l) {
+  const ids = [l.id, ...MULTI].filter((x, i, a) => a.indexOf(x) === i);
+  const name = prompt(`Save ${ids.length > 1 ? `${ids.length} layers (${ids.join(", ")})` : l.id} as a template named:`, "");
+  if (!name) return;
+  const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, layers: ids }) });
+  if (!r.ok) { let d = "Could not save"; try { d = (await r.json()).detail; } catch {} return toast(d, true); }
+  await loadTemplates(); toast(`Saved template “${name}” — find it in the Overlays tab`);
+}
 fetch("/api/overlays").then((r) => r.json()).then((d) => { OVL = d.library; if (TAB === "overlays") renderInspector(); }).catch(() => {});
 const SHAPES = [["rect", "Box", "Dark rounded box (behind a title)"], ["ellipse", "Ring", "Ring around a detail"], ["line", "Line", "Underline / divider"], ["arrow", "Arrow", "Point at something"]];
 function overlayAdd(args) { return op(args.op, { start: +video.currentTime.toFixed(3), ...args.a }).then((r) => r && toast(r.message)); }
@@ -1561,9 +1670,22 @@ function renderOverlays() {
       .filter((x) => match(`${x.n} ${x.a} shape`));
     if (shapes.length) grid.append(h("div", { class: "fx-cat" }, "Shapes"), h("div", { class: "fx-grid" }, shapes.map((x) =>
       card({ background: "linear-gradient(135deg, #1b2a2c, #24383a)" }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), null, "shape"))));
+    if (match("adjustment layer grade colour look filter stretch section")) grid.append(h("div", { class: "fx-cat" }, "Adjustment"), h("div", { class: "fx-grid" },
+      card({ background: "repeating-linear-gradient(135deg, #33304a 0 10px, #2a2f3a 10px 20px)" }, "Adjustment layer",
+        "Colour or filters for a stretch of the edit, on everything under it", () => overlayAdd({ op: "layer_add_adjust", a: {} }).then(() => {
+          const l = P().layers[P().layers.length - 1]; if (l?.type === "adjust") select({ kind: "layer", id: l.id }); }), null, "sliders")));
+    const tpls = TPL.filter((t) => match(`${t.name} ${t.about} ${t.types.join(" ")} template`));
+    if (tpls.length) grid.append(h("div", { class: "fx-cat" }, "Your templates"), h("div", { class: "fx-grid" }, tpls.map((t) => {
+      const c = card({ background: "linear-gradient(135deg, #2a2413, #4a3c18)" }, t.name, t.about || `${t.layers} layer(s): ${t.types.join(", ")}`,
+        () => overlayAdd({ op: "template_apply", a: { key: t.key } }), t.length ? `${(+t.length).toFixed(1)}s` : null, "layers");
+      c.addEventListener("contextmenu", async (e) => { e.preventDefault();
+        if (confirm(`Delete template “${t.name}”?`)) { await fetch(`/api/templates/${encodeURIComponent(t.key)}`, { method: "DELETE" }); await loadTemplates(); renderInspector(); } });
+      c.title += " · right-click to delete";
+      return c;
+    })));
     const vids = Object.entries(p.sources).filter(([, s]) => s.has_video && !/[\\/]overlays[\\/]/.test(s.path) && match(`${sourceName(s)} video picture in picture pip`));
     grid.append(h("div", { class: "fx-cat" }, "Your videos · picture-in-picture"), vids.length ? h("div", { class: "fx-grid" }, vids.map(([id, s]) =>
-      card({ background: `#000 url(/api/source/${id}/thumb.jpg) center / cover no-repeat` }, sourceName(s), `${fmt(s.duration)} · as an overlay, lower right`,
+      card({ background: `#000 url(${srcThumb(id)}) center / cover no-repeat` }, sourceName(s), `${fmt(s.duration)} · as an overlay, lower right`,
         () => overlayAdd({ op: "layer_add_video", a: { source: id } }), "PiP")))
       : h("div", { class: "empty" }, "Import a video (Media tab or drop it here) to put it on top as picture-in-picture."));
   };
@@ -1606,7 +1728,7 @@ function fxStack(c) {
     h("div", { class: "fxs" }, items.length ? items : h("span", { class: "hint" }, "No effects yet."),
       h("div", { class: "btnrow" },
         h("button", { onclick: () => { TAB = "effects"; setTabs(); renderInspector(); } }, "＋ Add effect"),
-        items.length && P().clips.length > 1 ? h("button", { class: "ghost", title: "Give every clip this clip's effects (replaces theirs)",
+        items.length && P().clips.length > 1 && c.type !== "adjust" ? h("button", { class: "ghost", title: "Give every clip this clip's effects (replaces theirs)",
           onclick: () => op("fx_copy", { clip: c.id, to: "all" }) }, "Copy to all clips") : null))];
 }
 
@@ -1706,7 +1828,7 @@ function renderMedia() {
     return h("div", { class: "src" + (SEL?.id === id ? " sel" : ""), draggable: true, title: `${sourceName(s)} · ${fmt(s.duration)} — drag onto the timeline`,
       onclick: () => select({ kind: "source", id }),
       ondragstart: (e) => { e.dataTransfer.setData("application/x-vedit-source", id); e.dataTransfer.effectAllowed = "copy"; } },
-      h("div", { class: "th", style: s.has_video ? { backgroundImage: `url(/api/source/${id}/thumb.jpg)` } : {} },
+      h("div", { class: "th", style: s.has_video ? { backgroundImage: `url(${srcThumb(id)})` } : {} },
         s.has_video ? "" : icon("wave"),
         kind ? h("span", { class: "kind" }, icon(kind)) : "",
         s.duration > 0.05 ? h("span", { class: "dur" }, fmt(s.duration)) : ""),
@@ -1730,6 +1852,11 @@ function renderClip(c) {
       field("Speed", selectIn(String(c.speed), [["0.25", "0.25× slow-mo"], ["0.5", "0.5×"], ["0.75", "0.75×"], ["1", "1× normal"], ["1.25", "1.25×"], ["1.5", "1.5×"], ["2", "2×"], ["3", "3×"], ["4", "4×"]]
         .concat([["0.25", "0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"].includes(String(c.speed)) ? [] : [[String(c.speed), `${c.speed}×`]]]), (v) => set({ speed: v }))),
       field("Volume", rangeIn(c.volume, 0, 2, 0.05, (v) => set({ volume: v }))),
+      field("Sound fades", h("div", { class: "pair", title: "Fade this clip's sound in / out (seconds). The picture is unchanged." },
+        numIn(c.fade_in || 0, (v) => set({ fade_in: v }), 0.1, { min: 0, max: 5, title: "Fade in (s)" }),
+        numIn(c.fade_out || 0, (v) => set({ fade_out: v }), 0.1, { min: 0, max: 5, title: "Fade out (s)" }))),
+      field("Voice", selectIn(c.voice || "off", [["off", "As recorded"], ["clean", "Clean (rumble, hiss, level)"], ["studio", "Studio (clean + warm, clear, de-essed)"]],
+        (v) => set({ voice: v }))),
       field("Fit", selectIn(c.fit, [["cover", "Fill (crop)"], ["contain", "Fit (bars)"], ["blur", "Fit + blurred bg"]], (v) => set({ fit: v }))),
       field("Zoom", rangeIn(c.zoom, 1, 2, 0.01, (v) => set({ zoom: v }), (v) => { c.zoom = v; scrubClip(c); })),
       field("Zoom to", h("div", { class: "pair" }, numIn(c.zoom_to ?? "", (v) => set({ zoom_to: v === "" ? null : v }), 0.05, { placeholder: "none", min: 1, max: 3 }), h("span", { class: "hint" }, "slow zoom"))),
@@ -1797,6 +1924,10 @@ function colorFields(c) {
     field("Saturation", rangeIn(g.saturation ?? 1, 0, 2, 0.01, adj("saturation"), live("saturation"))),
     field("Warmth", rangeIn(g.temperature ?? 0, -1, 1, 0.01, adj("temperature"), live("temperature"))),
     field("Tint", rangeIn(g.tint ?? 0, -1, 1, 0.01, adj("tint"), live("tint"))),
+    field("Scopes", h("label", { class: "aa-toggle", style: { margin: 0 } }, h("input", { type: "checkbox", checked: SCOPES.on,
+      onchange: (e) => { SCOPES.on = e.target.checked; renderInspector(); if (SCOPES.on) refreshScopes(); } }), "Waveform + vectorscope of this frame")),
+    SCOPES.on ? h("div", { class: "scopes" }, h("img", { id: "scope-w", alt: "waveform", width: 360, height: 200, src: SCOPES.w || "" }),
+      h("img", { id: "scope-v", alt: "vectorscope", width: 220, height: 220, src: SCOPES.v || "" })) : null,
     c.grade ? field("", h("div", { class: "pair" },
       h("button", { class: "ghost", onclick: () => op("color_clear", { clip: c.id }) }, "Reset this clip"),
       h("button", { class: "ghost", onclick: () => op("color_clear", { all: true }) }, "Reset all clips"))) : null,
@@ -1814,11 +1945,73 @@ function effectLabel(e) {
   return e.type.replace("_", " ");
 }
 
+function renderAdjust(l) {
+  const set = (args) => op("layer_set", { layer: l.id, ...args });
+  const g = l.grade || {}, grade = (k) => (v) => op("layer_grade", { layer: l.id, [k]: v });
+  const looks = TYPO?.color_looks || [{ name: "natural", about: "" }];
+  return [
+    crumb("Layers", l.id),
+    h("p", { class: "hint", style: { margin: "0 0 10px" } }, "An adjustment layer changes everything under it (clips and the layers below) for its time range: a black & white flashback, a warm ending, a shared look."),
+    h("div", { class: "fields" },
+      field("Start / end", h("div", { class: "pair" }, numIn(l.start.toFixed(2), (v) => set({ start: v }), 0.05, { min: 0 }),
+        numIn(l.end == null ? "" : l.end.toFixed(2), (v) => set({ end: v }), 0.05, { placeholder: "end" }))),
+      ...fxStack(l),
+      h("label", { class: "full sec" }, "Colour"),
+      field("Look", selectIn(g.look || "natural", looks.map((x) => [x.name, x.name.replace(/-/g, " ")]), (v) => op("layer_grade", { layer: l.id, look: v, intensity: g.intensity ?? 1 }))),
+      g.look ? field("Look strength", rangeIn(g.intensity ?? 1, 0, 1, 0.05, grade("intensity"))) : null,
+      field("Brightness", rangeIn(g.brightness ?? 0, -0.3, 0.3, 0.01, grade("brightness"))),
+      field("Contrast", rangeIn(g.contrast ?? 1, 0.5, 1.6, 0.01, grade("contrast"))),
+      field("Saturation", rangeIn(g.saturation ?? 1, 0, 2, 0.01, grade("saturation"))),
+      field("Warmth", rangeIn(g.temperature ?? 0, -1, 1, 0.01, grade("temperature"))),
+      field("Tint", rangeIn(g.tint ?? 0, -1, 1, 0.01, grade("tint"))),
+      l.grade ? field("", h("button", { class: "ghost", onclick: () => op("layer_grade", { layer: l.id, clear: true }) }, "Reset colour")) : null),
+    h("div", { class: "btnrow" },
+      h("button", { onclick: () => { video.currentTime = l.start; } }, "Go to layer"),
+      h("button", { class: "danger", onclick: () => op("layer_remove", { layer: l.id }) }, "Delete layer")),
+  ];
+}
+
 function renderLayer(l) {
+  if (l.type === "adjust") return renderAdjust(l);
   const set = (args) => op("layer_set", { layer: l.id, ...args });
   const st = (k) => (v) => set({ style: { [k]: v } });
   // live: change the local copy so the overlay redraws now; the commit on release/blur saves it
   const lv = (k) => (v) => { l[k] = v; };
+  // keyframes: a property that has keyframes is edited at the playhead (◆ adds / removes one there)
+  const T = video.currentTime, local = T - l.start, ldur = Math.max(0.01, layerEnd(l) - l.start);
+  const prNow = VAnim.propsAt(l, Math.max(0, Math.min(local, ldur)), ldur, P().canvas);
+  const kfHas = (k) => l.keyframes.some((x) => x[k] != null);
+  const kfAt = (k) => l.keyframes.find((x) => Math.abs(x.t - local) <= 0.02 && x[k] != null);
+  const kv = (k) => (kfHas(k) ? (k === "x" || k === "y" ? Math.round(prNow[k]) : +prNow[k].toFixed(3)) : l[k]);
+  // always the playhead *now* (the panel may have been drawn before a seek)
+  const setP = (k, v) => (kfHas(k) ? op("keyframe_set", { layer: l.id, t: +video.currentTime.toFixed(3), prop: k, value: v }) : set({ [k]: v }));
+  const liveP = (k) => (v) => {
+    if (!kfHas(k)) return lv(k)(v);
+    const now = video.currentTime - l.start;
+    let x = l.keyframes.find((q) => Math.abs(q.t - now) <= 0.02);
+    if (!x) { x = { t: +now.toFixed(3), ease: "ease_in_out" }; l.keyframes.push(x); l.keyframes.sort((a, b) => a.t - b.t); }
+    x[k] = v;
+  };
+  const inside = local >= 0 && local <= ldur;
+  const kfLabel = (name, props) => {
+    const on = props.every((k) => kfAt(k)), has = props.some((k) => kfHas(k));
+    const btn = h("button", { class: "kfb" + (on ? " on" : has ? " has" : ""), disabled: !inside,
+      title: !inside ? "Move the playhead over this layer to keyframe it" : on ? `Remove the ${name.toLowerCase()} keyframe at the playhead` :
+        `Keyframe ${name.toLowerCase()} at the playhead (${fmt(T)})` + (has ? "" : ": from now on this value animates"),
+      onclick: async (e) => {
+        e.preventDefault();
+        if (on) {
+          const at = +(l.start + kfAt(props[0]).t).toFixed(3);
+          for (const k of props) await op("keyframe_remove", { layer: l.id, t: at, prop: k });
+          return;
+        }
+        const now = +video.currentTime.toFixed(3), loc = Math.max(0, Math.min(now - l.start, ldur));
+        const cur = VAnim.propsAt(l, loc, ldur, P().canvas);
+        for (const k of props) await op("keyframe_set", { layer: l.id, t: now, prop: k,
+          value: kfHas(k) ? (k === "x" || k === "y" ? Math.round(cur[k]) : +cur[k].toFixed(3)) : l[k] });
+      } }, on ? "◆" : "◇");
+    return h("label", { title: has ? "Animated: changes here set the value at the playhead" : "" }, name, btn);
+  };
   const lst = (k) => (v) => { l.style[k] = v; markDirty(l); };
   const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "punch", "spin_in", "drop_in", "typewriter", "fade_out", "pop_out", "slide_out", "shake", "bob", "pulse", "wiggle", "spin"];
   const s = l.style;
@@ -1881,11 +2074,12 @@ function renderLayer(l) {
       l.type === "image" ? field("Image", h("span", { class: "hint" }, layerLabel(l))) : [],
       field("Start / end", h("div", { class: "pair" }, numIn(l.start.toFixed(2), (v) => set({ start: v }), 0.05, { min: 0 }),
         numIn(l.end == null ? "" : l.end.toFixed(2), (v) => set({ end: v }), 0.05, { placeholder: "end" }))),
-      field("Position", h("div", { class: "pair" }, textIn(l.x, (v) => set({ x: v }), { title: "x: px or %" }, (v) => !isNaN(parseFloat(v)) && lv("x")(v)),
-        textIn(l.y, (v) => set({ y: v }), { title: "y: px or %" }, (v) => !isNaN(parseFloat(v)) && lv("y")(v)))),
-      field("Scale", rangeIn(l.scale, 0.2, 3, 0.05, (v) => set({ scale: v }), lv("scale"))),
-      field("Rotation", rangeIn(l.rotation, -180, 180, 1, (v) => set({ rotation: v }), lv("rotation"))),
-      field("Opacity", rangeIn(l.opacity, 0, 1, 0.05, (v) => set({ opacity: v }), lv("opacity"))),
+      [kfLabel("Position", ["x", "y"]), h("div", { class: "pair" },
+        textIn(kv("x"), (v) => setP("x", v), { title: "x: px or %" }, (v) => !isNaN(parseFloat(v)) && liveP("x")(v)),
+        textIn(kv("y"), (v) => setP("y", v), { title: "y: px or %" }, (v) => !isNaN(parseFloat(v)) && liveP("y")(v)))],
+      [kfLabel("Scale", ["scale"]), rangeIn(kv("scale"), 0.2, 3, 0.05, (v) => setP("scale", v), liveP("scale"))],
+      [kfLabel("Rotation", ["rotation"]), rangeIn(kv("rotation"), -180, 180, 1, (v) => setP("rotation", v), liveP("rotation"))],
+      [kfLabel("Opacity", ["opacity"]), rangeIn(kv("opacity"), 0, 1, 0.05, (v) => setP("opacity", v), liveP("opacity"))],
       ...styleFields,
       ...frameFields,
       field("Animation", h("div", { class: "chips" },
@@ -1900,8 +2094,35 @@ function renderLayer(l) {
         h("button", { class: "ghost", title: "Send backward", onclick: () => op("layer_move", { layer: l.id, to: "down" }) }, "↓"),
         h("button", { class: "ghost", title: "Send to back", onclick: () => op("layer_move", { layer: l.id, to: "back" }) }, "⤓")),
       h("button", { class: "danger", onclick: () => op("layer_remove", { layer: l.id }) }, "Delete layer"),
+      l.type !== "captions" ? h("button", { title: "Reuse this layer (Shift+click more layers first to include them) in any project", onclick: () => saveTemplate(l) }, "Save as template…") : null,
       h("button", { onclick: () => askAbout(`layer ${l.id}`) }, "Ask AI to animate…")),
   ];
+}
+
+function renderMarker(m) {
+  const set = (args) => op("marker_set", { id: m.id, ...args });
+  const colours = ["#FBBF24", "#F87171", "#4ADE80", "#60A5FA", "#C084FC", "#F472B6"];
+  return [
+    crumb("Markers", m.id),
+    h("div", { class: "fields" },
+      field("Label", textIn(m.label, (v) => set({ label: v }), { placeholder: "e.g. Intro, Hook, Demo (labels become chapters)" })),
+      field("Time", numIn(m.t.toFixed(2), (v) => set({ t: v }), 0.05, { min: 0 })),
+      field("Colour", h("div", { class: "chips" }, colours.map((c) => h("button", { class: "ghost", title: c,
+        style: { width: "24px", height: "24px", padding: 0, background: c, borderColor: c === m.color ? "var(--text)" : "transparent" }, onclick: () => set({ color: c }) }))))),
+    h("div", { class: "btnrow" },
+      h("button", { onclick: () => seek(m.t) }, "Go to marker"),
+      h("button", { title: "YouTube chapters from the labelled markers, ready for the description", onclick: copyChapters }, "Copy YouTube chapters"),
+      h("button", { class: "danger", onclick: () => op("marker_remove", { id: m.id }) }, "Delete marker")),
+  ];
+}
+function copyChapters() {
+  const ms = (P().markers || []).filter((m) => m.label).sort((a, b) => a.t - b.t);
+  if (!ms.length) return toast("Label some markers first (they become the chapter titles)", true);
+  const ts = (t) => { t = Math.floor(t); const hh = Math.floor(t / 3600), mm = Math.floor((t % 3600) / 60), ss = t % 60;
+    return hh ? `${hh}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${mm}:${String(ss).padStart(2, "0")}`; };
+  const lines = ms.map((m, i) => `${ts(i ? m.t : 0)} ${m.label}`);
+  copyText(lines.join("\n"));
+  toast(ms.length < 3 ? "Copied — note: YouTube needs at least 3 chapters" : `Copied ${ms.length} chapters`);
 }
 
 function renderMusic(m) {
@@ -1922,7 +2143,7 @@ function renderSource(id, s) {
   const used = P().clips.filter((c) => c.source === id).length;
   return [
     crumb("Media", id),
-    s.has_video ? h("img", { src: `/api/source/${id}/thumb.jpg`, style: { width: "100%", borderRadius: "8px", marginBottom: "10px" } }) : "",
+    s.has_video ? h("img", { src: srcThumb(id), style: { width: "100%", borderRadius: "8px", marginBottom: "10px" } }) : "",
     h("div", { class: "fields" },
       field("File", h("span", { style: { wordBreak: "break-all" } }, s.path)),
       field("Length", h("span", {}, `${s.duration.toFixed(2)}s`)),
@@ -1938,11 +2159,24 @@ function renderSource(id, s) {
   ];
 }
 
+let HIST_VERSIONS_ONLY = false;
+async function saveVersion() {
+  const name = prompt("Name this version (e.g. “sent to client”, “v2 shorter”):", "");
+  if (name === null) return;
+  const r = await fetch("/api/version", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  if (r.ok) { toast(`Saved version “${(await r.json()).name}”`); await refresh(); } else toast("Could not save the version", true);
+}
 function renderHistory() {
   const cur = (ST.history.find((x) => x.current) || {}).step;
-  return h("ul", { id: "hist" }, ST.history.slice().reverse().map((e) =>
-    h("li", { class: e.current ? "current" : e.step > cur ? "future" : "", onclick: () => api(`/api/checkout/${e.step}`).then(refresh), title: "Jump to this version" },
-      h("span", { class: "n" }, e.step), h("span", {}, e.message))));
+  const rows = ST.history.slice().reverse().filter((e) => !HIST_VERSIONS_ONLY || e.version);
+  return h("div", {},
+    h("div", { class: "sec-h" }, h("div", { class: "btnrow", style: { margin: 0 } },
+      h("button", { onclick: saveVersion, title: "Bookmark the edit as it is now; click it here to come back" }, "★ Save version…"),
+      h("label", { class: "aa-toggle" }, h("input", { type: "checkbox", checked: HIST_VERSIONS_ONLY, onchange: (e) => { HIST_VERSIONS_ONLY = e.target.checked; renderInspector(); } }), "Versions only"))),
+    h("ul", { id: "hist" }, rows.length ? rows.map((e) =>
+      h("li", { class: e.current ? "current" : e.step > cur ? "future" : "", onclick: () => api(`/api/checkout/${e.step}`).then(refresh), title: "Jump to this version" },
+        h("span", { class: "n" }, e.step), e.version ? h("span", {}, h("b", { style: { color: "var(--sel)" } }, `★ ${e.version}`), h("span", { class: "hint" }, `  ${e.message}`)) : h("span", {}, e.message)))
+      : h("li", { class: "empty" }, "No named versions in the recent history yet.")));
 }
 
 // ---------- preview (pane 2) ----------
@@ -2465,11 +2699,14 @@ const LANES = { ruler: 24, clips: 66, wave: 34, layer: 28 };
 function timeAt(clientX) { const r = $("#tl-inner").getBoundingClientRect(); return Math.max(0, (clientX - r.left) / PPS); }
 function seek(t) { dropFrame(); video.currentTime = Math.max(0, Math.min(dur(), t)); updateTC(); updateCtx(); }
 function snapPoints(exclude) {
-  const pts = [0, dur(), video.currentTime, ...ST.starts];
+  const pts = [0, dur(), video.currentTime, ...ST.starts, ...(P().markers || []).map((m) => m.t)];
+  if (MARK.in != null) pts.push(MARK.in);
+  if (MARK.out != null) pts.push(MARK.out);
   for (const l of P().layers) if (l.id !== exclude) pts.push(l.start, layerEnd(l));
   return pts;
 }
 function snap(t, exclude) {
+  if (!SNAP_ON) return t;
   const tol = 8 / PPS; let best = t, bd = tol;
   for (const p of snapPoints(exclude)) { const d = Math.abs(p - t); if (d < bd) { bd = d; best = p; } }
   return best;
@@ -2498,6 +2735,23 @@ function renderTimeline() {
     ruler.append(h("div", { class: "tick", style: { left: `${t * PPS}px` } }, lab));
     if (stepS * PPS > 140) ruler.append(h("div", { class: "tick minor", style: { left: `${(t + stepS / 2) * PPS}px` } }));
   }
+  if (MARK.in != null || MARK.out != null) {
+    const a = MARK.in ?? 0, b = MARK.out ?? D;
+    ruler.append(h("div", { class: "io", title: `In ${fmt(a)} · Out ${fmt(b)} (X removes it)`, style: { left: `${a * PPS}px`, width: `${Math.max(2, (b - a) * PPS)}px` } }));
+  }
+  for (const m of p.markers || []) {
+    const el = h("div", { class: "mk" + (SEL?.kind === "marker" && SEL.id === m.id ? " sel" : ""), title: `${m.label || m.id} · ${fmt(m.t)} (click to edit, drag to move)`,
+      style: { left: `${m.t * PPS}px`, "--c": m.color } });
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation(); el.setPointerCapture(e.pointerId);
+      const x0 = e.clientX; let moved = false, nt = m.t;
+      const mv = (ev) => { if (Math.abs(ev.clientX - x0) > 3) moved = true; if (!moved) return; nt = Math.max(0, Math.min(D, snap(m.t + (ev.clientX - x0) / PPS))); el.style.left = `${nt * PPS}px`; };
+      el.addEventListener("pointermove", mv);
+      el.addEventListener("pointerup", () => { el.removeEventListener("pointermove", mv);
+        if (moved) op("marker_set", { id: m.id, t: +nt.toFixed(3) }); else { seek(m.t); select({ kind: "marker", id: m.id }); } }, { once: true });
+    });
+    ruler.append(el);
+  }
   ruler.addEventListener("pointerdown", (e) => {
     seek(timeAt(e.clientX)); ruler.setPointerCapture(e.pointerId);
     const mv = (ev) => seek(timeAt(ev.clientX));
@@ -2509,8 +2763,8 @@ function renderTimeline() {
   const vl = lane("clips", LANES.clips, "film", "Video", "", "var(--clip-b)");
   p.clips.forEach((c, i) => {
     const s = ST.starts[i], d = clipDur(c);
-    const b = h("div", { class: "blk clip" + (SEL?.id === c.id ? " sel" : ""), title: `${c.id} · ${fmt(s)}–${fmt(s + d)}`,
-      style: { left: `${s * PPS}px`, width: `${Math.max(6, d * PPS - 2)}px`, backgroundImage: `url(/api/source/${c.source}/thumb.jpg)` } },
+    const b = h("div", { class: "blk clip" + (SEL?.id === c.id ? " sel" : "") + (MULTI.has(c.id) ? " multi" : ""), title: `${c.id} · ${fmt(s)}–${fmt(s + d)}`,
+      style: { left: `${s * PPS}px`, width: `${Math.max(6, d * PPS - 2)}px`, backgroundImage: `url(${srcThumb(c.source)})` } },
       h("div", { class: "hd l" }), h("div", { class: "hd r" }),
       h("div", { class: "bl" }, h("span", { class: "nm" }, sourceName(p.sources[c.source])),
         c.speed !== 1 ? h("span", { class: "badge", title: "Speed" }, icon("gauge"), `${c.speed}×`) : "",
@@ -2531,19 +2785,20 @@ function renderTimeline() {
 
   // audio waveform
   const wl = lane("wave", LANES.wave, "wave", "Audio", "", "var(--muted)");
-  if (D) wl.style.backgroundImage = `url(/media/wave.png?v=${ST.render.version})`;
+  if (D) wl.style.backgroundImage = `url(/media/wave.png?v=${ST.render.version}&k=${projKey()})`;
   wl.style.backgroundSize = `${D * PPS}px 100%`;
   wl.addEventListener("pointerdown", (e) => seek(timeAt(e.clientX)));
 
   // overlay layers (top layer first, like most editors)
   [...p.layers].reverse().forEach((l) => {
     const meta = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
-      video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"] }[l.type];
+      video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"] }[l.type];
     const el = lane("", LANES.layer, meta[0], meta[1], l.id, meta[2]);
     const s = l.start, e = layerEnd(l);
-    const b = h("div", { class: `blk ${l.type}` + (SEL?.id === l.id ? " sel" : ""), title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}`,
+    const b = h("div", { class: `blk ${l.type}` + (SEL?.id === l.id ? " sel" : "") + (MULTI.has(l.id) ? " multi" : ""), title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}`,
       style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px` } },
       h("div", { class: "hd l" }), h("div", { class: "hd r" }),
+      l.keyframes.map((k) => h("span", { class: "kf", title: `keyframe at ${fmt(s + k.t)}`, style: { left: `${k.t * PPS}px` } })),
       h("div", { class: "bl" }, icon(meta[0]), h("span", { class: "nm" }, layerLabel(l) || l.id),
         l.presets.length ? h("span", { class: "badge", title: l.presets.map((x) => x.name).join(", ") }, icon("sparkle"), l.presets.length) : "",
         l.blend && l.blend !== "normal" ? h("span", { class: "badge blend", title: `Blend: ${l.blend}` }, l.blend) : ""));
@@ -2723,9 +2978,15 @@ $("#b-fit").onclick = () => fitZoom();
 function zoomBy(f) { PPS = Math.max(15, Math.min(400, PPS * f)); $("#zoom").value = PPS; renderTimeline(); }
 $("#b-zin").onclick = () => zoomBy(1.25);
 $("#b-zout").onclick = () => zoomBy(1 / 1.25);
-function deleteSelected() {
+async function deleteSelected() {
   if (!SEL) return toast("Select a clip, layer or music track first");
-  if (SEL.kind === "clip") op("remove_clip", { clip: SEL.id });
+  if (MULTI.size && (SEL.kind === "clip" || SEL.kind === "layer")) {
+    const ids = [SEL.id, ...MULTI]; MULTI.clear();
+    for (const id of ids) await op(SEL.kind === "clip" ? "remove_clip" : "layer_remove", SEL.kind === "clip" ? { clip: id } : { layer: id });
+    return;
+  }
+  if (SEL.kind === "marker") op("marker_remove", { id: SEL.id });
+  else if (SEL.kind === "clip") op("remove_clip", { clip: SEL.id });
   else if (SEL.kind === "layer") op("layer_remove", { layer: SEL.id });
   else if (SEL.kind === "music") op("music_remove", { music: SEL.id });
 }
@@ -2919,6 +3180,87 @@ try {
   const l = JSON.parse(localStorage.getItem("cc-layout-v2") || "null");
   if (l && l.col > 0.1 && l.col < 0.9 && l.row > 0.1 && l.row < 0.9) setLayout(l.col, l.row, false);
 } catch {}
+
+// ---------- editing tools: snapping, in/out marks, markers, multi-select, copy/paste attributes, shuttle ----------
+let SNAP_ON = true, MARK = { in: null, out: null }, MULTI = new Set(), CLIP_ATTRS = null, SHIFT_DOWN = false;
+document.addEventListener("pointerdown", (e) => { SHIFT_DOWN = e.shiftKey; }, true);
+function toggleSnap() { SNAP_ON = !SNAP_ON; toast(SNAP_ON ? "Snapping on" : "Snapping off"); }
+function editPoints() { // cuts, layer edges and markers, for Up / Down
+  const p = P(), pts = new Set([0, dur(), ...ST.starts]);
+  for (const l of p.layers) { pts.add(l.start); pts.add(layerEnd(l)); }
+  for (const m of p.markers || []) pts.add(m.t);
+  return [...pts].sort((a, b) => a - b);
+}
+function jumpEdit(dir) {
+  const t = video.currentTime, pts = editPoints();
+  const nx = dir > 0 ? pts.find((x) => x > t + 1e-3) : [...pts].reverse().find((x) => x < t - 1e-3);
+  if (nx != null) seek(nx);
+}
+function setMark(which) {
+  MARK[which] = +video.currentTime.toFixed(3);
+  if (MARK.in != null && MARK.out != null && MARK.out < MARK.in) [MARK.in, MARK.out] = [MARK.out, MARK.in];
+  renderTimeline(); toast(`${which === "in" ? "In" : "Out"} at ${fmt(MARK[which])}`);
+}
+function extractMarked() { // ripple-delete the in/out range
+  if (MARK.in == null || MARK.out == null || MARK.out - MARK.in < 0.05) return toast("Set an In (I) and an Out (O) point first", true);
+  const a = MARK.in, b = MARK.out; MARK = { in: null, out: null };
+  op("delete_range", { from: a, to: b }).then((r) => r && toast(`Removed ${fmt(b - a)}`));
+}
+function addMarker() {
+  op("marker_add", { t: +video.currentTime.toFixed(3) }).then((r) => {
+    if (!r) return; const m = P().markers.find((x) => Math.abs(x.t - video.currentTime) < 0.01);
+    if (m) select({ kind: "marker", id: m.id });
+  });
+}
+// shuttle: L forward (press again: 2x, 4x), J backward, K stop
+const SHUTTLE = { rate: 0, timer: null };
+function shuttle(dir) {
+  clearInterval(SHUTTLE.timer); SHUTTLE.timer = null;
+  if (dir === 0) { SHUTTLE.rate = 0; video.pause(); video.playbackRate = 1; return; }
+  SHUTTLE.rate = Math.sign(SHUTTLE.rate) === dir ? Math.max(-4, Math.min(4, SHUTTLE.rate * 2)) : dir;
+  if (SHUTTLE.rate > 0) { video.playbackRate = SHUTTLE.rate; video.play(); }
+  else { // browsers can't play backwards: step back frame by frame
+    video.pause(); video.playbackRate = 1;
+    const step = 1 / 15;
+    SHUTTLE.timer = setInterval(() => { if (video.currentTime <= 0) return shuttle(0); video.currentTime = Math.max(0, video.currentTime + SHUTTLE.rate * step); updateTC(); }, step * 1000);
+  }
+  toast(`${SHUTTLE.rate > 0 ? "▶" : "◀"} ${Math.abs(SHUTTLE.rate)}×`);
+}
+// copy / paste attributes (Cmd+C / Cmd+V on a selected clip or layer)
+const ATTR_GROUPS = { clip: [["colour", "Colour"], ["effects", "Effects"], ["framing", "Fit, zoom & focus"], ["sound", "Volume, fades & voice"], ["speed", "Speed"]],
+  layer: [["style", "Text style"], ["frame", "Blend & frame"], ["transform", "Scale, rotation, opacity"], ["animation", "Animation & keyframes"]] };
+function copyAttrs() {
+  if (!SEL || !ATTR_GROUPS[SEL.kind]) return false;
+  CLIP_ATTRS = { kind: SEL.kind, id: SEL.id }; toast(`Copied ${SEL.kind} ${SEL.id}'s attributes — select others and press ⌘V`);
+  return true;
+}
+function pasteAttrs() {
+  if (!CLIP_ATTRS) return toast("Copy a clip or layer first (select it, ⌘C)", true);
+  const targets = [...new Set([...(SEL?.kind === CLIP_ATTRS.kind ? [SEL.id] : []), ...MULTI])].filter((x) => x !== CLIP_ATTRS.id);
+  if (!targets.length) return toast(`Select the ${CLIP_ATTRS.kind}(s) to paste onto (Shift+click for several)`, true);
+  const boxes = ATTR_GROUPS[CLIP_ATTRS.kind].map(([k, l]) => { const cb = h("input", { type: "checkbox", checked: k !== "speed" }); cb.dataset.k = k; return [cb, h("label", {}, cb, l)]; });
+  const close = () => m.remove();
+  const go = () => { const groups = boxes.filter(([cb]) => cb.checked).map(([cb]) => cb.dataset.k); close();
+    if (groups.length) op("paste_attrs", { kind: CLIP_ATTRS.kind, from: CLIP_ATTRS.id, to: targets, groups }).then((r) => r && toast(r.message)); };
+  const m = h("div", { class: "modal", onpointerdown: (e) => e.target === m && close() }, h("div", { class: "box" },
+    h("h3", {}, `Paste from ${CLIP_ATTRS.id} onto ${targets.join(", ")}`), h("div", { class: "opts" }, boxes.map((b) => b[1])),
+    h("div", { class: "btnrow" }, h("button", { class: "primary", onclick: go }, "Paste"), h("button", { class: "ghost", onclick: close }, "Cancel"))));
+  document.body.append(m); m.querySelector("button.primary").focus();
+  m.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); if (e.key === "Enter") { e.preventDefault(); go(); } });
+}
+const SHORTCUTS = [["Space", "Play / pause"], ["J / K / L", "Shuttle back / stop / forward (press again: faster)"], ["← / →", "Previous / next frame (Shift: 1 s)"],
+  ["↑ / ↓", "Previous / next edit point or marker"], ["Home", "Go to start"], ["S or C", "Split at playhead"], ["Q / W", "Trim clip start / end to playhead"],
+  ["I / O", "Mark in / out"], ["X", "Remove the in–out range (ripple)"], ["Alt+X", "Clear in / out"], ["M", "Add marker"], ["T", "Add text"],
+  ["N", "Snapping on / off"], ["Delete", "Delete selected"], ["Shift+click", "Select several clips / layers"], ["⌘C / ⌘V", "Copy / paste attributes"],
+  ["⌘Z / ⇧⌘Z", "Undo / redo"], ["⌘K", "Command palette"], ["/", "Search properties / effects"], ["⇧0", "Balance layout"], ["+ / −", "Zoom timeline"], ["?", "This sheet"]];
+function showShortcuts() {
+  if ($(".modal")) return;
+  const m = h("div", { class: "modal", onpointerdown: (e) => e.target === m && m.remove() }, h("div", { class: "box" },
+    h("h3", {}, "Keyboard shortcuts"), h("div", { class: "keys" }, SHORTCUTS.map(([k, d]) => h("div", {}, h("span", {}, d), h("kbd", {}, k))))));
+  document.body.append(m);
+  const esc = (e) => { if (e.key === "Escape" || e.key === "?") { m.remove(); document.removeEventListener("keydown", esc, true); e.stopPropagation(); } };
+  document.addEventListener("keydown", esc, true);
+}
 
 // ---------- keyboard ----------
 // ---- draw a box on the preview: tracked mask / object focus ------------------------
@@ -3137,20 +3479,37 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && !typing) {
     const sel = String(window.getSelection() || "");
     if (sel) { e.preventDefault(); copyText(sel); return; }
+    if (copyAttrs()) { e.preventDefault(); return; } // nothing highlighted: copy the selected item's attributes
   }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v" && !typing && CLIP_ATTRS) { e.preventDefault(); if (aiBlocked()) return; pasteAttrs(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); if (aiBlocked()) return; (e.shiftKey ? $("#b-redo") : $("#b-undo")).click(); return; }
   if (typing) return;
   if (e.key === "/") { const q = $("#prop-q") || $("#fx-q"); if (q) { e.preventDefault(); q.focus(); q.select(); return; } }
-  if (busy && (["s", "t"].includes(e.key.toLowerCase()) || e.key === "Delete" || e.key === "Backspace")) { aiBlocked(); return; }
-  if (e.key === " ") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+  if (e.metaKey || e.ctrlKey || (e.altKey && e.key.toLowerCase() !== "x" && e.code !== "KeyX")) return; // leave other shortcuts to the browser
+  if (busy && (["s", "t", "c", "q", "w", "x", "m"].includes(e.key.toLowerCase()) || e.key === "Delete" || e.key === "Backspace")) { aiBlocked(); return; }
+  if (e.key === " ") { e.preventDefault(); if (SHUTTLE.rate) shuttle(0); else if (video.paused) { video.playbackRate = 1; video.play(); } else video.pause(); }
   else if (e.key === "ArrowLeft") step(e.shiftKey ? -fps() : -1);
   else if (e.key === "ArrowRight") step(e.shiftKey ? fps() : 1);
   else if (e.key === "Home") seek(0);
   else if (e.key === ")" || (e.shiftKey && e.code === "Digit0")) setLayout(0.5, 0.5);
-  else if (e.key.toLowerCase() === "s") op("split", { at: video.currentTime });
+  else if (e.key === "?") showShortcuts();
+  else if (e.key === "ArrowUp") { e.preventDefault(); jumpEdit(-1); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); jumpEdit(1); }
+  else if (e.key.toLowerCase() === "j" && !e.shiftKey) shuttle(-1);
+  else if (e.key.toLowerCase() === "k" && !e.shiftKey) shuttle(0);
+  else if (e.key.toLowerCase() === "l" && !e.shiftKey) shuttle(1);
+  else if (e.key.toLowerCase() === "i") setMark("in");
+  else if (e.key.toLowerCase() === "o") setMark("out");
+  else if (e.code === "KeyX" && e.altKey) { MARK = { in: null, out: null }; renderTimeline(); }
+  else if (e.key.toLowerCase() === "x") extractMarked();
+  else if (e.key.toLowerCase() === "q") op("trim_to", { at: video.currentTime, side: "start" });
+  else if (e.key.toLowerCase() === "w") op("trim_to", { at: video.currentTime, side: "end" });
+  else if (e.key.toLowerCase() === "m") addMarker();
+  else if (e.key.toLowerCase() === "n") { toggleSnap(); renderTimeline(); }
+  else if (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "c") op("split", { at: video.currentTime });
   else if (e.key.toLowerCase() === "t") addTextAtPlayhead();
   else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
-  else if (e.key === "Escape") select(null);
+  else if (e.key === "Escape") { MULTI.clear(); select(null); }
   else if (e.key === "=" || e.key === "+") { PPS = Math.min(400, PPS * 1.25); $("#zoom").value = PPS; renderTimeline(); }
   else if (e.key === "-") { PPS = Math.max(15, PPS / 1.25); $("#zoom").value = PPS; renderTimeline(); }
 });
