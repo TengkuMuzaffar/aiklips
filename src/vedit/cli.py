@@ -2075,8 +2075,21 @@ def ref_show(ref_id: int):
     from .references import store
 
     r = store.get(ref_id, full=True)
-    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error")}},
-         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", [])))
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps")}},
+         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+         + (f"\n  Rebuild it: vedit ref recipe {r['id']}" if r.get("recipe") else ""))
+
+
+@ref_app.command("recipe")
+def ref_recipe(ref_id: int):
+    """How to rebuild this reference's edit with vedit: ordered commands, plus what vedit can't do exactly."""
+    from .references import recipe, store
+
+    r = store.get(ref_id, full=True)
+    if not r.get("has_dna"):
+        raise VeditError(f"Reference #{ref_id} isn't studied yet ({r['status']})")
+    emit({"reference": ref_id, "recipe": r["recipe"], "gaps": r["gaps"]},
+         f"#{r['id']} {r['name']}: rebuild in vedit (<...> = fill in)\n\n" + recipe.as_text(r["recipe"], r["gaps"]))
 
 
 @ref_app.command("set")

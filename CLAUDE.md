@@ -120,11 +120,13 @@ template save NAME --layer ID [--layer ID2 ...] | template list | template apply
 proxy make | proxy status | proxy clean
 preview [--open] | frame --at T[,T2,...] | sheet | serve
 export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
-ref add <videos...> | ref list | ref show <id> | ref set <id> <trait.path> <json> | ref remove <id>
+ref add <videos...> | ref list | ref show <id> | ref recipe <id> | ref set <id> <trait.path> <json> | ref remove <id>
 gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
 
 **References / Generate:**
+- To edit the user's own footage like a reference by hand, run `vedit --json ref recipe <id>`: ordered vedit commands
+  built from its Style DNA (fill in the `<...>` parts) plus `gaps`, what vedit can't do exactly, with the closest option.
 - `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota:
   about 5 calls per video with the defaults (concepts + editor + auditor, + one editor revision and re-audit when the
   score is below the pass mark), plus 1 planner + 1 rank call per batch. Each extra revision round adds 2 calls (cap:

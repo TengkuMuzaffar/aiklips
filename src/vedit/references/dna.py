@@ -121,6 +121,11 @@ class SignatureMove(_M):
     confirmed: SkipJsonSchema[bool] = False  # set by confirm_moves() when the measurements back it up
 
 
+class Gap(_M):
+    what: str = Field(description="Something the reference does that the allowed values can't reproduce exactly, in a few words")
+    closest: str = Field("", description="The closest vedit command or trait to use instead, e.g. 'vedit transition hblur' or 'text.animation_in = typewriter'")
+
+
 class StyleDNA(_M):
     version: int = 1
     summary: str = Field("", description="One sentence a video editor would use to describe this style")
@@ -136,6 +141,7 @@ class StyleDNA(_M):
     color_feel: str = Field("", description="One phrase on the colour grade, e.g. 'warm faded film', 'clean bright daylight'")
     color: ColorDNA = Field(default_factory=ColorDNA)
     signature_moves: list[SignatureMove] = Field(default_factory=list, description="0-4 memorable moves the reference uses")
+    gaps: list[Gap] = Field(default_factory=list, description="0-5 things in the reference vedit can't do exactly, each with the closest option")
     confidence: dict[str, float] = Field(default_factory=dict, description="0..1 per area: hook, text, captions, motion, transitions, sound")
     notes: str = ""
     tags: list[str] = Field(default_factory=list, description="3-6 short tags, e.g. fast-cut, beat-sync, bold-captions")
