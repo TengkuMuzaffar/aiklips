@@ -53,20 +53,47 @@ class Renderer:
         self.error: str | None = None
         self.pending = threading.Event()
         self.stopped = threading.Event()
+        self.proxy_kick = threading.Event()
+        self.proxy_status = ""  # e.g. "proxy 1/3" while building
         threading.Thread(target=self._loop, daemon=True).start()
+        threading.Thread(target=self._proxies, daemon=True).start()
         if watch:
             threading.Thread(target=self._watch, daemon=True).start()
         self.pending.set()
+        self.proxy_kick.set()
 
     def stop(self) -> None:
         self.stopped.set()
         self.pending.set()
+        self.proxy_kick.set()
+
+    def _proxies(self) -> None:
+        """Build small proxies of big sources in the background, so previews of 4K footage decode fast."""
+        from .. import proxies
+
+        while not self.stopped.is_set():
+            self.proxy_kick.wait()
+            self.proxy_kick.clear()
+            if self.stopped.is_set():
+                return
+            try:
+                p = load(self.pdir)
+                todo = [s for s in p.sources.values() if proxies.needs_proxy(s) and not proxies.available(self.pdir, s)]
+                for i, src in enumerate(todo):
+                    if self.stopped.is_set():
+                        return
+                    self.proxy_status = f"proxy {i + 1}/{len(todo)}"
+                    proxies.make(self.pdir, src, should_stop=self.stopped.is_set)
+            except Exception:  # a broken file must not stop the editor; previews just use the original
+                pass
+            self.proxy_status = ""
 
     def _loop(self) -> None:
         while not self.stopped.is_set():
             self.pending.wait()
             if self.stopped.is_set():
                 return
+            self.proxy_kick.set()  # new sources (imports) get proxies too
             time.sleep(0.15)  # debounce bursts of edits
             self.pending.clear()
             self.status = "rendering"
@@ -644,10 +671,43 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
         p = load(d)
         if sid not in p.sources:
             raise HTTPException(404)
-        f = resolve_media(d, p.sources[sid].path)
+        from .. import proxies
+
+        f = proxies.available(d, p.sources[sid]) or resolve_media(d, p.sources[sid].path)  # the proxy plays smoother
         if not f.exists():
             raise HTTPException(404)
         return FileResponse(f, headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/version")
+    def save_version(body: dict) -> dict:
+        """Name the current state (History tab: jump back to it any time)."""
+        return _hist(history.save_version, str(body.get("name") or ""))
+
+    @app.get("/api/templates")
+    def list_templates() -> dict:
+        from ..ops import templates
+
+        return {"templates": templates.catalog()}
+
+    @app.post("/api/templates")
+    def save_template(body: dict) -> dict:
+        from ..ops import templates
+
+        d = host.need()
+        try:
+            return templates.save(load(d), d, str(body.get("name") or ""), list(body.get("layers") or []), str(body.get("about") or ""))
+        except VeditError as e:
+            raise bad(e)
+
+    @app.delete("/api/templates/{key}")
+    def delete_template(key: str) -> dict:
+        from ..ops import templates
+
+        try:
+            templates.delete(key)
+        except VeditError as e:
+            raise bad(e)
+        return {"ok": True}
 
     @app.get("/api/overlays")
     def overlays_catalog() -> dict:
@@ -723,6 +783,27 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
             raise HTTPException(400, f"Bad request: {e}")
         return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
+    @app.post("/api/scope")
+    async def scope(body: dict):
+        """Waveform or vectorscope (PNG) of the frame at `t`, with optional unsaved clip settings like /api/frame."""
+        from ..ops.effects import NotReady
+        from ..render.frame import render_frame
+        from ..render.scopes import scope_png
+
+        d = host.need()
+
+        def make() -> bytes:
+            jpg = render_frame(load(d), d, float(body.get("t", 0)), body.get("clip") or None)
+            return scope_png(jpg, str(body.get("kind", "waveform")))
+
+        try:
+            png = await asyncio.to_thread(make)
+        except NotReady as e:
+            raise HTTPException(409, str(e))
+        except VeditError as e:
+            raise bad(e)
+        return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
     @app.post("/api/sprite")
     async def sprite(body: dict):
         """A layer's overlay sprite as PNG, drawn by the export's own text/image renderer."""
@@ -741,7 +822,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True) 
 
     @app.get("/api/source/{sid}/thumb.jpg")
     def source_thumb(sid: str):
-        return FileResponse(_thumb(host.need(), sid))
+        # revalidate every time: ids like s1 exist in every project, so a cached copy may be another project's
+        return FileResponse(_thumb(host.need(), sid), headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/events")
     async def events():

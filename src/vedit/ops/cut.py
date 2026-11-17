@@ -47,7 +47,7 @@ def split_at(project: Project, t: float) -> int:
 
 
 def remap_overlays(project: Project, fn: Callable[[float], float]) -> list[str]:
-    """Apply a timeline remap to layers, caption words and music. Returns removed layer ids."""
+    """Apply a timeline remap to layers, caption words, music and markers. Returns removed layer ids."""
     removed = []
     keep = []
     for layer in project.layers:
@@ -72,6 +72,8 @@ def remap_overlays(project: Project, fn: Callable[[float], float]) -> list[str]:
     project.layers = keep
     for m in project.music:
         m.start = round(fn(m.start), 3)
+    for mk in project.markers:  # markers stay on the same moment of footage
+        mk.t = round(fn(mk.t), 3)
     return removed
 
 

@@ -65,6 +65,16 @@ def _clip_set(p: Project, a: dict) -> str:
             raise VeditError("fit must be cover, contain or blur")
         c.fit = a["fit"]
         changed.append(f"fit {a['fit']}")
+    for key in ("fade_in", "fade_out"):  # sound fades, seconds
+        v = _num(a, key)
+        if v is not None:
+            setattr(c, key, max(0.0, min(v, c.duration / 2)))
+            changed.append(f"{key} {v:g}s")
+    if a.get("voice"):
+        if a["voice"] not in ("off", "clean", "studio"):
+            raise VeditError("voice must be off, clean or studio")
+        c.voice = a["voice"]
+        changed.append(f"voice {a['voice']}")
     return f"{c.id}: " + (", ".join(changed) or "no change")
 
 
@@ -210,6 +220,12 @@ def _remove_effect(p: Project, a: dict) -> str:
 def _fx_add(p: Project, a: dict) -> str:
     from ..ops import fx_filters
 
+    if a.get("layer"):  # an adjustment layer
+        l = p.layer(a["layer"])
+        if l.type != "adjust":
+            raise VeditError(f"{l.id} is not an adjustment layer")
+        fx_filters.add(p, l, a["key"], a.get("params") or {})
+        return f"{fx_filters.get(a['key']).label} on {l.id}"
     targets = p.clips if a.get("clip") in (None, "", "all") else [p.clip(a["clip"])]
     added = [fx_filters.add(p, c, a["key"], a.get("params") or {}) for c in targets]
     label = fx_filters.get(a["key"]).label
@@ -267,6 +283,65 @@ def _move_apply(p: Project, a: dict) -> str:
     at = a.get("at")
     return moves.apply(p, a["name"], clip=a.get("clip") or None, at=None if at in (None, "") else float(at),
                        text=a.get("text") or None)
+
+
+# ---- markers, keyframes, trims, paste attributes (ops/editing.py) ------------------------------------------------
+@op("marker_add")
+def _marker_add(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    m = editing.add_marker(p, float(a.get("t") or 0), a.get("label") or "", a.get("color"))
+    return f"marker {m.id} at {m.t:g}s"
+
+
+@op("marker_set")
+def _marker_set(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    m = editing.set_marker(p, a["id"], _num(a, "t"), a.get("label"), a.get("color"))
+    return f"marker {m.id}: {m.label or m.t}"
+
+
+@op("marker_remove")
+def _marker_remove(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    editing.remove_marker(p, a["id"])
+    return f"remove marker {a['id']}"
+
+
+@op("keyframe_set")
+def _keyframe_set(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    l = p.layer(a["layer"])
+    editing.set_keyframe(l, float(a["t"]) - l.start, a["prop"], a["value"])
+    return f"{l.id}: keyframe {a['prop']} at {float(a['t']):.2f}s"
+
+
+@op("keyframe_remove")
+def _keyframe_remove(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    l = p.layer(a["layer"])
+    n = editing.remove_keyframe(l, float(a["t"]) - l.start, a.get("prop"))
+    return f"{l.id}: removed {n} keyframe value(s)"
+
+
+@op("trim_to")
+def _trim_to(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    c = editing.trim_to(p, float(a["at"]), a.get("side", "start"))
+    return f"{c.id}: trim {a.get('side', 'start')} to {float(a['at']):.2f}s"
+
+
+@op("paste_attrs")
+def _paste_attrs(p: Project, a: dict) -> str:
+    from ..ops import editing
+
+    n = editing.paste_attributes(p, a["kind"], a["from"], list(a["to"]), list(a["groups"]))
+    return f"paste {', '.join(a['groups'])} onto {n} {a['kind']}(s)"
 
 
 @op("split")
@@ -381,6 +456,45 @@ def _layer_add_video(p: Project, a: dict) -> str:
     extra = {k: a[k] for k in ("x", "y", "width", "volume", "src_in", "loop", "blend", "mask") if a.get(k) not in (None, "")}
     l = overlays.add_video(p, a["source"], start, _num(a, "end"), **extra)
     return f"add video overlay {l.id}"
+
+
+@op("layer_add_adjust")
+def _layer_add_adjust(p: Project, a: dict) -> str:
+    start = float(a.get("start") or 0)
+    end = _num(a, "end")
+    if end is None:
+        end = min(p.duration, start + 3) if p.duration > start else None
+    l = Layer(id=p.new_id("adj"), type="adjust", start=start, end=end)
+    p.layers.append(l)
+    return f"add adjustment layer {l.id}"
+
+
+@op("layer_grade")
+def _layer_grade(p: Project, a: dict) -> str:
+    """Colour of an adjustment layer: brightness / contrast / saturation / temperature / tint, look + intensity, clear."""
+    from ..ops import color
+    from ..project import Grade
+
+    l = p.layer(a["layer"])
+    if l.type != "adjust":
+        raise VeditError(f"{l.id} is not an adjustment layer")
+    if a.get("clear"):
+        l.grade = None
+        return f"{l.id}: clear colour"
+    g = l.grade or Grade()
+    vals = {k: float(a[k]) for k in ("brightness", "contrast", "saturation", "temperature", "tint", "intensity") if a.get(k) not in (None, "")}
+    if a.get("look") is not None:
+        vals["look"] = None if a["look"] in ("", "natural") else color.look_name(a["look"])
+    l.grade = g.model_copy(update=vals)
+    return f"{l.id}: colour " + ", ".join(f"{k} {v}" for k, v in vals.items())
+
+
+@op("template_apply")
+def _template_apply(p: Project, a: dict) -> str:
+    from ..ops import templates
+
+    ids = templates.apply(p, _PDIR[0], a["key"], float(a.get("start") or 0))
+    return f"template {a['key']}: {', '.join(ids)}"
 
 
 @op("layer_add_shape")

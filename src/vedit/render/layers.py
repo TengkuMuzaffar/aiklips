@@ -85,12 +85,23 @@ class _VideoFrames:
         fps = project.canvas.fps
         self.proc = subprocess.Popen(
             [media.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", *(["-stream_loop", "-1"] if layer.loop else []),
-             "-ss", f"{layer.src_in:.3f}", "-t", f"{dur + 1 / fps:.3f}", "-i", str(resolve_media(pdir, src.path)),
+             "-ss", f"{layer.src_in:.3f}", "-t", f"{dur + 1 / fps:.3f}", "-i", str(self._media(pdir, src, scale)),
              "-vf", f"fps={fps},scale={self.w}:{self.h}:flags=bicubic,setsar=1", "-an",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         self.done = False
+
+    @staticmethod
+    def _media(pdir: Path, src, scale: float) -> Path:
+        """The proxy when it is big enough for this render's size (previews), else the original."""
+        from .. import proxies
+
+        if scale < 1:
+            px = proxies.available(pdir, src)
+            if px is not None:
+                return px
+        return resolve_media(pdir, src.path)
 
     def next(self) -> Image.Image | None:
         if self.done:

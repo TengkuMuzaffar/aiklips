@@ -59,7 +59,10 @@ def frame_project(project: Project, t: float, clip_override: dict | None = None)
         z = max(1.0, c.zoom) + (max(1.0, c.zoom_to) - max(1.0, c.zoom)) * (local / max(c.duration, 1e-6))
         c.zoom, c.zoom_to = z, z
     c.in_, c.out, c.transition = src_t, end, None
-    return project.model_copy(update={"clips": [c], "layers": [], "music": [],
+    # adjustment layers over this moment still apply (they change the picture), from the frame's time 0
+    adjust = [l.model_copy(update={"start": 0.0, "end": None, "keyframes": [], "presets": []}) for l in project.layers
+              if l.type == "adjust" and l.start <= t < (project.duration if l.end is None else l.end)]
+    return project.model_copy(update={"clips": [c], "layers": adjust, "music": [],
                                       "canvas": project.canvas.model_copy(update={"loudness": None})})
 
 

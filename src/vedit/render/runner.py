@@ -68,8 +68,10 @@ def project_hash(project: Project) -> str:
 def base_hash(project: Project) -> str:
     """Hash of the base preview (everything but overlay layers, notes and the clips' "why" notes)."""
     d = project.to_dict()
-    for k in ("layers", "notes", "name"):
+    adjust = [l for l in d.get("layers", []) if l.get("type") == "adjust"]  # these change the base picture
+    for k in ("layers", "notes", "name", "markers"):
         d.pop(k, None)
+    d["adjust"] = adjust
     for c in d.get("clips", []):
         c.pop("meta", None)
     used = {c.source for c in project.clips} | {m.source for m in project.music}
@@ -82,6 +84,7 @@ def timeline_hash(project: Project) -> str:
     d = project.to_dict()
     d.pop("layers", None)
     d.pop("notes", None)
+    d.pop("markers", None)
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
 

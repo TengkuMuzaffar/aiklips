@@ -150,6 +150,9 @@ class Clip(_Model):
     transition: Transition | None = None  # transition *into* this clip from the previous one
     grade: Grade | None = None  # colour correction + look (`vedit color ...`)
     meta: ClipMeta | None = None  # why this clip is here (`vedit why`)
+    fade_in: float = 0.0  # sound fade in / out, seconds (the picture is untouched: use a transition for that)
+    fade_out: float = 0.0
+    voice: Literal["off", "clean", "studio"] = "off"  # speech clean-up: rumble, noise, level (render/graph.py VOICE_CHAINS)
 
     @property
     def duration(self) -> float:
@@ -207,10 +210,11 @@ SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
 
 class Layer(_Model):
     """An overlay drawn on top of the timeline: text, image, captions, video (picture-in-picture, b-roll, light leaks)
-    or a shape. The list order of project.layers is the stacking order (later = on top)."""
+    a shape, or an adjustment layer (filters + colour over a time range). The list order of project.layers is the stacking
+    order (later = on top)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust"]
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -245,6 +249,9 @@ class Layer(_Model):
     shape: Literal["rect", "ellipse", "line", "arrow"] = "rect"
     height: int | None = None  # shape height in canvas px (line / arrow: thickness)
     fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
+    # adjustment layers: filters and a colour grade applied to everything under them (clips and the layers below)
+    effects: list[Effect] = Field(default_factory=list)
+    grade: Grade | None = None
 
 
 class MusicTrack(_Model):
@@ -259,6 +266,15 @@ class MusicTrack(_Model):
     fade_out: float = 1.0
 
 
+class Marker(_Model):
+    """A named moment on the timeline (notes, beats to hit, YouTube chapters)."""
+
+    id: str
+    t: float  # timeline seconds
+    label: str = ""
+    color: str = "#FBBF24"
+
+
 class Project(_Model):
     version: int = SCHEMA_VERSION
     name: str = "untitled"
@@ -268,6 +284,7 @@ class Project(_Model):
     layers: list[Layer] = Field(default_factory=list)
     music: list[MusicTrack] = Field(default_factory=list)
     notes: EditNotes | None = None
+    markers: list[Marker] = Field(default_factory=list)
 
     # ---- timeline helpers -------------------------------------------------
     @property
@@ -298,6 +315,7 @@ class Project(_Model):
             [c.id for c in self.clips]
             + [l.id for l in self.layers]
             + [m.id for m in self.music]
+            + [k.id for k in self.markers]
             + list(self.sources)
         )
         n = 0

@@ -16,7 +16,8 @@ from typing import Iterator
 from .project import PROJECT_FILE, Project, VeditError, dump_json, load, save, state_dir
 
 MAX_SNAPSHOTS = 500
-COALESCE_SECONDS = 1.5  # repeated edits of the same field this close together become one undo step
+COALESCE_SECONDS = 1.5
+# a history step can carry a "version" name (a bookmark: `vedit version save`); trimming never removes those  # repeated edits of the same field this close together become one undo step
 
 
 def _hdir(pdir: Path) -> Path:
@@ -64,7 +65,7 @@ def commit(pdir: Path, project: Project, message: str, coalesce: str | None = No
             prev = _read(pdir, h)
         except (OSError, ValueError, VeditError):
             prev = {}
-        if prev.get("coalesce") == coalesce and now - float(prev.get("time", 0)) < COALESCE_SECONDS:
+        if prev.get("coalesce") == coalesce and now - float(prev.get("time", 0)) < COALESCE_SECONDS and not prev.get("version"):
             _snap_path(pdir, h).write_text(json.dumps(
                 {"message": message, "time": now, "coalesce": coalesce, "project": project.to_dict()}, indent=1))
             return h
@@ -77,9 +78,14 @@ def commit(pdir: Path, project: Project, message: str, coalesce: str | None = No
         snap["coalesce"] = coalesce
     _snap_path(pdir, n).write_text(json.dumps(snap, indent=1))
     _set_head(pdir, n)
-    # trim very old history
+    # trim very old history (saved versions are kept)
     idx = _indices(pdir)
     for i in idx[: max(0, len(idx) - MAX_SNAPSHOTS)]:
+        try:
+            if _read(pdir, i).get("version"):
+                continue
+        except (OSError, ValueError, VeditError):
+            pass
         _snap_path(pdir, i).unlink()
     return n
 
@@ -150,13 +156,33 @@ def checkout(pdir: Path, n: int) -> dict:
     return {"head": n, "now_at": snap["message"]}
 
 
+def save_version(pdir: Path, name: str) -> dict:
+    """Name the current state (a bookmark on the current history step: no extra undo step, never trimmed)."""
+    sync(pdir)
+    h = head(pdir)
+    name = name.strip() or time.strftime("Version %Y-%m-%d %H:%M")
+    snap = _read(pdir, h)
+    snap["version"] = name
+    _snap_path(pdir, h).write_text(json.dumps(snap, indent=1))
+    return {"step": h, "name": name}
+
+
+def versions(pdir: Path) -> list[dict]:
+    out = []
+    for i in _indices(pdir):
+        s = _read(pdir, i)
+        if s.get("version"):
+            out.append({"step": i, "name": s["version"], "time": s["time"], "message": s["message"]})
+    return out
+
+
 def log(pdir: Path, limit: int | None = None) -> list[dict]:
     h = head(pdir)
     out = []
     idx = _indices(pdir)
     for i in (idx[-limit:] if limit else idx):
         s = _read(pdir, i)
-        out.append({"step": i, "message": s["message"], "time": s["time"], "current": i == h})
+        out.append({"step": i, "message": s["message"], "time": s["time"], "current": i == h, "version": s.get("version")})
     return out
 
 
