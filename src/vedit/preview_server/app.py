@@ -231,6 +231,10 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
     def home() -> str:
         return page("home.html")
 
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page() -> str:
+        return page("settings.html")
+
     @app.get("/editor", response_class=HTMLResponse)
     def editor():
         if host.pdir is None:
@@ -463,6 +467,82 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         except (ai.AIError, ValueError) as e:
             raise HTTPException(400, str(e))
         return {"roles": ai.roles(str((body or {}).get("_quality") or "balanced"))}
+
+    # ---- Settings page: AI editor model, permissions, usage ----------------------------------
+    @app.get("/api/settings")
+    def api_settings() -> dict:
+        from ..ai import client as ai
+        from ..editor import models as registry
+
+        default = ai.settings().get("chat") or registry.DEFAULT_KEY
+        return {"project": host.pdir.name if host.pdir else None, "chat_default": default,
+                "chat_model": host.session.model if host.session else None}
+
+    @app.post("/api/settings/chat-model")
+    async def api_settings_chat_model(body: dict) -> dict:
+        """The AI editor's model: saved as the default for new projects, and used now in the open project."""
+        from ..ai import client as ai
+        from ..editor import models as registry
+
+        key = str((body or {}).get("model") or "").strip()
+        try:
+            registry.resolve(key)
+            ai.save_settings({**ai.settings(), "chat": key})
+        except (registry.RegistryError, ai.AIError) as e:
+            raise HTTPException(400, str(e))
+        if host.session is not None and (body or {}).get("apply", True):
+            await host.session.set_model(key)
+        return api_settings()
+
+    @app.get("/api/settings/permissions")
+    def api_settings_permissions() -> dict:
+        from ..editor import permissions
+
+        return {**permissions.load(), "rules": permissions.declaration(), "project": host.pdir.name if host.pdir else None,
+                "project_allow": sorted(host.session.always) if host.session else None}
+
+    @app.post("/api/settings/permissions")
+    async def api_settings_permissions_save(body: dict) -> dict:
+        """{unlisted: ask|deny} and/or {scope: global|project, add: name} / {scope, remove: name}."""
+        from ..editor import permissions
+
+        body = body or {}
+        try:
+            cur = permissions.load()
+            if "unlisted" in body:
+                if body["unlisted"] not in permissions.UNLISTED:
+                    raise permissions.PermissionSettingsError("unlisted must be ask or deny")
+                cur["unlisted"] = body["unlisted"]
+            scope = body.get("scope", "global")
+            if scope == "project":
+                if host.session is None:
+                    raise permissions.PermissionSettingsError("Open a project to change its own list.")
+                items = set(host.session.always)
+                if body.get("add"):
+                    items.add(permissions.check_item(body["add"]))
+                if body.get("remove"):
+                    items.discard(str(body["remove"]))
+                await host.session.set_always(sorted(items))
+            else:
+                if body.get("add"):
+                    cur["always_allow"] = [*cur["always_allow"], permissions.check_item(body["add"])]
+                if body.get("remove"):
+                    cur["always_allow"] = [x for x in cur["always_allow"] if x != body["remove"]]
+            permissions.save(cur)
+        except permissions.PermissionSettingsError as e:
+            raise HTTPException(400, str(e))
+        return api_settings_permissions()
+
+    @app.get("/api/settings/usage")
+    def api_settings_usage(days: float = 30) -> dict:
+        from ..ai import client as ai
+        from ..editor import models as registry
+
+        out = ai.usage_summary(max(1.0, min(365.0, days)))
+        labels = {m["key"]: f"{m.get('label') or m['id']}" for m in registry.public()["models"]}
+        for m in out["models"]:
+            m["label"] = labels.get(m["key"], m["key"])
+        return out
 
     # ---- audit settings (pass mark + revision cap; shared by generation and the chat editor) ----
     @app.get("/api/audit/settings")

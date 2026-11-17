@@ -21,6 +21,7 @@ from fastapi import WebSocket
 from .. import history
 from ..project import load, state_dir
 from . import models as registry
+from . import permissions
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -78,6 +79,22 @@ _NEVER_ALWAYS = {"rm", "sudo", "sh", "bash", "zsh", "fish", "curl", "wget", "pyt
                  "git", "pip", "npm", "npx", "brew", "uv", "find", "sed", "awk", "perl", "ruby", "tee", "cp", "ln", "source", "."}
 _SAFE_VARS = {"VEDIT_PROJECT", "HOME", "PWD"}
 _VAR = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _chat_default() -> str | None:
+    from ..ai import client as ai
+
+    return ai.settings().get("chat")
+
+
+def _record_chat_usage(model: str, msg: Any) -> None:
+    """Chat turns go in the same usage log as generation calls, so Settings → Usage shows both."""
+    from ..ai import client as ai
+
+    u = getattr(msg, "usage", None) or {}
+    ai._record_usage("chat", model, {"input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                                     "cache_read": u.get("cache_read_input_tokens"), "cost_usd": getattr(msg, "total_cost_usd", None),
+                                     "seconds": round((getattr(msg, "duration_ms", 0) or 0) / 1000, 2)})
 
 
 class _Unsafe(Exception):
@@ -293,7 +310,8 @@ class ChatSession:
         self.chat_created: float = time.time()
         self.log: list[dict] = []
         self.session_id: str | None = None
-        self.model: str = registry.normalize_key(data.get("model"))
+        # a project remembers its own model; a new one starts on the default chosen in Settings → Models
+        self.model: str = registry.normalize_key(data.get("model") or _chat_default())
         try:
             registry.resolve(self.model)
         except registry.RegistryError:
@@ -408,13 +426,14 @@ class ChatSession:
 
         if tool in _ALLOWED_TOOLS:
             return PermissionResultAllow()
+        allowed = self.always | permissions.global_allow()  # this project's + Settings → Permissions
         always_key: str | None = None
         if tool == "Bash":
             ok, need = bash_check(str(data.get("command", "")), (REPO_ROOT, self.pdir))
             if ok:
                 return PermissionResultAllow()
             if need is not None and need and not (need & _NEVER_ALWAYS):
-                if need <= self.always:
+                if need <= allowed:
                     return PermissionResultAllow()
                 always_key = ",".join(sorted(need))
         elif tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
@@ -424,7 +443,7 @@ class ChatSession:
         elif tool.startswith("mcp__"):
             pass  # connectors are never auto-allowed
         else:
-            if tool in self.always:
+            if tool in allowed:
                 return PermissionResultAllow()
             always_key = tool
         if tool == "Bash":
@@ -433,6 +452,10 @@ class ChatSession:
             detail = str(data["file_path"])
         else:
             detail = json.dumps(data, default=str)
+        if permissions.unlisted() == "deny":
+            await self.emit({"type": "notice", "text": f"Blocked {tool} (Settings → Permissions is set to deny without asking): {detail[:120]}"})
+            return PermissionResultDeny(message="Blocked by the user's permission settings. Use a `uv run vedit ...` command "
+                                                "instead, or tell the user what you need and why.")
         rid = f"perm-{time.time_ns()}"
         ev = {"type": "permission", "id": rid, "tool": tool, "detail": detail[:2000], "time": time.time()}
         if always_key:
@@ -674,6 +697,7 @@ class ChatSession:
                         await self.emit({"type": "tool_result", "id": b.tool_use_id, "ok": ok, "text": txt[:300]})
             elif isinstance(msg, ResultMessage):
                 self.session_id = msg.session_id or self.session_id
+                _record_chat_usage(self.model, msg)
                 await self.emit({"type": "done", "ok": not msg.is_error, "cost": msg.total_cost_usd if getattr(self, "provider", registry.BUILTIN) == registry.BUILTIN else None,
                                  "seconds": round((msg.duration_ms or 0) / 1000, 1),
                                  "error": None if not msg.is_error else (msg.result or msg.subtype)})
@@ -707,6 +731,11 @@ class ChatSession:
         if provider["id"] != old_provider:
             note += " · the AI starts a fresh context; the chat above stays for you"
         await self.emit({"type": "notice", "text": note})
+
+    async def set_always(self, items: list[str]) -> None:
+        """Replace this project's "Always allow" list (Settings → Permissions)."""
+        self.always = {permissions.check_item(x) for x in items}
+        self._save()
 
     async def models_changed(self) -> None:
         """Registry was edited in Manage models: push it to every open chat pane."""

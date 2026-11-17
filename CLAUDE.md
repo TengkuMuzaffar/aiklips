@@ -169,6 +169,11 @@ Load the relevant one before doing that kind of edit.
     Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
     frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+  - Settings page: `preview_server/static/settings.html` at `/settings` (home links to it; the editor opens it in an
+    iframe overlay with `?embed=1`, closed/refreshed via postMessage). Tabs: Models (chat default = `ai.json` "chat",
+    roles, audit pass mark), Providers & keys (`editor/models.py` registry + add-provider wizard), Permissions
+    (`editor/permissions.py`: global always-allow + "ask"/"deny" for anything unlisted, checked in `ChatSession._permission`),
+    Usage (`ai.client.usage_summary` over `ai-usage.jsonl`; chat turns are logged there too as task "chat").
   - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
     `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).
     Design + roadmap (AI reviewer, chat Stop hook, creativity): `docs/design/auditor-justification-creativity.md`
