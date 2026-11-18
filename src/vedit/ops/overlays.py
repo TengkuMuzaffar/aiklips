@@ -25,7 +25,8 @@ from ..project import BLEND_MODES, SHAPE_KINDS, Layer, Project, Source, VeditErr
 def _end(p: Project, start: float, want: float | None) -> float | None:
     if want is None:
         return None
-    return round(min(p.duration, start + want), 3) if p.duration > start else None
+    # inside the timeline: up to its end; past it (or an empty timeline) the layer makes the timeline longer
+    return round(min(p.duration, start + want), 3) if p.duration > start else round(start + want, 3)
 
 
 def add_source(p: Project, pdir: Path, path: Path) -> str:
@@ -175,11 +176,14 @@ def set_fields(layer: Layer, values: dict) -> list[str]:
     return changed
 
 
-def _shift(p: Project, layer: Layer, from_track: int) -> None:
-    """Open an empty track at `from_track`: every other layer on that track or above moves up one."""
+def _shift(p: Project, layer: Layer, from_track: int, under_video: bool = False) -> None:
+    """Open an empty track at `from_track`: every other layer on that track or above moves up one. The video track
+    keeps its tracks under it: a new track under it (below `main_z`, or right at it with `under_video`) raises it."""
     for o in p.layers:
         if o is not layer and o.track is not None and o.track >= from_track:
             o.track += 1
+    if from_track < p.main_z or (from_track == p.main_z and under_video):
+        p.main_z += 1
 
 
 def _free(p: Project, layer: Layer, track: int, start: float, end: float | None) -> bool:
@@ -189,13 +193,16 @@ def _free(p: Project, layer: Layer, track: int, start: float, end: float | None)
 
 
 def place_layer(p: Project, layer_id: str, track: int, start: float | None = None, end: float | None = ...,
-                new_track: bool = False) -> Layer:
+                new_track: bool = False, under_video: bool = False) -> Layer:
     """Put a layer on a timeline track (0 = bottom overlay track, higher = on top), optionally at new times.
 
-    `new_track` opens a new track at that position (the ones from there up move up one). Dropped on a track where it
-    would overlap another layer, it goes on a new track right above that one instead, like CapCut."""
+    `new_track` opens a new track at that position (the ones from there up move up one); at the video track's height
+    (`main_z`) it opens above the video unless `under_video`. Dropped on a track where it would overlap another layer,
+    it goes on a new track right above that one instead, like CapCut (on the same side of the video)."""
     normalize_tracks(p)
     layer = p.layer(layer_id)
+    if layer.on_video:  # off the video track, onto a track row: start from the row just over the video
+        layer.on_video, layer.track = False, p.main_z
     if start is not None:
         layer.start = max(0.0, float(start))
     if end is not ...:
@@ -205,10 +212,10 @@ def place_layer(p: Project, layer_id: str, track: int, start: float | None = Non
     n = 1 + max((o.track for o in p.layers if o is not layer), default=-1)
     track = max(0, min(n, int(track)))
     if new_track:
-        _shift(p, layer, track)
+        _shift(p, layer, track, under_video)
     elif not _free(p, layer, track, layer.start, layer.end):
         track += 1
-        _shift(p, layer, track)
+        _shift(p, layer, track, under_video=track - 1 < p.main_z)
     layer.track = track
     normalize_tracks(p)
     return layer

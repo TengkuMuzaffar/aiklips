@@ -97,9 +97,9 @@ def test_clip_dragged_up_becomes_an_overlay_on_its_own_track(tmp_path, make_proj
     save(tmp_path, p)
     actions.apply(tmp_path, "clip_to_overlay", {"clip": "c2", "start": 1.0, "track": 0, "new_track": True})
     q = load(tmp_path)
-    assert [c.id for c in q.clips] == ["c1"]  # main track closed the gap
+    assert [c.id for c in q.clips] == ["c1"]  # its place became a gap, dropped at the end of the video track
     v = q.layers[0]
-    assert (v.type, v.source, v.src_in, v.start, v.end, v.track) == ("video", "s1", 5.0, 1.0, 5.0, 0)
+    assert (v.type, v.source, v.src_in, v.start, v.end, v.track) == ("video", "s1", 5.0, 1.0, 6.0, 0)  # all 5s of it
     assert v.width == q.canvas.width and v.volume == 1.0  # full frame, keeps its sound
     assert q.layers[1].id == "t1" and q.layers[1].track == 1  # new bottom track: the text stays on top
 
@@ -183,3 +183,87 @@ def test_video_overlay_fill_fit_and_flip(make_project, tmp_path, test_clip):
     assert video_size(p, l, 0.5) == (540, 304)
     with pytest.raises(VeditError):
         overlays.set_fields(l, {"fit": "stretch"})
+
+
+def test_colour_screen_element_covers_the_canvas_on_its_own_track(tmp_path, make_project):
+    """Elements tab: a colour screen dragged onto "New track" at the bottom is a full-canvas rect under the text."""
+    from vedit.project import load, save
+
+    p = make_project()
+    p.layers.append(Layer(id="t1", type="text", text="Hi", start=0, end=5))
+    save(tmp_path, p)
+    actions.apply(tmp_path, "layer_add_shape", {"shape": "rect", "full": True, "fill": "#123456", "start": 1.0,
+                                                "track": 0, "new_track": True})
+    q = load(tmp_path)
+    sh = q.layers[0]
+    assert [l.type for l in q.layers] == ["shape", "text"] and sh.track == 0 and q.layers[1].track == 1
+    assert (sh.width, sh.height, sh.radius, sh.fill, sh.start) == (q.canvas.width, q.canvas.height, 0, "#123456", 1.0)
+
+
+def test_library_element_dropped_on_a_track(tmp_path, make_project):
+    from vedit.project import load, save
+
+    p = make_project()
+    p.layers += [Layer(id="t1", type="text", text="A", start=0, end=5, track=0),
+                 Layer(id="t2", type="text", text="B", start=0, end=5, track=1)]
+    save(tmp_path, p)
+    actions.apply(tmp_path, "layer_add_adjust", {"start": 6.0, "track": 0})  # free there: shares track 0
+    q = load(tmp_path)
+    adj = next(l for l in q.layers if l.type == "adjust")
+    assert adj.track == 0 and q.layer("t2").track == 1
+
+
+def test_clip_moved_off_the_video_track_leaves_a_gap(tmp_path, make_project):
+    """Equal tracks: the other clips keep their times (no ripple), like on any other track."""
+    from vedit.project import load, save
+
+    p = make_project(3)  # c1 0-3.33, c2 3.33-6.67, c3 6.67-10
+    p.layers.append(Layer(id="t1", type="text", text="Hi", start=0, end=10))
+    save(tmp_path, p)
+    actions.apply(tmp_path, "clip_to_overlay", {"clip": "c2", "start": 3.333, "track": 0, "new_track": True})
+    q = load(tmp_path)
+    assert [c.gap for c in q.clips] == [False, True, False] and abs(q.clip_starts()[2] - 6.667) < 1e-3
+    assert q.layer("t1").end == 10
+
+
+def test_nothing_may_leave_zero_empty(tmp_path, make_project):
+    import pytest
+
+    from vedit.project import VeditError, load, save
+
+    p = make_project(1)
+    p.layers.append(Layer(id="t1", type="text", text="Hi", start=2, end=4))
+    save(tmp_path, p)
+    with pytest.raises(VeditError, match="0s"):  # c1 is the only thing at 0s
+        actions.apply(tmp_path, "clip_place", {"clip": "c1", "start": 1.0})
+    actions.apply(tmp_path, "layer_place", {"layer": "t1", "start": 0.0})  # now t1 covers 0s too...
+    actions.apply(tmp_path, "clip_place", {"clip": "c1", "start": 1.0})  # ...so the clip may move right
+    q = load(tmp_path)
+    assert q.clips[0].gap and q.clip_starts()[1] == 1.0 and q.duration == 11.0
+    with pytest.raises(VeditError, match="0s"):  # and now t1 is the only one
+        actions.apply(tmp_path, "layer_place", {"layer": "t1", "start": 0.5})
+
+
+def test_video_track_moves_among_the_tracks(tmp_path, make_project):
+    from vedit.project import load, save
+
+    p = make_project(1)
+    p.layers += [Layer(id="a", type="text", start=0, end=2, track=0), Layer(id="b", type="text", start=0, end=2, track=1)]
+    save(tmp_path, p)
+    actions.apply(tmp_path, "track_video", {"to": "up"})
+    assert load(tmp_path).main_z == 1  # a is under the video now, b over it
+    actions.apply(tmp_path, "track_video", {"to": "top"})
+    assert load(tmp_path).main_z == 2
+    actions.apply(tmp_path, "track_video", {"to": "up"})  # already the top: stays
+    assert load(tmp_path).main_z == 2
+
+
+def test_video_layer_dropped_on_the_video_track_keeps_its_time(tmp_path, make_project):
+    from vedit.project import load, save
+
+    p = make_project(1)  # c1 0-10
+    l = overlays.add_video(p, "s1", 12.0, 14.0, src_in=1.0)
+    save(tmp_path, p)
+    actions.apply(tmp_path, "overlay_to_clip", {"layer": l.id, "start": 12.0})
+    q = load(tmp_path)
+    assert [c.gap for c in q.clips] == [False, True, False] and q.clip_starts()[2] == 12.0

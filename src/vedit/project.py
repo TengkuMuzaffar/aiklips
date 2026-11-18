@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class VeditError(Exception):
@@ -233,6 +233,9 @@ class Layer(_Model):
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
+    # on the video track itself (equal tracks): in a gap or past the clips, never over a clip; drawn at the video
+    # track's height. `track` then just mirrors main_z (normalize_tracks)
+    on_video: bool = False
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -336,6 +339,11 @@ class Project(_Model):
     notes: EditNotes | None = None
     markers: list[Marker] = Field(default_factory=list)
     main_hidden: bool = False  # main video track hidden (eye): its picture becomes the background; sound still plays
+    # where the clip track (the video track: `clips`, played back to back) sits among the layer tracks: the number of
+    # layer tracks drawn UNDER it. 0 = the video is the bottom track (the old fixed "main track"); layers on tracks
+    # < main_z show through wherever the video is transparent (gaps, letterbox bars, keyed green screen). All tracks
+    # are equal otherwise: the timeline is as long as whatever ends last, and something must start at 0s
+    main_z: int = 0
     scenes: list[Scene] = Field(default_factory=list)  # design projects only
 
     def scene_starts(self) -> list[float]:
@@ -353,8 +361,16 @@ class Project(_Model):
 
     # ---- timeline helpers -------------------------------------------------
     @property
-    def duration(self) -> float:
+    def clips_end(self) -> float:
+        """Where the video track's clips end (its gaps included)."""
         return sum(c.duration for c in self.clips)
+
+    @property
+    def duration(self) -> float:
+        """The timeline's length: whatever ends last, clips or a layer with an end time (open-ended layers, end=None,
+        run to this length rather than setting it)."""
+        ends = [l.end for l in self.layers if l.end is not None and not l.hidden]
+        return max([self.clips_end, *ends]) if ends else self.clips_end
 
     def clip_starts(self) -> list[float]:
         starts, t = [], 0.0
@@ -429,6 +445,7 @@ def find_project_dir(explicit: str | None = None) -> Path:
 # bump SCHEMA_VERSION and add a step here, so projects saved by older versions keep opening.
 MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     1: lambda d: d,  # 2: design projects (kind, scenes), stretch (sx / sy), more shapes, keyframed size / fill
+    2: lambda d: d,  # 3: equal tracks: `main_z` (video track position; default 0 = bottom), timeline = longest track
 }
 
 
@@ -482,11 +499,13 @@ def normalize_tracks(project: Project) -> None:
     - tracks are numbered 0..n-1 with no gaps, and project.layers is sorted by track (stable), so the list order the
       renderers use (later = on top) always matches the timeline rows.
     """
-    layers = project.layers
+    vids = [l for l in project.layers if l.on_video]  # on the video track: not in the rows
+    layers = [l for l in project.layers if not l.on_video]
     top = max((l.track for l in layers if l.track is not None), default=-1)
     for l in layers:
         if l.track is None:
-            if top >= 0 and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
+            # (drawn on top of everything: never onto a track under the video track)
+            if top >= max(0, project.main_z) and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
                 l.track = top
             else:
                 top += 1
@@ -510,9 +529,14 @@ def normalize_tracks(project: Project) -> None:
                 pos[l.id] = t + k / (len(placed) + 1)
     order = sorted(set(pos.values()))
     rank = {v: i for i, v in enumerate(order)}
+    # the video track keeps its place: as many tracks under it as there were before renumbering
+    project.main_z = sum(1 for v in order if v < project.main_z - 1e-9) if order else 0
     for l in layers:
         l.track = rank[pos[l.id]]
-    layers.sort(key=lambda l: l.track)
+    for l in vids:
+        l.track = project.main_z
+    # list order = drawing order: tracks under the video, the video track's own layers, then the tracks over it
+    project.layers.sort(key=lambda l: l.track - 0.5 if l.on_video else l.track)
 
 
 def normalize_gaps(project: Project) -> None:

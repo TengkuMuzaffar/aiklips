@@ -76,13 +76,17 @@ def project_hash(project: Project) -> str:
 def base_hash(project: Project) -> str:
     """Hash of the base preview (everything but overlay layers, notes and the clips' "why" notes)."""
     d = project.to_dict()
-    adjust = [l for l in d.get("layers", []) if l.get("type") == "adjust"]  # these change the base picture
+    # these change the base picture: adjustment layers, and every layer under the video track (baked into the base)
+    adjust = [l for l in d.get("layers", []) if l.get("type") == "adjust" or (
+        not l.get("on_video") and (l.get("track") or 0) < project.main_z)]
     for k in ("layers", "notes", "name", "markers"):
         d.pop(k, None)
     d["adjust"] = adjust
+    d["duration"] = round(project.duration, 3)  # a layer past the clips makes the base video longer
     for c in d.get("clips", []):
         c.pop("meta", None)
-    used = {c.source for c in project.clips} | {m.source for m in project.music}
+    used = ({c.source for c in project.clips} | {m.source for m in project.music}
+            | {l.source for l in project.layers if l.source and not l.on_video and (l.track or 0) < project.main_z})
     d["sources"] = {k: v for k, v in d.get("sources", {}).items() if k in used}  # sources only overlays use
     d["effects_salt"] = _effects_salt()
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()

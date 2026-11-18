@@ -12,7 +12,7 @@ from vedit.ops import scenes, shapes
 from vedit.ops.animate import mix_hex, props_at
 from vedit.ops.overlay_style import render_shape
 from vedit.ops.overlays import SHAPE_DEFAULTS
-from vedit.project import SHAPE_KINDS, Canvas, Keyframe, Layer, Preset, Project, load, migrate
+from vedit.project import SCHEMA_VERSION, SHAPE_KINDS, Canvas, Keyframe, Layer, Preset, Project, load, migrate
 
 from .conftest import needs_ffmpeg
 
@@ -118,7 +118,7 @@ def test_scene_ops_need_a_design(cli):
 
 
 def test_old_projects_migrate():
-    assert migrate({"version": 1, "name": "x"})["version"] == 2
+    assert migrate({"version": 1, "name": "x"})["version"] == SCHEMA_VERSION == 3
 
 
 # ---- shapes ---------------------------------------------------------------------------------------------------
