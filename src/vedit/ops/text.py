@@ -142,10 +142,15 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
     """Render text to a tight RGBA sprite. `highlight` = word index drawn in highlight colour."""
     if style.uppercase:
         text = text.upper()
+    if style.list_style != "none":  # every paragraph (line of the source text) becomes a list item
+        paras = [p for p in text.split("\n")]
+        text = "\n".join((f"{i}. " if style.list_style == "number" else "\u2022 ") + p.strip()
+                         for i, p in enumerate(paras, 1) if p.strip())
     size = max(6, round(style.size * scale))
     font = load_font(style.font, size)
     stroke = round(style.stroke_width * scale) if style.stroke_width else 0
-    ls = style.letter_spacing * scale
+    embolden = max(1, round(size * 0.028)) if style.bold else 0  # extra weight, drawn in the fill colour
+    ls = style.letter_spacing * scale + embolden * 1.6  # bold letters need the room they grew into
     words = [ln.split() for ln in text.split("\n")]
     lines = _layout(words, font, style.max_width * scale, ls)
     ascent, descent = font.getmetrics()
@@ -157,7 +162,7 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
     pad_bg = round(style.bg_padding * scale) if style.bg_color else 0
     shadow_off = round(5 * scale) if style.shadow else 0
     glow = round(style.glow_size * scale) if style.glow_color else 0
-    pad = stroke + max(pad_bg, glow * 2) + shadow_off * 2 + 2
+    pad = stroke + embolden + max(pad_bg, glow * 2) + shadow_off * 2 + 2
     W, H = int(block_w + 2 * pad) + 1, int(block_h + 2 * pad) + 1
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
@@ -177,9 +182,12 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
         for i, ch in enumerate(s):  # keep kerning: offset each letter by the width of the text before it
             draw.text((xy[0] + font.getlength(s[:i]) + i * ls, xy[1]), ch, font=font, **kw)
 
+    deco: list[tuple[float, float, float]] = []  # (x0, x1, line top) of each drawn line, for underline / strike
+
     def draw_words(draw: ImageDraw.ImageDraw, mode: str) -> None:
         """mode: shadow | glow | fill | mask (fill-only alpha of the non-highlighted words, for gradients)."""
         left = budget
+        sw = stroke + embolden
         for li, ln in enumerate(lines):
             if style.align == "center":
                 x = pad + (block_w - widths[li]) / 2
@@ -188,6 +196,7 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
             else:
                 x = pad
             y = pad + li * line_h
+            x0, x_end = x, None
             for wi, word in ln:
                 shown = word[: max(0, left)]
                 left -= len(word)
@@ -195,18 +204,24 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
                 if shown:
                     if mode == "shadow":
                         put(draw, (x + shadow_off, y + shadow_off), shown, fill=(0, 0, 0, 150),
-                            stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+                            stroke_width=sw, stroke_fill=(0, 0, 0, 150))
                     elif mode == "glow":
-                        put(draw, (x, y), shown, fill=rgba(style.glow_color), stroke_width=stroke + glow // 3,
+                        put(draw, (x, y), shown, fill=rgba(style.glow_color), stroke_width=sw + glow // 3,
                             stroke_fill=rgba(style.glow_color))
                     elif mode == "mask":
                         if not hi:
-                            put(draw, (x, y), shown, fill=255)
+                            put(draw, (x, y), shown, fill=255, stroke_width=embolden, stroke_fill=255)
                     else:
                         color = style.highlight_color if hi else style.color
-                        put(draw, (x, y), shown, fill=rgba(color), stroke_width=stroke,
-                            stroke_fill=rgba(style.stroke_color) if stroke else None)
+                        if stroke:  # the outline goes around the emboldened letters
+                            put(draw, (x, y), shown, fill=rgba(style.stroke_color), stroke_width=sw,
+                                stroke_fill=rgba(style.stroke_color))
+                        put(draw, (x, y), shown, fill=rgba(color), stroke_width=embolden,
+                            stroke_fill=rgba(color) if embolden else None)
+                    x_end = x + _wlen(font, shown, ls)
                 x += _wlen(font, word, ls) + space
+            if mode == "fill" and x_end is not None:
+                deco.append((x0, x_end, y))
 
     if style.glow_color:
         gl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -219,12 +234,24 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
         sh = sh.filter(ImageFilter.GaussianBlur(max(1, 3 * scale)))
         img = Image.alpha_composite(img, sh)
     draw_words(ImageDraw.Draw(img), "fill")
+    if style.underline or style.strike:
+        d = ImageDraw.Draw(img)
+        th = max(2, round(size * 0.065))
+        for x0, x1, top in deco:
+            for on, at in ((style.underline, top + ascent + descent * 0.45), (style.strike, top + ascent * 0.62)):
+                if on:
+                    d.rectangle([x0, at - th / 2, x1, at + th / 2], fill=rgba(style.color),
+                                outline=rgba(style.stroke_color) if stroke else None, width=min(stroke, 3) if stroke else 0)
     if style.gradient:
         mask = Image.new("L", (W, H), 0)
         draw_words(ImageDraw.Draw(mask), "mask")
         box = mask.getbbox()  # span the letters themselves, not the line box, so both colours fully show
         if box:
             img.paste(_gradient(style.gradient, W, H, box[1], box[3] - 1), (0, 0), mask)
+    if style.italic:  # slant: shift each row right by how far it is above the bottom
+        k = 0.2
+        extra = int(k * H) + 1
+        img = img.transform((W + extra, H), Image.AFFINE, (1, k, -k * H, 0, 1, 0), resample=Image.BICUBIC)
     return img
 
 
