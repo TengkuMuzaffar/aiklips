@@ -51,12 +51,21 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
   Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
   and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
+  A blank / colour screen (title card, fade-to-colour) = `shape add rect --full --fill #hex` (or `--gradient`);
+  the editor calls these the Elements tab.
 - **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
   whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
-- **Tracks.** The main track holds the clips (and gaps); overlay tracks sit above it (0 = bottom, higher = drawn on
-  top) and several layers share a track when their times don't overlap. B-roll over a talking head: `to-overlay <clip>
-  --at T` (keeps sound, colour, filters), or `overlay add`; back again with `to-clip`. `place <clip> --at T` past the
-  previous clip leaves a gap (background colour). `info` shows each layer's `track`, `hidden` and gap clips; a hidden
+- **Tracks are equal.** The video track holds the clips (and gaps) and sits among the other tracks (0 = bottom,
+  higher = drawn on top) at a height set with `track video up|down|top|bottom|N` (default: the bottom). Tracks under
+  it show through its gaps, letterbox bars and a keyed green screen: a colour screen behind green-screen footage =
+  `shape add rect --full --fill #hex --track 0 --new-track`, `track video up`, `bg remove --mode chroma --replace none`.
+  Several layers share a track when their times don't overlap; an element can also sit on the video track itself, in
+  a gap or after the clips (`place <layer> --video-track --at T`; never over a clip). The timeline lasts until
+  whatever ends last.
+  **Something must stay at 0s**: a move that leaves 0s empty is refused, so put another clip / element at 0s first.
+  B-roll over a talking head: `to-overlay <clip> --at T` (keeps sound, colour, filters; leaves a gap where the clip
+  was, `--close-gap` to ripple), or `overlay add`; back again with `to-clip [--at T]`. `place <clip> --at T` past the
+  previous clip leaves a gap. `info` shows each layer's `track`, `hidden`, gap clips and `video_track_height`; a hidden
   track (the user's eye toggle) is not in the export, so check `track list` before saying something is missing.
 - **Effects on part of a clip.** `fx add <f> --clip c2 --start 1 --end 2.5 --fade-in 0.3` (seconds from the clip's own
   start) instead of splitting the clip just for an effect. Video overlays take filters and colour too
@@ -86,14 +95,14 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | info
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
-move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --src-in]
-to-overlay <clip> --at T [--track N --share-track] | to-clip <layer> [--index N] | track list | track hide|show <N|main>
+move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --under-video --video-track --src-in]
+to-overlay <clip> --at T [--track N --share-track --close-gap] | to-clip <layer> [--index N | --at T] | track list | track hide|show <N|video> | track video up|down|top|bottom|N
 trim-to --at T --side start|end | paste --from ID --to ID [--to ID2] --group colour|effects|framing|sound|speed|style|frame|transform|animation
 remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID]
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
 overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
-shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line|arrow [--start --end --x --y --width --height --fill --gradient '#a,#b' --gradient-angle --sides --points --inner --border --border-color --radius --rotation --blend --preset --scene ID]
+shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line|arrow [--full (whole canvas) --track N --new-track --start --end --x --y --width --height --fill --gradient '#a,#b' --gradient-angle --sides --points --inner --border --border-color --radius --rotation --blend --preset --scene ID]
 layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
 text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --bold --italic --underline --strike --list bullet|number --align --line-spacing --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
