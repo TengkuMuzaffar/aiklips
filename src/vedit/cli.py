@@ -197,6 +197,8 @@ def info():
                "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)}
         if l.hidden:
             row["hidden"] = True
+        if l.on_video:
+            row["on_video_track"] = True
         if l.type == "video":
             row.update(source=l.source, src_in=l.src_in, fit=l.fit, flip_h=l.flip_h, flip_v=l.flip_v)
         if l.type in ("video", "adjust"):
@@ -205,6 +207,7 @@ def info():
         layers.append(row)
     data = {"project": str(d), "name": p.name, "canvas": p.canvas.model_dump(), "duration": round(p.duration, 3),
             **({"main_hidden": True} if p.main_hidden else {}),
+            **({"video_track_height": p.main_z} if p.main_z else {}),
             "sources": {k: v.model_dump() for k, v in p.sources.items()}, "clips": clips, "layers": layers,
             "music": [m.model_dump(by_alias=True) for m in p.music], "history_step": history.head(d)}
     if STATE["json"]:
@@ -313,19 +316,24 @@ def remove_clip(clip: str):
 
 @app.command()
 def place(
-    item: str = typer.Argument(..., help="A clip id (main track) or a layer id (overlay track)"),
+    item: str = typer.Argument(..., help="A clip id (video track) or a layer id (any other track)"),
     at: Optional[float] = typer.Option(None, help="New start, timeline seconds"),
     end: Optional[float] = typer.Option(None, help="Layers: new end (timeline seconds)"),
-    track: Optional[int] = typer.Option(None, help="Layers: overlay track (0 = bottom, higher = drawn on top)"),
+    track: Optional[int] = typer.Option(None, help="Layers: track (0 = bottom, higher = drawn on top; tracks below the video track's height are under the video)"),
     new_track: bool = typer.Option(False, "--new-track", help="Layers: open a new track at --track instead of sharing it"),
     src_in: Optional[float] = typer.Option(None, help="Video layers: start this many seconds into the file (trim the head)"),
+    under_video: bool = typer.Option(False, "--under-video", help="Layers: with --new-track at the video track's height, "
+                                                                  "open it under the video instead of over it"),
+    video_track: bool = typer.Option(False, "--video-track", help="Layers: onto the video track itself (in a gap or "
+                                                                  "after the clips; not over a clip)"),
 ):
     """Move something on the timeline, like dragging it. A clip placed past the end of the clip before it leaves a gap
-    (background colour) before it; placed over another clip it goes before / after that clip. A layer gets new times
-    and / or a track (a busy track bumps it to a new track just above)."""
+    (background colour, or the tracks under the video) before it; placed over another clip it goes before / after that
+    clip. A layer gets new times and / or a track (a busy track bumps it to a new track just above). Something must
+    stay at 0s: a move that leaves the start empty is refused."""
     from .ops import tracks
 
-    with edit(f"place {item}") as tx:
+    with edit(f"place {item}") as tx, tracks.zero_guard(tx.project):
         p = tx.project
         if any(c.id == item for c in p.clips):
             if at is None:
@@ -334,32 +342,39 @@ def place(
             r = {"clip": item, "start": round(t, 3)}
             msg = f"{item} at {t:.2f}s"
         else:
-            l = tracks.place_layer(p, item, at, tracks._KEEP if end is None else end, track, new_track, src_in)
+            if video_track:
+                l = tracks.put_on_video_track(p, item, at, tracks._KEEP if end is None else end)
+            else:
+                l = tracks.place_layer(p, item, at, tracks._KEEP if end is None else end, track, new_track, src_in, under_video)
             r = {"layer": l.id, "track": l.track, "start": l.start, "end": l.end}
             msg = f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
     emit(r, msg + f". {_summary(tx.project)}")
 
 
 @app.command("to-overlay")
-def to_overlay(clip: str, at: float = typer.Option(0.0, help="Start on the timeline after the clip leaves the main track"),
-               track: int = typer.Option(0, help="Overlay track (0 = bottom)"),
-               share_track: bool = typer.Option(False, "--share-track", help="Join --track instead of opening a new one")):
-    """Move a main-track clip onto an overlay track as a full-frame video layer (keeps sound, colour, filters; text on it
-    moves with it). The main track closes up. Use for b-roll over a talking head, or cutaways."""
+def to_overlay(clip: str, at: float = typer.Option(0.0, help="Start on the timeline after the clip leaves the video track"),
+               track: int = typer.Option(0, help="Track (0 = bottom)"),
+               share_track: bool = typer.Option(False, "--share-track", help="Join --track instead of opening a new one"),
+               close_gap: bool = typer.Option(False, "--close-gap", help="Close up the video track (ripple) instead of "
+                                                                         "leaving a gap where the clip was")):
+    """Move a clip from the video track onto another track as a full-frame video layer (keeps sound, colour, filters;
+    text on it moves with it). The video track keeps its timing (a gap where the clip was) unless --close-gap. Use for
+    b-roll over a talking head, or cutaways."""
     from .ops import tracks
 
-    with edit(f"{clip} to overlay") as tx:
-        l = tracks.clip_to_overlay(tx.project, clip, at, track, not share_track)
+    with edit(f"{clip} to overlay") as tx, tracks.zero_guard(tx.project):
+        l = tracks.clip_to_overlay(tx.project, clip, at, track, not share_track, None if close_gap else pdir())
     emit({"layer": l.id, "track": l.track, "start": l.start, "end": l.end}, f"{clip} -> overlay {l.id} on track {l.track}. {_summary(tx.project)}")
 
 
 @app.command("to-clip")
-def to_clip(layer: str, index: Optional[int] = typer.Option(None, help="Position on the main track (default: the end)")):
-    """Move a video overlay onto the main track as a clip (keeps its trim, sound, colour and filters)."""
+def to_clip(layer: str, index: Optional[int] = typer.Option(None, help="Position among the clips (default: the end)"),
+            at: Optional[float] = typer.Option(None, help="Timeline time instead of --index (a gap before it on empty space)")):
+    """Move a video layer onto the video track as a clip (keeps its trim, sound, colour and filters)."""
     from .ops import tracks
 
-    with edit(f"{layer} to main track") as tx:
-        c = tracks.overlay_to_clip(tx.project, layer, index)
+    with edit(f"{layer} to video track") as tx, tracks.zero_guard(tx.project):
+        c = tracks.overlay_to_clip(tx.project, layer, index, at, pdir())
     emit({"clip": c.id}, f"overlay {layer} -> clip {c.id}. {_summary(tx.project)}")
 
 
@@ -386,9 +401,22 @@ def paste(src: str = typer.Option(..., "--from", help="Clip or layer to copy fro
     emit({"changed": n, "kind": kind}, f"Pasted {', '.join(group)} from {src} onto {n} {kind}(s)")
 
 
+@track_app.command("video")
+def track_video(to: str = typer.Argument(..., help="up | down | top | bottom | a height (0 = bottom)")):
+    """Move the video track (the clips) up or down among the other tracks. Tracks under it show through where the
+    video is transparent: gaps, letterbox bars (fit contain), a keyed green screen (`bg remove --mode chroma --replace
+    none`). E.g. a colour screen behind green-screen footage: `shape add rect --full --fill #hex --track 0 --new-track`,
+    then `track video up`."""
+    from .ops import tracks
+
+    with edit(f"video track {to}") as tx:
+        z = tracks.set_video_track(tx.project, to)
+    emit({"height": z}, f"Video track at height {z}: {z} track(s) under it")
+
+
 @track_app.command("list")
 def track_list():
-    """The main track and the overlay tracks (bottom to top) with what is on each."""
+    """All tracks bottom to top (the video track at its height) with what is on each."""
     from .ops import tracks
 
     rows = tracks.track_rows(load(pdir()))
@@ -404,13 +432,13 @@ def _track_vis(track: str, visible: bool) -> None:
 
 
 @track_app.command("hide")
-def track_hide(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+def track_hide(track: str = typer.Argument(..., help="'video' (or 'main') or a track number (0 = bottom)")):
     """Hide a track (not drawn in the preview or export; its sound still plays)."""
     _track_vis(track, False)
 
 
 @track_app.command("show")
-def track_show(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+def track_show(track: str = typer.Argument(..., help="'video' (or 'main') or a track number (0 = bottom)")):
     """Show a hidden track again."""
     _track_vis(track, True)
 
@@ -811,8 +839,13 @@ def shape_add(
     border: Optional[int] = None, border_color: Optional[str] = None, radius: Optional[int] = None,
     rotation: float = 0.0, blend: Optional[str] = None, preset: Optional[list[str]] = typer.Option(None),
     scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in (default: the scene at --start)"),
+    full: bool = typer.Option(False, "--full", help="Cover the whole canvas: a colour screen (rect + --fill) or a "
+                                                    "gradient screen (rect + --gradient)"),
+    track: Optional[int] = typer.Option(None, help="Timeline track to put it on (0 = bottom overlay track)"),
+    new_track: bool = typer.Option(False, "--new-track", help="Open a new track at --track for it (a track of its own)"),
 ):
-    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it, a star that pops in)."""
+    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it, a star that pops in,
+    or with --full a colour / gradient screen covering the canvas)."""
     from .ops import overlays, scenes
 
     with edit(f"shape add {shape}") as tx:
@@ -822,6 +855,8 @@ def shape_add(
         for k, v in (("width", width), ("height", height), ("radius", radius), ("border_width", border), ("border_color", border_color)):
             if v is not None:
                 kw[k] = v
+        if full:
+            kw.update(width=p.canvas.width, height=p.canvas.height, radius=0, x="50%", y="50%")
         layer = overlays.add_shape(p, shape, t0, end, **kw)
         vals: dict[str, Any] = {} if fill is None else {"fill": fill}
         for k, v in (("blend", blend), ("fill_gradient", gradient), ("gradient_angle", gradient_angle), ("sides", sides),
@@ -831,6 +866,9 @@ def shape_add(
         overlays.set_fields(layer, vals)
         layer.presets = _presets(preset)
         scenes.place_in_scene(p, layer, scene)
+        if track is not None or new_track:
+            overlays.place_layer(p, layer.id, track if track is not None else 1 + max((o.track or 0 for o in p.layers if o is not layer), default=-1),
+                                 new_track=new_track)
     emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
 
 
@@ -1025,7 +1063,7 @@ def _clear_effect(p: Project, clip: str | None, types: tuple[str, ...]) -> list[
 def bg_remove(
     clip: Optional[str] = typer.Option(None, help="Only this clip (default: all clips)"),
     mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow) | chroma (green/blue screen, instant)"),
-    replace: Optional[str] = typer.Option(None, help="color:#RRGGBB | blur[:sigma] | image:path | video:path (default: chroma = canvas colour, AI = #00B140)"),
+    replace: Optional[str] = typer.Option(None, help="color:#RRGGBB | blur[:sigma] | image:path | video:path | none (transparent: the tracks under the video show) (default: chroma = canvas colour, AI = #00B140)"),
     smooth: float = typer.Option(0.5, help="fast/quality: temporal smoothing 0..0.9 (less flicker)"),
     key: str = typer.Option("auto", help="chroma: screen colour #RRGGBB, or auto (sampled from each clip)"),
     similarity: Optional[float] = typer.Option(None, help="chroma: how far from the key colour still counts as screen (0.01-0.6; default fitted to the key, at most 0.12)"),

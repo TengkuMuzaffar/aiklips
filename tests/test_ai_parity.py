@@ -17,7 +17,7 @@ CLI_FOR_OP = {
     "transition_set": "transition", "bg_remove": "bg remove", "bg_set": "bg tune", "mask_add": "mask add", "mask_set": "mask set", "focus_add": "focus add", "focus_set": "focus set",
     "remove_clip": "remove-clip", "remove_effect": "fx remove",
     "fx_add": "fx add", "fx_set": "fx set", "fx_reset": "fx set", "fx_remove": "fx remove", "fx_replace": "fx replace",
-    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide",
+    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide", "track_video": "track video",
     "marker_add": "marker add", "marker_set": "marker set", "marker_remove": "marker remove",
     "keyframe_set": "animate keyframes", "keyframe_remove": "animate keyframes", "keyframes_clear": "animate clear",
     "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import",
@@ -121,7 +121,10 @@ def test_place_layer_on_track_and_hide_track(cli, test_clip):
     cli("track", "hide", "main")
     assert load(cli.project).main_hidden and cli("info")["main_hidden"]
     rows = cli("track", "list")["tracks"]
-    assert rows[0]["track"] == "main" and rows[0]["hidden"] and rows[2]["hidden"]
+    assert rows[0]["track"] == "video" and rows[0]["hidden"] and rows[2]["hidden"]  # video track at the bottom
+    assert cli("track", "video", "up")["height"] == 1
+    assert [r["track"] for r in cli("track", "list")["tracks"]] == [0, "video", 1]
+    cli("track", "video", "bottom")
     cli("track", "show", "main")
     cli("track", "show", "1")
     p = load(cli.project)

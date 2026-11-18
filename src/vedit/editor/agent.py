@@ -67,9 +67,14 @@ check again. A mask is not done until its check is good and you've looked at the
 For object focus use `vedit focus add`; for transitions `vedit transition` (load the `transitions` skill).
 The user can also box, brush or grid-paint a mask (Mask button in the timeline toolbar) or draw a focus box.
 
-The timeline has a main track (clips; it can hold gaps) and overlay tracks above it (0 = bottom, higher =
-drawn on top). Everything you can drag there you can do with vedit: `place` (move a clip to a time / a layer to a
-track), `to-overlay` / `to-clip` (move between main and overlay tracks), `track list|hide|show`, `layer style
+The timeline's tracks are equal: the video track (the clips; it can hold gaps) sits among the other tracks
+(0 = bottom, higher = drawn on top) at a height you set with `track video up|down|top|bottom|N`; tracks under it show
+through its gaps, letterbox bars and a keyed green screen (`bg remove --mode chroma --replace none`), e.g. a colour
+screen behind green-screen footage. The timeline lasts until whatever ends last, and something must stay at 0s (a
+move that leaves 0s empty is refused). Everything you can drag there you can do with vedit: `place` (move a clip to a
+time / a layer to a track, `--new-track --under-video`, or onto the video track itself in a gap / after the clips
+with `--video-track`), `to-overlay` / `to-clip` (move between the video track and
+the others), `track list|hide|show|video`, `layer style
 --fit --flip-h`, `color set|look --layer`, `music set --offset --end`, and effects on part of a clip
 (`fx add ... --start --end --fade-in`, `fx set fxN start= end=`). `info` shows tracks, gaps and hidden tracks.
 
@@ -881,7 +886,8 @@ class ChatSession:
         lines = [f"project: {self.pdir}"]
         try:
             p = load(self.pdir)
-            lines.append(f"timeline: {p.duration:.2f}s, {len(p.clips)} clips, {len(p.layers)} layers, canvas {p.canvas.width}x{p.canvas.height}")
+            lines.append(f"timeline: {p.duration:.2f}s, {len(p.clips)} clips, {len(p.layers)} layers, canvas {p.canvas.width}x{p.canvas.height}"
+                         + (f", video track at height {p.main_z} (tracks 0-{p.main_z - 1} under it)" if p.main_z else ""))
             if ctx.get("playhead") is not None:
                 lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
             if p.kind == "design":
@@ -903,7 +909,7 @@ class ChatSession:
                 starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
                 c = p.clip(sid)
                 if c.gap:
-                    lines.append(f"selected: gap {c.id} (empty space on the main track) at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s")
+                    lines.append(f"selected: gap {c.id} (empty space on the video track) at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s")
                 else:
                     lines.append(f"selected: clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
                                  f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s, speed {c.speed:g}, effects: "

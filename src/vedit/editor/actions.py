@@ -33,6 +33,18 @@ def _num(a: dict, key: str) -> float | None:
     return None if v is None or v == "" else float(v)
 
 
+def _drop_on_track(p: Project, l: Any, a: dict) -> None:
+    """An element dragged from the Elements tab onto a timeline track (`track`, `new_track`): put it there."""
+    from ..ops import overlays
+
+    if a.get("video_track"):  # onto the video track itself (a gap, or past the clips)
+        from ..ops import tracks
+
+        tracks.put_on_video_track(p, l.id)
+    elif a.get("track") not in (None, ""):
+        overlays.place_layer(p, l.id, int(a["track"]), new_track=bool(a.get("new_track")), under_video=bool(a.get("under_video")))
+
+
 @op("move_clip")
 def _move_clip(p: Project, a: dict) -> str:
     cut.move_clip(p, a["clip"], int(a["index"]))
@@ -334,6 +346,15 @@ def _track_visible(p: Project, a: dict) -> str:
     return tracks.set_track_visible(p, a.get("track"), bool(a.get("visible", True)))
 
 
+@op("track_video")
+def _track_video(p: Project, a: dict) -> str:
+    """The video track's up / down arrows: move it among the other tracks (shared with `vedit track video`)."""
+    from ..ops import tracks
+
+    z = tracks.set_video_track(p, a.get("to", "up"))
+    return f"video track at height {z} ({z} track(s) under it)"
+
+
 @op("fx_move")
 def _fx_move(p: Project, a: dict) -> str:
     from ..ops import fx_filters
@@ -557,6 +578,7 @@ def _layer_add_adjust(p: Project, a: dict) -> str:
         end = min(p.duration, start + 3) if p.duration > start else None
     l = Layer(id=p.new_id("adj"), type="adjust", start=start, end=end)
     p.layers.append(l)
+    _drop_on_track(p, l, a)
     return f"add adjustment layer {l.id}"
 
 
@@ -583,9 +605,12 @@ def _layer_add_shape(p: Project, a: dict) -> str:
     from ..ops import overlays, scenes
 
     kw = {k: a[k] for k in ("x", "y") if a.get(k) not in (None, "")}
+    if a.get("full"):  # a colour / gradient screen: the whole canvas, square corners
+        kw.update(width=p.canvas.width, height=p.canvas.height, radius=0, x="50%", y="50%")
     l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"), **kw)
     overlays.set_fields(l, {k: v for k, v in a.items() if k in overlays.FRAME_FIELDS})
     scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
     return f"add {l.shape} {l.id}"
 
 
@@ -639,6 +664,7 @@ def _overlay_add(p: Project, a: dict) -> str:
     from ..ops import overlays
 
     l = overlays.add_from_library(p, _PDIR[0], a["key"], float(a.get("start") or 0))
+    _drop_on_track(p, l, a)
     return f"add {overlays.LIBRARY[a['key']].label} ({l.id})"
 
 
@@ -648,8 +674,12 @@ def _layer_place(p: Project, a: dict) -> str:
     from ..ops import tracks
 
     end: Any = tracks._KEEP if "end" not in a else _num(a, "end")
+    if a.get("video_track"):
+        l = tracks.put_on_video_track(p, a["layer"], _num(a, "start"), end)
+        return f"{l.id}: video track, {l.start:.2f}-{l.end:.2f}s"
     track = int(a["track"]) if a.get("track") not in (None, "") else None
-    l = tracks.place_layer(p, a["layer"], _num(a, "start"), end, track, bool(a.get("new_track")), _num(a, "src_in"))
+    l = tracks.place_layer(p, a["layer"], _num(a, "start"), end, track, bool(a.get("new_track")), _num(a, "src_in"),
+                           bool(a.get("under_video")))
     return f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
 
 
@@ -661,7 +691,12 @@ def _layer_add_media(p: Project, a: dict) -> str:
     from ..ops import scenes
 
     track = int(a["track"]) if a.get("track") not in (None, "") else None
-    l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")))
+    l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")),
+                               bool(a.get("under_video")))
+    for k in ("x", "y"):
+        if a.get(k) not in (None, ""):
+            setattr(l, k, a[k])
+    scenes.place_in_scene(p, l, a.get("scene"))
     return f"add {l.type} overlay {l.id}"
 
 
@@ -678,7 +713,8 @@ def _clip_to_overlay(p: Project, a: dict) -> str:
     from ..ops import tracks
 
     cid = a["clip"]
-    l = tracks.clip_to_overlay(p, cid, float(a.get("start") or 0), int(a.get("track") or 0), bool(a.get("new_track", True)))
+    l = tracks.clip_to_overlay(p, cid, float(a.get("start") or 0), int(a.get("track") or 0), bool(a.get("new_track", True)),
+                               _PDIR[0], bool(a.get("under_video")))
     return f"{cid} -> overlay {l.id} on track {l.track}"
 
 
@@ -687,7 +723,8 @@ def _overlay_to_clip(p: Project, a: dict) -> str:
     """A video overlay dragged down onto the main track (ops/tracks.py, shared with `vedit to-clip`)."""
     from ..ops import tracks
 
-    clip = tracks.overlay_to_clip(p, a["layer"], None if a.get("index") in (None, "") else int(a["index"]))
+    clip = tracks.overlay_to_clip(p, a["layer"], None if a.get("index") in (None, "") else int(a["index"]),
+                                  _num(a, "start"), _PDIR[0])
     return f"overlay {a['layer']} -> clip {clip.id}"
 
 
@@ -808,6 +845,11 @@ def coalesce_key(name: str, args: dict[str, Any]) -> str | None:
     return f"{name}:{json.dumps(_shape(args), sort_keys=True)}"
 
 
+# timeline moves that must not leave 0s empty (equal tracks: something always starts the video)
+ZERO_GUARDED = {"layer_place", "clip_place", "clip_to_overlay", "overlay_to_clip", "layer_set", "retime_clip",
+                "insert_source", "batch"}
+
+
 def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     fn = _OPS.get(name)
     if not fn:
@@ -815,7 +857,13 @@ def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     _PDIR[0] = pdir
     with history.transaction(pdir, name) as tx:
         tx.coalesce = coalesce_key(name, args)
-        tx.message = fn(tx.project, args)
+        if name in ZERO_GUARDED:
+            from ..ops import tracks
+
+            with tracks.zero_guard(tx.project):
+                tx.message = fn(tx.project, args)
+        else:
+            tx.message = fn(tx.project, args)
     return {"ok": True, "message": tx.message}
 
 

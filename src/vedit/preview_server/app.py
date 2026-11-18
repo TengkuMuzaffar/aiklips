@@ -121,7 +121,7 @@ class Renderer:
             fresh, final = False, self.final
             try:
                 p = load(self.pdir)
-                if p.clips:
+                if p.duration > 0.01:  # clips, or layers only (equal tracks)
                     # a newer edit makes this render stale: stop FFmpeg now and start over
                     res = render_preview(p, self.pdir, progress=False, should_stop=self.pending.is_set, base=not final)
                     fresh = not res.get("cached")
@@ -403,9 +403,9 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             p = load(d)
         except VeditError:
             raise HTTPException(404)
-        if not p.clips:
-            raise HTTPException(404)
         prev = preview_dir(d) / "preview.mp4"
+        if not p.clips and not prev.exists():
+            raise HTTPException(404)
         if prev.exists():  # poster of the actual edit (canvas, overlays and all)
             poster = state_dir(d) / "cache" / f"poster-{int(prev.stat().st_mtime)}.jpg"
             if not poster.exists():
@@ -418,6 +418,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     poster = None
             if poster:
                 return FileResponse(poster, headers={"Cache-Control": "no-store"})
+        if not p.clips:  # layers only, and the poster failed
+            raise HTTPException(404)
         return FileResponse(_thumb(d, p.clips[0].source), headers={"Cache-Control": "no-store"})
 
     @app.post("/api/close")
