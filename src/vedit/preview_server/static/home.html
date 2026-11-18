@@ -84,6 +84,13 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .tab:hover { color: var(--text); border-color: transparent; border-bottom-color: var(--line2); }
 .tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
 .tab .n { color: var(--faint); font-weight: 500; margin-left: 4px; font-size: 12px; }
+.beta { display: inline-block; font-size: 9.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; line-height: 1; padding: 3px 5px 2px; border-radius: 5px; color: var(--accent); border: 1px solid #4a6a26; background: #1c2a1499; vertical-align: middle; margin-left: 6px; }
+.side .tab .beta { margin-left: 0; }
+h1 .beta { font-size: 10px; position: relative; top: -2px; }
+.pick.styles { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.stylecard .pn { text-transform: capitalize; padding-top: 12px; }
+.stylecard .meta { font-size: 11.5px; line-height: 1.35; }
+label.check { display: flex; align-items: center; gap: 6px; font-weight: 450; color: var(--text); margin: 6px 0 0; }
 [hidden] { display: none !important; }
 .lede { color: var(--muted); margin: -12px 0 22px; max-width: 760px; }
 
@@ -520,8 +527,9 @@ body.selecting .card .thumb .hov { display: none; }
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="projects" data-ic="home" title="Your editing projects (1)">Home<span class="n" id="n-proj"></span></button>
     <div class="side-sec">AI studio</div>
-    <button class="tab" role="tab" data-tab="references" data-ic="film" title="Videos the AI studies for style (2)">References<span class="n" id="n-refs"></span></button>
-    <button class="tab" role="tab" data-tab="generate" data-ic="wand" title="Generate videos in a reference style (3)">Generate<span class="n" id="n-gen"></span></button>
+    <button class="tab" role="tab" data-tab="references" data-ic="film" title="Videos the AI studies for style (2)">References<span class="beta">Beta</span><span class="n" id="n-refs"></span></button>
+    <button class="tab" role="tab" data-tab="generate" data-ic="wand" title="Generate videos in a reference style (3)">Generate<span class="beta">Beta</span><span class="n" id="n-gen"></span></button>
+    <button class="tab" role="tab" data-tab="design" data-ic="spark" title="Motion-design videos: shapes, text and media you animate, with AI help (4)">Design<span class="n" id="n-des"></span></button>
   </nav>
   <div class="spacer"></div>
   <a class="side-update" id="b-update" href="/settings#updates" hidden title="A new version of aiklips is ready"></a>
@@ -538,6 +546,7 @@ body.selecting .card .thumb .hov { display: none; }
   <button class="primary" id="b-new" data-for="projects" style="display:none" title="Create a new video project (N)">＋ New project</button>
   <button class="primary" id="b-ref-add" style="display:none" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
   <button class="primary" id="b-gen-new" style="display:none" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <button class="primary" id="b-des-new" style="display:none" data-for="design" title="Start a new motion design">＋ New design</button>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
   <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
@@ -575,6 +584,12 @@ body.selecting .card .thumb .hov { display: none; }
   <div class="intro" id="gen-intro"></div>
   <div class="sec-h" id="gen-head"><h3>Batches</h3><span class="count" id="gen-count"></span></div>
   <div id="gen-list"></div>
+</main>
+
+<main id="view-design" hidden>
+  <div class="intro" id="des-intro"></div>
+  <div class="sec-h" id="des-head"><h3>Designs</h3><span class="count" id="des-count"></span></div>
+  <div id="des-list"></div>
 </main>
 
 </div>
@@ -770,7 +785,9 @@ function renderStarts() {
     h("button", { class: "start", onclick: () => $("#imp-file").click(), style: { "--d": "60ms" } },
       h("span", { class: "s-ic" }, I("upload", 19)), h("b", {}, "Import video"), h("span", { class: "sub" }, "Or drop files anywhere on this page")),
     h("button", { class: "start", onclick: () => setTab("generate"), style: { "--d": "120ms" } },
-      h("span", { class: "s-ic" }, I("wand", 19)), h("b", {}, "Generate"), h("span", { class: "sub" }, "Several videos in a style you like")),
+      h("span", { class: "s-ic" }, I("wand", 19)), h("b", {}, "Generate", h("span", { class: "beta" }, "Beta")), h("span", { class: "sub" }, "Several videos in a style you like")),
+    h("button", { class: "start", onclick: () => openNewDesign(), style: { "--d": "150ms" } },
+      h("span", { class: "s-ic" }, I("spark", 19)), h("b", {}, "Design"), h("span", { class: "sub" }, "Animate shapes & text, with AI")),
     h("button", { class: "start", onclick: () => $("#b-add").click(), style: { "--d": "180ms" } },
       h("span", { class: "s-ic" }, I("folder", 19)), h("b", {}, "Open folder"), h("span", { class: "sub" }, "Add a project from disk")));
 }
@@ -1027,7 +1044,8 @@ const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 const spinner = () => h("span", { class: "spin" });
 
 // ============================================================ tabs
-const TABS = ["projects", "references", "generate"];
+const TABS = ["projects", "references", "generate", "design"];
+const BETA_TABS = ["references", "generate"];
 const [HASH_TAB, HASH_REF] = location.hash.slice(1).split("/");
 let TAB = TABS.includes(HASH_TAB) ? HASH_TAB : "projects";
 function setTab(t) {
@@ -1035,12 +1053,14 @@ function setTab(t) {
   history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
   if (REF_OPEN) closeRef(false);
   for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
-  $("#page-title").textContent = { projects: "Home", references: "References", generate: "Generate" }[t];
+  $("#page-title").replaceChildren({ projects: "Home", references: "References", generate: "Generate", design: "Design" }[t],
+    ...(BETA_TABS.includes(t) ? [h("span", { class: "beta" }, "Beta")] : []));
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("header [data-for]").forEach((b) => (b.hidden = b.dataset.for !== t));
   if (t === "projects") load();
   if (t === "references") loadRefs();
   if (t === "generate") loadBatches();
+  if (t === "design") loadDesigns();
 }
 document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
 
@@ -1090,7 +1110,7 @@ function intro(el, { kicker, title, body, steps, cta, ctaIcon, onCta, compact })
       h("span", { class: "n" }, AK.icon(ic, 17)), h("div", {}, h("b", {}, t), h("span", {}, d))))));
 }
 function renderRefIntro() {
-  intro($("#ref-intro"), { kicker: "AI studio · References", title: ["Teach the AI a ", h("em", {}, "style")],
+  intro($("#ref-intro"), { kicker: "AI studio · References · Beta", title: ["Teach the AI a ", h("em", {}, "style")],
     body: "Add videos whose style you like. The AI learns the pattern, never their footage or music.",
     steps: [["upload", "Add videos", "TikToks, Reels or ads, as files."], ["eye", "The AI studies them", "Pacing, hook, text, motion and sound."], ["wand", "Use the style", "Generate new videos from your footage."]],
     cta: "Add videos", ctaIcon: "plus", onCta: () => $("#ref-file").click(), compact: REFS.length > 0 });
@@ -1332,7 +1352,7 @@ async function loadBatches() {
 }
 function renderBatches() {
   const list = $("#gen-list"); list.innerHTML = "";
-  intro($("#gen-intro"), { kicker: "AI studio · Generate", title: ["Several videos, ", h("em", {}, "one click")],
+  intro($("#gen-intro"), { kicker: "AI studio · Generate · Beta", title: ["Several videos, ", h("em", {}, "one click")],
     body: "Make different versions from your own footage in a style you like. Each one is a normal project you can keep editing.",
     steps: [["film", "Pick a style", "One or more of your references."], ["upload", "Add footage & sound", "Clips, photos and music."], ["check", "Pick the best", "Each video is scored; keep the winners."]],
     cta: "New generation", ctaIcon: "wand", onCta: openWizard, compact: BATCHES.length > 0 });
@@ -1833,6 +1853,70 @@ async function submitWiz() {
   setTab("generate");
 }
 
+// ============================================================ design: motion-design videos made in the Design studio
+let DESIGNS = [];
+const DES_ART = `<svg class="empty-art" viewBox="0 0 220 150" fill="none">
+  <rect x="62" y="12" width="96" height="126" rx="14" fill="#0e1612" stroke="#2a3830"/>
+  <path d="M110 34l7 15 16 2-12 11 3 16-14-8-14 8 3-16-12-11 16-2z" fill="#c5f467"/>
+  <rect x="80" y="92" width="60" height="10" rx="5" fill="#ffffff2a"/><rect x="88" y="108" width="44" height="7" rx="3.5" fill="#ffffff18"/>
+  <path d="M30 70c10-14 22-14 32 0" stroke="#c5f467" stroke-width="2.5" stroke-dasharray="4 5" fill="none"/>
+  <circle cx="178" cy="44" r="12" fill="none" stroke="#c5f467" stroke-width="2.5"/>
+  <path d="M186 110h18" stroke="#c5f46799" stroke-width="5" stroke-linecap="round"/>
+</svg>`;
+const DES_FORMATS = [["reels", "9:16", "Reels · TikTok · Shorts", [27, 48]], ["square", "1:1", "Feed post", [40, 40]],
+  ["portrait45", "4:5", "Portrait post", [36, 45]], ["landscape", "16:9", "YouTube · slides", [56, 32]]];
+async function loadDesigns() {
+  try { DESIGNS = (await (await fetch("/api/design/projects")).json()).projects || []; } catch { DESIGNS = []; }
+  $("#n-des").textContent = DESIGNS.length ? String(DESIGNS.length) : "";
+  if (TAB === "design") renderDesigns();
+}
+function renderDesigns() {
+  const list = $("#des-list"); list.innerHTML = "";
+  intro($("#des-intro"), { kicker: "Design studio", title: ["Motion design, ", h("em", {}, "made by hand or with your AI")],
+    body: "Scenes of shapes, text and your media that you stretch, move and animate on a canvas. Write a storyboard and let any AI model you've connected design and animate the scenes, then fine-tune everything.",
+    steps: [["grid", "Pick a format", "Reels, square, portrait or landscape."], ["edit", "Add & animate", "Shapes, text, media; drag, stretch, keyframe."], ["spark", "AI helps", "Storyboard, scenes and motion from your brief."]],
+    cta: "New design", ctaIcon: "spark", onCta: openNewDesign, compact: DESIGNS.length > 0 });
+  $("#des-head").hidden = !DESIGNS.length;
+  $("#des-count").textContent = DESIGNS.length ? String(DESIGNS.length) : "";
+  if (!DESIGNS.length) {
+    list.append(h("div", { class: "empty small" }, h("div", { class: "empty-drop" }, AK.h("div", { html: DES_ART }),
+      h("h2", {}, "Your first design ", h("em", {}, "starts here")),
+      h("p", {}, "Pick a format and you're on the canvas: add shapes and text, make them move, or let the AI storyboard it."),
+      h("div", { class: "acts" }, h("button", { class: "primary", onclick: openNewDesign }, AK.icon("spark", 15), "New design")))));
+    return;
+  }
+  list.append(h("div", { class: "grid" }, DESIGNS.map((p, i) => card(p, i))));
+}
+function openNewDesign() {
+  let fmt = (AK.app && AK.app.prefs && AK.app.prefs.format) || "reels";
+  if (!DES_FORMATS.some((x) => x[0] === fmt)) fmt = "reels";
+  const name = h("input", { placeholder: "Untitled design", style: { width: "100%", marginTop: "6px" } });
+  const opts = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", margin: "14px 0" } });
+  const paint = () => {
+    opts.innerHTML = "";
+    for (const [k, ratio, use, [w, hh]] of DES_FORMATS) opts.append(h("button", { class: "fmt-pick" + (fmt === k ? " on" : ""), style: {
+        display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", padding: "14px 6px", borderRadius: "14px",
+        border: `1.5px solid ${fmt === k ? "var(--accent)" : "var(--line2)"}`, background: fmt === k ? "var(--accent-soft)" : "transparent" },
+      onclick: () => { fmt = k; paint(); }, ondblclick: () => { fmt = k; go(); } },
+      h("span", { style: { width: w + "px", height: hh + "px", borderRadius: "5px", border: "1.5px solid currentColor", display: "block" } }),
+      h("b", {}, ratio), h("span", { class: "hint", style: { fontSize: "11px", textAlign: "center" } }, use)));
+  };
+  paint();
+  const goBtn = h("button", { class: "primary" }, AK.icon("spark", 15), "Create design");
+  const m = AK.modal(h("div", { style: { minWidth: "min(560px, 86vw)" } }, h("h2", { style: { margin: 0 } }, "New design"),
+    h("p", { class: "hint", style: { margin: "4px 0 0" } }, "Pick a format. You can resize later."), opts, name,
+    h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "14px" } }, goBtn)));
+  async function go() {
+    goBtn.disabled = true;
+    const r = await call("POST", "/api/design/new", { format: fmt, name: name.value.trim() });
+    if (r) { m.close(); location.href = "/studio"; } else goBtn.disabled = false;
+  }
+  goBtn.onclick = go;
+  name.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  setTimeout(() => name.focus(), 50);
+}
+$("#b-des-new").onclick = () => openNewDesign();
+
 // ============================================================ keys + start
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
@@ -1843,8 +1927,8 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && TAB === "projects" && picking()) { e.preventDefault(); pickAll(true); return; }
   if (e.key === "/" && TAB === "projects") { e.preventDefault(); $("#search").focus(); }
   if (e.key === "/" && TAB === "references" && !REF_OPEN) { e.preventDefault(); $("#ref-search").focus(); }
-  if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : openWizard(); }
-  if (["1", "2", "3"].includes(e.key)) setTab(TABS[+e.key - 1]);
+  if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : TAB === "design" ? openNewDesign() : openWizard(); }
+  if (["1", "2", "3", "4"].includes(e.key)) setTab(TABS[+e.key - 1]);
 });
 function tourDone(a) { setTab("projects"); if (a === "new") openNew(); if (a === "import") $("#imp-file").click(); }
 // ---- shell: icons, view toggle, scroll shadow, menu bar, onboarding / what's new ----
@@ -1872,6 +1956,7 @@ setTab(TAB);
 if (TAB === "references" && HASH_REF) openRef(HASH_REF);
 loadRefs();
 loadBatches();
+loadDesigns();
 fetch("/api/update").then((r) => (r.ok ? r.json() : null)).then((u) => {
   if (!(u?.enabled && (u.available || u.staged))) return;
   const b = $("#b-update"); b.hidden = false;

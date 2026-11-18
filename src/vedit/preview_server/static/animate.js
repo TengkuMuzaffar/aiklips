@@ -50,6 +50,20 @@
     else if (dir === "left") pr.x += off; else if (dir === "right") pr.x -= off;
     pr.opacity *= ease("ease_out", p);
   };
+  function hex4(v) {
+    let h = String(v).trim().replace(/^#/, "");
+    if (h.length === 3 || h.length === 4) h = h.split("").map((c) => c + c).join("");
+    if (h.length === 6) h += "FF";
+    return [0, 2, 4, 6].map((i) => parseInt(h.slice(i, i + 2), 16));
+  }
+  // colour between a and b, same rounding as animate.py mix_hex
+  function mixHex(a, b, p) {
+    const ca = hex4(a), cb = hex4(b);
+    const v = ca.map((x, i) => Math.floor(x + (cb[i] - x) * p + 0.5));
+    const alpha = ca[3] !== 255 || cb[3] !== 255;
+    return "#" + (alpha ? v : v.slice(0, 3)).map((n) => Math.max(0, Math.min(255, n)).toString(16).toUpperCase().padStart(2, "0")).join("");
+  }
+  const wipe = (pr, p) => { pr.reveal *= ease("ease_in_out", p); };
   const PRESETS = {
     fade_in: ["in", 0.4, fade], fade_out: ["out", 0.4, fade],
     pop_in: ["in", 0.35, pop], pop_out: ["out", 0.25, pop],
@@ -64,6 +78,24 @@
     pulse: ["loop", 0, (pr, p, t, k) => { pr.scale *= 1 + num(k.amount, 0.06) * (0.5 + 0.5 * Math.sin((2 * Math.PI * t) / num(k.period, 0.8))); }],
     wiggle: ["loop", 0, (pr, p, t, k) => { pr.rotation += Math.sin((2 * Math.PI * t) / num(k.period, 0.6)) * num(k.degrees, 6); }],
     spin: ["loop", 0, (pr, p, t, k) => { pr.rotation += (360 * t) / num(k.period, 3.0); }],
+    float: ["loop", 0, (pr, p, t, k) => { const per = num(k.period, 3.0); pr.y += Math.sin((2 * Math.PI * t) / per) * num(k.amplitude, 18); pr.rotation += Math.sin((2 * Math.PI * t) / (per * 1.3)) * num(k.degrees, 2.5); }],
+    sway: ["loop", 0, (pr, p, t, k) => { pr.rotation += Math.sin((2 * Math.PI * t) / num(k.period, 2.4)) * num(k.degrees, 8); }],
+    orbit: ["loop", 0, (pr, p, t, k) => { const r = num(k.radius, 24), per = num(k.period, 4.0); pr.x += Math.cos((2 * Math.PI * t) / per) * r; pr.y += Math.sin((2 * Math.PI * t) / per) * r; }],
+    drift: ["loop", 0, (pr, p, t, k) => { pr.x += num(k.speed_x, 30) * t; pr.y += num(k.speed_y, 0) * t; }],
+    push: ["loop", 0, (pr, p, t, k) => { pr.scale *= 1 + num(k.rate, 0.03) * t; }],
+    stretch_in: ["in", 0.45, (pr, p, t, k) => { const v = Math.max(0, ease("back_out", p)); if ((k.axis || "x") === "y") pr.sy *= v; else pr.sx *= v; pr.opacity *= Math.min(1, p * 3); }],
+    grow_in: ["in", 0.5, (pr, p, t, k) => { const v = ease("ease_out", p); if ((k.axis || "y") === "x") pr.sx *= v; else pr.sy *= v; }],
+    rise_in: ["in", 0.5, (pr, p, t, k) => { pr.y += (1 - ease("ease_out", p)) * num(k.distance, 80); pr.scale *= 0.94 + 0.06 * ease("ease_out", p); pr.opacity *= ease("ease_out", p); }],
+    wipe_in: ["in", 0.5, wipe], wipe_out: ["out", 0.4, wipe],
+    shrink_out: ["out", 0.3, (pr, p) => { pr.scale *= ease("ease_in_out", p); pr.opacity *= Math.min(1, p * 2); }],
+    breathe: ["loop", 0, (pr, p, t, k) => { pr.scale *= 1 + num(k.amount, 0.04) * Math.sin((2 * Math.PI * t) / num(k.period, 3.0)); }],
+    squash_stretch: ["loop", 0, (pr, p, t, k) => { const a = num(k.amount, 0.08), v = Math.sin((2 * Math.PI * t) / num(k.period, 0.9)); pr.sx *= 1 + a * v; pr.sy *= 1 - a * v; }],
+    color_cycle: ["loop", 0, (pr, p, t, k) => {
+      const cols = k.colors && k.colors.length ? k.colors : ["#FF3B6B", "#FFC23B", "#22D3EE"], per = num(k.period, 3.0);
+      if (cols.length < 2 || per <= 0) return;
+      const x = ((t / per) % 1) * cols.length, i = Math.floor(x) % cols.length;
+      pr.fill = mixHex(cols[i], cols[(i + 1) % cols.length], x - Math.floor(x));
+    }],
   };
 
   function presetDuration(layer, preset) {
@@ -90,16 +122,34 @@
     return conv(pts[pts.length - 1][1]);
   }
 
-  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal"];
+  function interpColor(kfs, prop, t) {
+    const pts = kfs.filter((k) => k[prop] != null).map((k) => [k.t, k[prop], k.ease || "ease_in_out"]);
+    if (!pts.length) return null;
+    pts.sort((a, b) => a[0] - b[0]);
+    if (t <= pts[0][0]) return mixHex(pts[0][1], pts[0][1], 0);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [t0, v0, e0] = pts[i], [t1, v1] = pts[i + 1];
+      if (t0 <= t && t <= t1) return mixHex(v0, v1, ease(e0, t1 > t0 ? (t - t0) / (t1 - t0) : 1));
+    }
+    const last = pts[pts.length - 1][1];
+    return mixHex(last, last, 0);
+  }
+
+  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy"];
   function propsAt(layer, t, duration, canvas) {
     const pr = {
       x: parsePos(layer.x, canvas.width), y: parsePos(layer.y, canvas.height),
       scale: Number(layer.scale), rotation: Number(layer.rotation), opacity: Number(layer.opacity), reveal: 1,
+      w: layer.width == null ? null : Number(layer.width), h: layer.height == null ? null : Number(layer.height),
+      sx: layer.sx == null ? 1 : Number(layer.sx), sy: layer.sy == null ? 1 : Number(layer.sy),
+      fill: layer.fill === undefined ? null : layer.fill,
     };
     for (const prop of PROPS) {
       const v = interp(layer.keyframes || [], prop, t, prop === "x" ? canvas.width : canvas.height);
       if (v != null) pr[prop] = v;
     }
+    const fc = interpColor(layer.keyframes || [], "fill", t);
+    if (fc != null) pr.fill = fc;
     for (const preset of layer.presets || []) {
       const P = PRESETS[preset.name];
       if (!P) continue;
@@ -109,6 +159,9 @@
       else fn(pr, 1, t, k);
     }
     pr.opacity = clamp01(pr.opacity); pr.reveal = clamp01(pr.reveal); pr.scale = Math.max(0, pr.scale);
+    pr.sx = Math.max(0, pr.sx); pr.sy = Math.max(0, pr.sy);
+    if (pr.w != null) pr.w = Math.max(1, pr.w);
+    if (pr.h != null) pr.h = Math.max(1, pr.h);
     return pr;
   }
 
@@ -135,7 +188,7 @@
     return Math.round(x);
   }
 
-  const api = { ease, parsePos, propsAt, captionGroups, presetDuration, pyRound, PRESETS };
+  const api = { ease, parsePos, propsAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.VAnim = api;
 })(typeof window !== "undefined" ? window : globalThis);

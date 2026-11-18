@@ -1146,7 +1146,7 @@ function contentKey(l) {
     k = JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, words: l.words, wpg: l.words_per_group,
       // frame styling / shape: drawn into the sprite
       radius: l.radius, bw: l.border_width, bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity,
-      shape: l.shape, height: l.height, fill: l.fill });
+      shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner });
     CONTENT.set(l, k);
   }
   return k;
@@ -1267,7 +1267,7 @@ function drawVideoLayer(v, l, pr, box, cv, T) {
   else if (l.fit === "contain") { bw = aspect <= cv.height / cv.width ? cv.width : cv.height / aspect; bh = bw * aspect; }
   const flip = `scale(${l.flip_h ? -1 : 1}, ${l.flip_v ? -1 : 1})`;
   v.vid.style.transform = flip; v.cnv.style.transform = flip;
-  const k = pr.scale * box.sc, w = bw * k, hh = bh * k;
+  const k = pr.scale * box.sc, w = bw * k * (pr.sx ?? 1), hh = bh * k * (pr.sy ?? 1);
   const st = v.el.style;
   st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
   st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
@@ -1308,7 +1308,9 @@ function drawOverlays() {
     const sp = v.shown && SPRITES.get(v.shown), s = pr.scale * extra;
     if (!key || !sp || pr.opacity <= 0.001 || s <= 0.001) { v.el.style.display = "none"; return; }
     if (v.el.src !== sp.url) v.el.src = sp.url;
-    const w = (sp.w / sp.scale) * s * box.sc, hh = (sp.h / sp.scale) * s * box.sc;
+    // stretch (sx / sy) and a shape's keyframed size scale the sprite; the export redraws the shape crisp at that size
+    const kw = l.type === "shape" && pr.w != null && l.width ? pr.w / l.width : 1, kh = l.type === "shape" && pr.h != null && l.height ? pr.h / l.height : 1;
+    const w = (sp.w / sp.scale) * s * (pr.sx ?? 1) * kw * box.sc, hh = (sp.h / sp.scale) * s * (pr.sy ?? 1) * kh * box.sc;
     const st = v.el.style;
     st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
     st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
@@ -2036,17 +2038,17 @@ function renderOverlays() {
     if (lib.length) grid.append(h("div", { class: "fx-cat" }, "Library"), h("div", { class: "fx-grid" }, lib.map((o) =>
       // stickers and frames are shown whole (contain); textures fill the card (cover)
       card({ background: `${o.kind === "image" ? "#283039" : "#111"} url(/api/overlays/${o.key}/thumb.jpg) center / ${o.kind === "image" ? "contain" : "cover"} no-repeat` }, o.label, o.about,
-        () => overlayAdd({ op: "overlay_add", a: { key: o.key } }), o.blend !== "normal" ? o.blend : null))));
+        () => overlayAdd({ op: "overlay_add", a: { key: o.key } }), o.blend !== "normal" ? o.blend : null, null, { op: "overlay_add", a: { key: o.key } }))));
     // real previews of each shape (drawn by the export's own renderer), animated ones marked
     const shapes = [...SHAPES.map(([k, n, a]) => ({ thumb: `shape-${k}`, n, a, op: "layer_add_shape", args: { shape: k }, badge: null })),
       ...OVL.filter((o) => o.kind === "shape").map((o) => ({ thumb: o.key, n: o.label, a: o.about, op: "overlay_add", args: { key: o.key }, badge: "animated" }))]
       .filter((x) => match(`${x.n} ${x.a} shape`));
     if (shapes.length) grid.append(h("div", { class: "fx-cat" }, "Shapes"), h("div", { class: "fx-grid" }, shapes.map((x) =>
-      card({ background: `#5c6470 url(/api/overlays/${x.thumb}/thumb.jpg) center / contain no-repeat` }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), x.badge))));
+      card({ background: `#5c6470 url(/api/overlays/${x.thumb}/thumb.jpg) center / contain no-repeat` }, x.n, x.a, () => overlayAdd({ op: x.op, a: x.args }), x.badge, null, { op: x.op, a: x.args }))));
     if (match("adjustment layer grade colour look filter stretch section")) grid.append(h("div", { class: "fx-cat" }, "Adjustment"), h("div", { class: "fx-grid" },
       card({ background: "repeating-linear-gradient(135deg, #33304a 0 10px, #2a2f3a 10px 20px)" }, "Adjustment layer",
         "Colour or filters for a stretch of the edit, on everything under it", () => overlayAdd({ op: "layer_add_adjust", a: {} }).then(() => {
-          const l = P().layers[P().layers.length - 1]; if (l?.type === "adjust") select({ kind: "layer", id: l.id }); }), null, "sliders")));
+          const l = P().layers[P().layers.length - 1]; if (l?.type === "adjust") select({ kind: "layer", id: l.id }); }), null, "sliders", { op: "layer_add_adjust", a: {} })));
     const tpls = TPL.filter((t) => match(`${t.name} ${t.about} ${t.types.join(" ")} template`));
     if (tpls.length) grid.append(h("div", { class: "fx-cat" }, "Your templates"), h("div", { class: "fx-grid" }, tpls.map((t) => {
       const c = card({ background: "linear-gradient(135deg, #2a2413, #4a3c18)" }, t.name, t.about || `${t.layers} layer(s): ${t.types.join(", ")}`,
@@ -2059,13 +2061,13 @@ function renderOverlays() {
     const vids = Object.entries(p.sources).filter(([, s]) => s.has_video && !/[\\/]overlays[\\/]/.test(s.path) && !/\.gap-/.test(s.path) && match(`${sourceName(s)} video picture in picture pip`));
     grid.append(h("div", { class: "fx-cat" }, "Your videos · picture-in-picture"), vids.length ? h("div", { class: "fx-grid" }, vids.map(([id, s]) =>
       card({ background: `#000 url(${srcThumb(id)}) center / cover no-repeat` }, sourceName(s), `${fmt(s.duration)} · as an overlay, lower right`,
-        () => overlayAdd({ op: "layer_add_video", a: { source: id } }), "PiP")))
+        () => overlayAdd({ op: "layer_add_video", a: { source: id } }), "PiP", null, { source: id })))
       : h("div", { class: "empty" }, "Import a video (Media tab or drop it here) to put it on top as picture-in-picture."));
   };
   const search = h("input", { type: "search", id: "fx-q", value: OVL_Q, placeholder: "Search overlays…  (leak, dust, frame, arrow, retro…)",
     oninput: (e) => { OVL_Q = e.target.value; draw(); } });
   draw();
-  return [h("div", { class: "fx-search" }, search, h("div", { class: "fx-target" }, `Adds at the playhead (${fmt(video.currentTime)}). Select it afterwards to set blend, frame, timing and animation.`)), grid];
+  return [h("div", { class: "fx-search" }, search, h("div", { class: "fx-target" }, `Click to add at the playhead (${fmt(video.currentTime)}), or drag onto a track (New track = a track of its own). Select it afterwards to change colour, blend, frame, timing and animation.`)), grid];
 }
 
 // applied filters on a clip: an ordered stack with on/off, settings, reorder, reset, remove
@@ -3245,7 +3247,7 @@ function fxRows(lane, holder, hs, he, label) {
   }
 }
 // buttons at the right of a track's header: pencil = show / hide its effects as rows, eye = show / hide the track
-function headButtons(head, { fx, eye }) {
+function headButtons(head, { fx, eye, move }) {
   if (head.classList.contains("squash")) return;
   const box = h("span", { class: "hbtns" });
   if (fx) {
@@ -3386,7 +3388,7 @@ function renderTimeline() {
       // the last one (unless it loops)
       const src = l.type === "video" ? p.sources[l.source] : null;
       b.addEventListener("pointerdown", (ev) => dragSpan(ev, b, {
-        s0: s, e0: e, id: l.id, lanes: true, track: t, canMain: !!src,
+        s0: s, e0: e, id: l.id, lanes: true, track: t, canMain: true,
         minStart: src ? s - l.src_in : 0,
         maxLen: src && !l.loop ? (ns, mode) => src.duration - (mode === "l" ? l.src_in + (ns - s) : l.src_in) : null,
         onClick: () => select({ kind: "layer", id: l.id }),
@@ -3403,7 +3405,7 @@ function renderTimeline() {
     el.addEventListener("pointerdown", (ev) => { if (ev.target === el) { seek(timeAt(ev.clientX)); select(null); } });
     setupTrackDrop(el, t, false);
     for (const l of ls) if (l.type === "video") fxRows(lane, l, l.start, layerEnd(l), l.id);
-  }
+  };
 
   // video clips
   const vl = lane("clips main" + sq(p.clips.some((c) => FX_OPEN.has(c.id))), LANES.clips, "film", "Video", "", "var(--clip-b)");
@@ -3478,8 +3480,6 @@ function renderTimeline() {
     el.append(b);
   });
 
-  if (!p.clips.length) vl.append(h("div", { id: "tl-empty" }, "Drop video here or drag from Media",
-    h("button", { class: "ghost", onclick: () => $("#file").click() }, icon("upload"), "Import")));
   // the AI's changes this turn: tinted spans across all tracks (the one in the chip brighter) and pulsing blocks
   EDITS.forEach((x, k) => inner.append(h("div", { class: "aied" + (k === EDIT_I ? " cur" : ""),
     style: { left: `${x.s * PPS}px`, width: `${Math.max(3, (x.e - x.s) * PPS)}px` } })));
@@ -3560,7 +3560,11 @@ function trackTarget(y, x, main = false) {
     if (L.isNew) { if (y < r.bottom) return { track: L.track, isNew: true, el: L.el }; continue; }
     if (y < r.top || y >= r.bottom) continue;
     const f = (y - r.top) / r.height;
-    if (f < 0.3) return { track: L.track + 1, isNew: true, line: r.top };
+    if (L.video) {
+      if (main && f >= 0.25 && f <= 0.75) return { main: true, index: dropIndex(x), el: L.el };
+      return f < 0.5 ? { track: z, isNew: true, line: r.top } : { track: z, isNew: true, under: true, line: r.bottom };
+    }
+    if (f < 0.3) return { track: L.track + 1, isNew: true, under: L.track + 1 === z && L.track < z, line: r.top };
     if (f > 0.7) return { track: L.track, isNew: true, line: r.bottom };
     return { track: L.track, isNew: false, el: L.el };
   }
@@ -3666,7 +3670,7 @@ function setupDrop(vl) {
     const i = dropIndex(e.clientX), mark = $("#insmark");
     mark.style.display = "block"; mark.style.left = `${(i < P().clips.length ? ST.starts[i] : dur()) * PPS}px`;
   });
-  vl.addEventListener("dragleave", () => { vl.classList.remove("drop"); $("#insmark").style.display = "none"; });
+  vl.addEventListener("dragleave", () => { vl.classList.remove("drop"); $("#insmark").style.display = "none"; showTarget(null); });
   vl.addEventListener("drop", async (e) => {
     e.preventDefault(); e.stopPropagation(); vl.classList.remove("drop"); $("#insmark").style.display = "none"; $("#dropveil").style.display = "none";
     const fxKey = e.dataTransfer.getData("application/x-vedit-fx"), mv = e.dataTransfer.getData("application/x-vedit-move");

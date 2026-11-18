@@ -171,6 +171,12 @@ class Host:
         """Open a project when nothing else is open (no async cleanup needed)."""
         pdir = pdir.resolve()
         library.touch(pdir)
+        try:  # an old Design (beta) version opens as a design with scenes
+            from ..ops.scenes import adopt_legacy
+
+            adopt_legacy(pdir)
+        except (VeditError, OSError, ValueError):
+            pass
         self.pdir = pdir
         if self.dev:
             DEV_OPEN.write_text(str(pdir), encoding="utf-8")
@@ -236,11 +242,27 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
     def settings_page() -> str:
         return page("settings.html")
 
+    def _is_design() -> bool:
+        try:
+            return host.pdir is not None and load(host.pdir).kind == "design"
+        except VeditError:
+            return False
+
     @app.get("/editor", response_class=HTMLResponse)
     def editor():
         if host.pdir is None:
             return RedirectResponse("/")
+        if _is_design():  # designs open in the Design studio
+            return RedirectResponse("/studio")
         return page("index.html")
+
+    @app.get("/studio", response_class=HTMLResponse)
+    def studio():
+        if host.pdir is None:
+            return RedirectResponse("/")
+        if not _is_design():
+            return RedirectResponse("/editor")
+        return page("studio.html")
 
     if dev:
         @app.get("/api/dev/stamp", response_class=Response)
@@ -248,6 +270,7 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             return Response(_dev_stamp(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
     STATIC_TYPES = {"animate.js": "text/javascript", "shell.js": "text/javascript", "ui.css": "text/css",
+                    "shapes.js": "text/javascript", "studio.js": "text/javascript",
                     "logo.svg": "image/svg+xml"}
 
     @app.get("/static/{name}")
@@ -454,8 +477,9 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         return {"ok": True}
 
     # ---- references + generation (home tabs) ---------------------------------------------
-    from . import gen_routes
+    from . import design_routes, gen_routes
 
+    design_routes.mount(app, host, bad)  # first: registers the design job handlers before workers resume jobs
     gen_routes.mount(app, host, bad)
 
     # ---- AI models: any model from any Anthropic-compatible provider -----------------
