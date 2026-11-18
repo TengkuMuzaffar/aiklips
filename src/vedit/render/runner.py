@@ -61,8 +61,16 @@ def _playable(path: Path) -> bool:
     return info.get("has_video", False) and info.get("duration", 0) > 0
 
 
+def _effects_salt() -> str:
+    """Versions of the computed effect artifacts (masks, rebuilt backgrounds): when the code that makes them changes,
+    the project file doesn't, so without this a stale preview made with the old artifacts would be reused."""
+    from ..ops import effects, outline, segment, track
+
+    return f"{effects.EFFECT_VERSION}/{track.REMOVE_VERSION}/{track.MASK_VERSION}/{outline.VERSION}/{segment.VERSION}"
+
+
 def project_hash(project: Project) -> str:
-    return hashlib.sha1(dump_json(project).encode()).hexdigest()
+    return hashlib.sha1((dump_json(project) + _effects_salt()).encode()).hexdigest()
 
 
 def base_hash(project: Project) -> str:
@@ -76,6 +84,7 @@ def base_hash(project: Project) -> str:
         c.pop("meta", None)
     used = {c.source for c in project.clips} | {m.source for m in project.music}
     d["sources"] = {k: v for k, v in d.get("sources", {}).items() if k in used}  # sources only overlays use
+    d["effects_salt"] = _effects_salt()
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
 

@@ -243,7 +243,7 @@ def rollback() -> dict:
 # ---- optional features (extras), installed on first use -----------------------------------------------
 # <app>/extras.txt lists the extras this install has. `uv sync` installs exactly what it's told, so the launcher
 # passes the same list on every update and this module adds to it; otherwise an update would remove them.
-EXTRAS = ("ai", "bg-quality", "captions")
+EXTRAS = ("ai", "bg-quality", "captions", "mask-ai")
 _EXTRA_LOCK = threading.Lock()
 
 

@@ -226,6 +226,45 @@ def check_footage(p: Project, pdir: Path) -> list[dict]:
     return out
 
 
+def check_masks(p: Project, pdir: Path) -> list[dict]:
+    """Every tracked mask, checked like `vedit mask check` (motion jumps, SAM re-outline on sample frames). Results are
+    cached per mask setup, so an unchanged mask costs nothing on the next audit."""
+    import hashlib
+    import json
+
+    from .ops import maskcheck, sam
+    from .ops.effects import cache_dir
+    from .render.runner import preview_dir
+
+    out = []
+    starts = p.clip_starts()
+    for c, s0 in zip(p.clips, starts):
+        for e in c.effects:
+            if e.type != "mask" or not e.params.get("track", True):
+                continue
+            mid = e.params.get("id")
+            verify = sam.installed()
+            key = hashlib.sha1(json.dumps([c.source, c.in_, c.out, c.speed, s0, e.params, verify, maskcheck.VERSION],
+                                          sort_keys=True, default=str).encode()).hexdigest()[:16]
+            cache = cache_dir(pdir) / f"maskcheck-{key}.json"
+            if cache.exists():
+                r = json.loads(cache.read_text())
+            else:
+                r = maskcheck.check(pdir, p, c, e, preview_dir(pdir) / f"maskcheck-{mid}.jpg", lambda m: None, verify)
+                cache.write_text(json.dumps(r))
+            if r["verdict"] == "good":
+                continue
+            times = ", ".join(f"{it['t']:.2f}s" for it in r["issues"][:4])
+            first = r["issues"][0]["t"] if r["issues"] else None
+            out.append(_finding("must-fix" if r["verdict"] == "poor" else "should-fix", "mask",
+                                f"Mask {mid} doesn't hold on the object" + (f" at {times}" if times else "")
+                                + (f" ({r['issues'][0]['detail']})" if r["issues"] else "") + ".", first,
+                                f"verdict {r['verdict']}; covers the object {r['agreement'].get('cover_min')} at worst",
+                                f"vedit mask check {mid} (Read its sheet), then vedit mask fix {mid} --at <first wrong time> "
+                                f"--space source --box <where it really is>"))
+    return out
+
+
 _I = re.compile(r"^\s*I:\s*(-?[\d.]+|-inf)\s*LUFS", re.M)
 _PEAK = re.compile(r"^\s*Peak:\s*(-?[\d.]+|-inf)\s*dBFS", re.M)
 
@@ -311,6 +350,11 @@ def audit(p: Project, pdir: Path, render: bool = True) -> dict:
             findings += fn(p, pdir)
         except Exception as e:  # one broken check must not hide the others
             findings.append(_finding("note", "audit", f"Check '{name}' could not run: {e}"))
+    if render:  # masks are tracked by the preview render; without it there's nothing to check yet
+        try:
+            findings += check_masks(p, pdir)
+        except Exception as e:
+            findings.append(_finding("note", "audit", f"Check 'masks' could not run: {e}"))
     try:
         findings += check_audio(p, pdir, render)
     except Exception as e:

@@ -12,6 +12,17 @@ from vedit.project import Clip, Project, Source
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
+def pytest_configure(config):
+    """Isolate the library for the whole run, before any fixture: module- and session-scoped fixtures are set up
+    before the per-test `isolated_library` below, and used to register their projects in the user's real library."""
+    import os
+    import tempfile
+
+    root = Path(tempfile.mkdtemp(prefix="vedit-tests-"))
+    os.environ["VEDIT_HOME"] = str(root / "home")
+    os.environ["VEDIT_PROJECTS_DIR"] = str(root / "projects")
+
+
 @pytest.fixture(autouse=True)
 def isolated_library(tmp_path_factory, monkeypatch):
     """Never touch the real ~/.aiklips library or repo projects/ folder in tests."""

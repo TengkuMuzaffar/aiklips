@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"sync"
 )
 
 type asset struct{ url, sha256 string }
@@ -51,21 +52,29 @@ func exeName(name string) string {
 	return name
 }
 
+func uvPath(p paths) string { return filepath.Join(p.bin, exeName("uv")) }
+
+// uvReady: the pinned uv is already here
+func uvReady(p paths) bool {
+	b, err := os.ReadFile(uvPath(p) + ".version")
+	return err == nil && string(b) == uvVersion && exists(uvPath(p))
+}
+
 // ensureUV returns the path of the pinned uv, downloading it the first time (~15 MB).
 func ensureUV(p paths) (string, error) {
-	dest := filepath.Join(p.bin, exeName("uv"))
+	dest := uvPath(p)
 	stamp := dest + ".version"
-	if b, err := os.ReadFile(stamp); err == nil && string(b) == uvVersion && exists(dest) {
+	if uvReady(p) {
 		return dest, nil
 	}
 	a, ok := uvBuilds[platform()]
 	if !ok {
 		return "", fmt.Errorf("aiklips doesn't support %s yet", platform())
 	}
-	status("Downloading uv (Python installer)…")
+	logf("downloading uv %s", uvVersion)
 	arc := filepath.Join(p.bin, a.url)
 	url := fmt.Sprintf("https://github.com/astral-sh/uv/releases/download/%s/%s", uvVersion, a.url)
-	if err := download(url, arc, a.sha256); err != nil {
+	if err := downloadP(url, arc, a.sha256, ui.track("uv", 20<<20)); err != nil {
 		return "", err
 	}
 	defer os.Remove(arc)
@@ -77,7 +86,19 @@ func ensureUV(p paths) (string, error) {
 
 var ffVersionRe = regexp.MustCompile(`ffmpeg version n?(\d+)`)
 
+var sysFF struct {
+	once   sync.Once
+	ff, fp string
+	ok     bool
+}
+
+// systemFFmpeg finds a system FFmpeg 6+ (checked once per launcher run)
 func systemFFmpeg() (string, string, bool) {
+	sysFF.once.Do(func() { sysFF.ff, sysFF.fp, sysFF.ok = findSystemFFmpeg() })
+	return sysFF.ff, sysFF.fp, sysFF.ok
+}
+
+func findSystemFFmpeg() (string, string, bool) {
 	ff, err1 := exec.LookPath("ffmpeg")
 	fp, err2 := exec.LookPath("ffprobe")
 	if err1 != nil || err2 != nil {
@@ -95,6 +116,20 @@ func systemFFmpeg() (string, string, bool) {
 	return ff, fp, major >= 6
 }
 
+// ffReady: no FFmpeg download needed (a new enough system FFmpeg, or the pinned build is already here)
+func ffReady(p paths) bool {
+	if _, _, ok := systemFFmpeg(); ok {
+		return true
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		dest := filepath.Join(p.bin, exeName(name))
+		if v, err := os.ReadFile(dest + ".version"); err != nil || string(v) != ffmpegTag || !exists(dest) {
+			return false
+		}
+	}
+	return true
+}
+
 // ensureFFmpeg returns ffmpeg + ffprobe: the system's when it is version 6 or newer, else a pinned static build.
 func ensureFFmpeg(p paths) (string, string, error) {
 	if ff, fp, ok := systemFFmpeg(); ok {
@@ -108,6 +143,7 @@ func ensureFFmpeg(p paths) (string, string, error) {
 		return "", "", fmt.Errorf("no FFmpeg build for %s: install FFmpeg 6 or newer and start aiklips again", platform())
 	}
 	var out [2]string
+	var fns []func() error
 	for i, name := range []string{"ffmpeg", "ffprobe"} {
 		dest := filepath.Join(p.bin, exeName(name))
 		stamp := dest + ".version"
@@ -115,20 +151,26 @@ func ensureFFmpeg(p paths) (string, string, error) {
 		if v, err := os.ReadFile(stamp); err == nil && string(v) == ffmpegTag && exists(dest) {
 			continue
 		}
-		status("Downloading FFmpeg…")
-		gz := dest + ".gz"
+		label := map[string]string{"ffmpeg": "FFmpeg", "ffprobe": "FFprobe"}[name]
+		tr := ui.track(label, 30<<20)
 		url := fmt.Sprintf("https://github.com/eugeneware/ffmpeg-static/releases/download/%s/%s", ffmpegTag, b[i].url)
-		if err := download(url, gz, b[i].sha256); err != nil {
-			return "", "", err
-		}
-		err := gunzipTo(gz, dest)
-		os.Remove(gz)
-		if err != nil {
-			return "", "", err
-		}
-		if err := os.WriteFile(stamp, []byte(ffmpegTag), 0o644); err != nil {
-			return "", "", err
-		}
+		sha := b[i].sha256
+		fns = append(fns, func() error { // both at once
+			logf("downloading %s %s", name, ffmpegTag)
+			gz := dest + ".gz"
+			if err := downloadP(url, gz, sha, tr); err != nil {
+				return err
+			}
+			err := gunzipTo(gz, dest)
+			os.Remove(gz)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(stamp, []byte(ffmpegTag), 0o644)
+		})
+	}
+	if err := parallel(fns...); err != nil {
+		return "", "", err
 	}
 	return out[0], out[1], nil
 }

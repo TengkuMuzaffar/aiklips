@@ -247,11 +247,53 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         def dev_stamp() -> Response:
             return Response(_dev_stamp(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
+    STATIC_TYPES = {"animate.js": "text/javascript", "shell.js": "text/javascript", "ui.css": "text/css",
+                    "logo.svg": "image/svg+xml"}
+
     @app.get("/static/{name}")
     def static_file(name: str):
-        if name not in ("animate.js",):
+        if name == "display.ttf":  # the UI's italic display face (bundled for text layers too)
+            from ..ops import fonts as font_lib
+
+            return FileResponse(font_lib.FONT_DIR / "DMSerifDisplay-Italic.ttf", media_type="font/ttf",
+                                headers={"Cache-Control": "max-age=86400"})
+        if name not in STATIC_TYPES:
             raise HTTPException(404)
-        return FileResponse(STATIC / name, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+
+    # ---- app shell: version, first-run onboarding, "what's new" after an update -------------
+    def _ui_file() -> Path:
+        return library.home_dir() / "ui.json"
+
+    def _ui() -> dict:
+        try:
+            return json.loads(_ui_file().read_text())
+        except (OSError, ValueError):
+            return {}
+
+    @app.get("/api/app")
+    def api_app() -> dict:
+        from .. import __version__, updater, whats_new
+
+        ui = _ui()
+        return {"version": __version__, "installed": updater.enabled(), "onboarded": bool(ui.get("onboarded")),
+                "seen_version": ui.get("seen_version"), "whats_new": whats_new.since(ui.get("seen_version")),
+                "all_notes": whats_new.NOTES, "prefs": ui.get("prefs", {}), "projects_root": str(library.projects_root())}
+
+    @app.post("/api/app/seen")
+    def api_app_seen(body: dict) -> dict:
+        """Remember that the welcome tour / this version's highlights were shown, and UI preferences."""
+        from .. import __version__
+
+        ui = _ui()
+        if body.get("onboarded"):
+            ui["onboarded"] = True
+        if body.get("version", True):
+            ui["seen_version"] = __version__
+        if isinstance(body.get("prefs"), dict):
+            ui["prefs"] = {**ui.get("prefs", {}), **body["prefs"]}
+        _ui_file().write_text(json.dumps(ui, indent=2))
+        return {"ok": True}
 
     # ---- project library ------------------------------------------------------------
     @app.get("/api/projects")
@@ -309,6 +351,26 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         except VeditError as e:
             raise bad(e)
         return {"ok": True}
+
+    @app.post("/api/projects/bulk-remove")
+    async def bulk_remove_projects(body: dict) -> dict:
+        """Remove several projects from the list (files stay) or, with delete_files, delete their folders too.
+        Each one is tried on its own: one failure doesn't stop the rest, and the result says which failed."""
+        ids = [int(x) for x in (body.get("ids") or []) if str(x).lstrip("-").isdigit()]
+        delete_files = bool(body.get("delete_files"))
+        if not ids:
+            raise HTTPException(400, "No projects selected")
+        done, failed = [], []
+        for pid in dict.fromkeys(ids):
+            try:
+                row = library.get(pid)
+                if host.pdir and Path(row["path"]).resolve() == host.pdir:
+                    await host.close()
+                library.remove(pid, delete_files and Path(row["path"]).exists())
+                done.append(pid)
+            except (VeditError, OSError) as e:
+                failed.append({"id": pid, "error": str(e)})
+        return {"ok": not failed, "removed": done, "failed": failed}
 
     @app.get("/api/projects/{pid}/thumb.jpg")
     def project_thumb(pid: int):
@@ -692,7 +754,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise HTTPException(400, f"Bad request: {e}")
 
     @app.post("/api/import")
-    async def api_import(file: UploadFile = File(...), append: bool = Form(True), index: int | None = Form(None)) -> dict:
+    async def api_import(file: UploadFile = File(...), append: bool = Form(True), index: int | None = Form(None),
+                         fit_canvas: bool = Form(False)) -> dict:
         from ..editor import actions
 
         d = host.need()
@@ -701,7 +764,7 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             while chunk := await file.read(1 << 20):
                 tmp.write(chunk)
         try:
-            return actions.import_file(d, file.filename or "upload" + suffix, Path(tmp.name), append, index)
+            return actions.import_file(d, file.filename or "upload" + suffix, Path(tmp.name), append, index, fit_canvas)
         except VeditError as e:
             Path(tmp.name).unlink(missing_ok=True)
             raise bad(e)
@@ -1072,7 +1135,7 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     asyncio.create_task(session.ask(str(msg["text"]).strip(), msg.get("context") or {}))
                 elif kind == "permission":
                     allow = msg.get("allow")
-                    session.answer_permission(str(msg.get("id", "")), "always" if allow == "always" else bool(allow))
+                    session.answer_permission(str(msg.get("id", "")), allow if allow in ("always", "turn") else bool(allow))
                 elif kind == "interrupt":
                     await session.interrupt()
                 elif kind == "model":
@@ -1085,6 +1148,13 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     asyncio.create_task(session.delete_chat(str(msg.get("id", ""))))
                 elif kind == "auto_audit":
                     await session.set_auto_audit(bool(msg.get("on")))
+                elif kind == "auditor":
+                    await session.set_auditor(str(msg.get("value", "")))
+                elif kind == "mode":
+                    await session.set_mode(str(msg.get("mode", "")))
+                elif kind == "plan_answer":
+                    asyncio.create_task(session.answer_plan(str(msg.get("id", "")), str(msg.get("answer", ""))[:2000],
+                                                            msg.get("context") or {}))
         except WebSocketDisconnect:
             session.sockets.discard(ws)
 

@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Settings · aiklips</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 <style>
 :root {
   --bg: #0b0d10; --pane: #12151a; --pane2: #181c22; --pane3: #20252d; --line: #262c35; --line2: #333a45;
-  --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #5eead4; --accent-ink: #062a25;
+  --text: #e6e9ef; --muted: #8a93a3; --faint: #5d6574; --accent: #c5f467; --accent-ink: #0b2a1d;
   --danger: #f87171; --ok: #4ade80; --warn: #fbbf24;
 }
 * { box-sizing: border-box; }
@@ -117,7 +117,7 @@ section > .sub { margin: -6px 0 0; color: var(--faint); font-size: 12px; }
 .stp i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; background: var(--pane3); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
 .stp i .ic { width: 11px; height: 11px; }
 .stp.on { color: var(--text); border-color: var(--accent); } .stp.on i { background: var(--accent); color: var(--accent-ink); }
-.stp.done { color: var(--muted); } .stp.done i { background: #15322e; color: var(--accent); }
+.stp.done { color: var(--muted); } .stp.done i { background: #22331a; color: var(--accent); }
 .wiz { display: flex; flex-direction: column; gap: 14px; }
 .wiz h4 { margin: 0; font-size: 14px; }
 .wiz-head { display: flex; gap: 12px; align-items: center; }
@@ -160,7 +160,7 @@ section > .sub { margin: -6px 0 0; color: var(--faint); font-size: 12px; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .seg button { flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--pane2); border-color: var(--line); text-align: left; white-space: normal; }
 .seg button span { color: var(--muted); font-size: 12px; font-weight: 400; }
-.seg button.on { border-color: var(--accent); background: #10302b; }
+.seg button.on { border-color: var(--accent); background: #1f2e15; }
 .seg button.on b { color: var(--accent); }
 .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .rules .card { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
@@ -200,11 +200,81 @@ td .bar { display: block; height: 3px; margin-top: 5px; border-radius: 2px; back
 td small { display: block; color: var(--faint); font: 11px ui-monospace, monospace; }
 .tablewrap { overflow-x: auto; }
 @media (max-width: 620px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* ---- refreshed shell (ui.css tokens) ---- */
+header { height: 56px; padding: 0 14px 0 18px; gap: 12px; }
+header h1 { font-size: 15px; font-weight: 650; }
+.brand { display: flex; align-items: center; gap: 9px; padding-right: 12px; margin-right: 2px; border-right: 1px solid var(--line); }
+body.embed .brand { display: none; }
+#wrap { grid-template-columns: 224px minmax(0, 1fr); }
+nav { padding: 14px 10px; gap: 3px; }
+nav button { padding: 9px 11px; border-radius: 9px; font-size: 13.5px; font-weight: 550; position: relative; }
+nav button.on::before { content: ""; position: absolute; left: -10px; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+nav .ver { margin-top: auto; padding: 10px 11px 0; color: var(--faint); font-size: 11.5px; }
+main { padding: 30px 36px 60px; }
+.page { max-width: 780px; animation: ak-rise var(--t-slow) var(--ease-out) both; }
+h2 { font-size: 22px; letter-spacing: -.015em; }
+.card { border-radius: 14px; }
+/* general tab rows */
+.prow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 18px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
+.prow:first-child { border-top: 0; }
+.prow .pt { display: flex; flex-direction: column; min-width: 0; }
+.prow .pt b { font-weight: 600; } .prow .pt span { color: var(--muted); font-size: 12.5px; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.switch i { position: absolute; inset: 0; border-radius: 22px; background: var(--pane3); border: 1px solid var(--line2); transition: background-color var(--t) var(--ease), border-color var(--t) var(--ease); }
+.switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform var(--t) var(--spring), background-color var(--t) var(--ease); }
+.switch input:checked + i { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + i::after { transform: translateX(16px); background: var(--accent-ink); }
+.switch input:focus-visible + i { box-shadow: 0 0 0 3px var(--accent-soft); }
+.fmts { display: flex; gap: 6px; flex-wrap: wrap; }
+.fmts button { padding: 6px 10px; border-radius: 9px; background: var(--pane3); }
+.fmts button i { display: inline-block; border: 1.6px solid currentColor; border-radius: 2px; }
+.fmts button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.about { display: flex; gap: 16px; align-items: center; padding: 18px; }
+.about img { width: 56px; height: 56px; }
+.about b { font-size: 16px; } .about p { margin: 2px 0 8px; color: var(--muted); }
+.about .links { display: flex; gap: 14px; flex-wrap: wrap; }
+nav .nsearch { position: relative; display: flex; align-items: center; margin: 0 0 10px; }
+nav .nsearch .ic { position: absolute; left: 9px; width: 14px; height: 14px; color: var(--faint); pointer-events: none; }
+nav .nsearch input { width: 100%; padding: 7px 10px 7px 30px; border-radius: 9px; background: var(--bg); }
+nav .ngroup { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; padding: 12px 11px 5px; }
+nav .ngroup:first-of-type { padding-top: 2px; }
+nav .nhits { display: flex; flex-direction: column; gap: 2px; animation: ak-rise var(--t) var(--ease-out) both; }
+nav .nhits button { flex-direction: column; align-items: flex-start; gap: 0; }
+nav .nhits small { color: var(--faint); font-size: 11px; font-weight: 400; }
+nav .nnone { color: var(--faint); font-size: 12px; padding: 6px 11px; }
+.chart { padding: 16px 16px 10px; }
+.cbars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
+.cbars i { flex: 1; min-width: 2px; border-radius: 3px 3px 1px 1px; background: linear-gradient(var(--accent), #8fbf3c); opacity: .85; transform-origin: bottom; animation: cgrow .6s var(--ease-out) both; transition: opacity var(--t-fast); }
+.cbars i.zero { background: var(--line2); opacity: .6; }
+.cbars i:hover { opacity: 1; box-shadow: 0 0 0 1px var(--accent); }
+@keyframes cgrow { from { transform: scaleY(0); } }
+.caxis { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--faint); }
+.caxis .ctip { color: var(--text); font-variant-numeric: tabular-nums; }
+.uhero { display: flex; gap: 18px; align-items: center; padding: 20px; }
+.uhero.new { border-color: #c5f46755; background: linear-gradient(110deg, #c5f46714, var(--pane2) 60%); }
+.uh-logo { position: relative; flex: none; }
+.uh-logo img { width: 64px; height: 64px; display: block; }
+.uh-badge { position: absolute; right: -6px; bottom: -6px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); border: 3px solid var(--pane2); }
+.uh-badge .ic { width: 13px; height: 13px; }
+.uhero.busy .uh-badge .ic { animation: ak-spin 1s linear infinite; }
+.uh-t { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.uh-t b { font-size: 17px; letter-spacing: -.01em; } .uh-t > span { color: var(--muted); }
+.uh-t .btnrow { margin-top: 8px; }
+.hl { display: grid; grid-template-columns: 1fr 1fr; }
+.hl-i { padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); }
+.hl-i:nth-child(-n+2) { border-top: 0; } .hl-i:nth-child(odd) { border-right: 1px solid var(--line); }
+.hl-i span { color: var(--muted); font-size: 12.5px; }
+@media (max-width: 680px) { nav .nsearch, nav .ngroup, nav .ver { display: none; } .hl { grid-template-columns: 1fr; } .hl-i:nth-child(odd) { border-right: 0; } }
+.notes { margin: 0; padding: 12px 16px 12px 32px; display: grid; gap: 6px; }
+.notes li { color: var(--text); } .notes li::marker { color: var(--accent); }
 </style>
+<link rel="stylesheet" href="/static/ui.css">
+<script src="/static/shell.js"></script>
 </head>
 <body>
 <header>
-  <div class="logo">ai<span>klips</span></div>
+  <div class="brand"><img src="/static/logo.svg" class="ak-mark" width="26" height="26" alt=""><span class="ak-word">ai<span>klips</span></span></div>
   <h1>Settings</h1>
   <div class="spacer"></div>
   <button class="ghost" id="b-close"></button>
@@ -252,6 +322,13 @@ const ICONS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+  gift: '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  github: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
 };
 function icon(name) {
@@ -259,10 +336,7 @@ function icon(name) {
   el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
   return el;
 }
-function toast(msg, err = false) {
-  const t = $("#toast"); t.textContent = msg; t.className = err ? "err" : ""; t.style.display = "block";
-  clearTimeout(toast.tm); toast.tm = setTimeout(() => (t.style.display = "none"), err ? 5000 : 2200);
-}
+function toast(msg, err = false) { AK.toast(msg, err); }
 async function api(url, body) {
   try {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
@@ -277,7 +351,7 @@ const field = (label, el) => [h("label", {}, label), el];
 const ext = (href, text) => h("a", { class: "ext", href, target: "_blank", rel: "noopener" }, text, icon("external"));
 async function copyText(t) { try { await navigator.clipboard.writeText(t); toast("Copied"); } catch { toast("Couldn't copy", true); } }
 const codeLine = (cmd) => h("div", { class: "codeline" }, h("code", {}, cmd), h("button", { class: "ghost icon", title: "Copy", onclick: () => copyText(cmd) }, icon("copy")));
-const PROVIDER_COLORS = { anthropic: "#d97757", deepseek: "#4d6bfe", opencode: "#a3a3a3" };
+const PROVIDER_COLORS = { anthropic: "#d97757", openai: "#10a37f", deepseek: "#4d6bfe", opencode: "#a3a3a3" };
 function avatar(id, name) {
   let c = PROVIDER_COLORS[id];
   if (!c) { let hsh = 0; for (const ch of id) hsh = (hsh * 31 + ch.charCodeAt(0)) % 360; c = `hsl(${hsh} 55% 58%)`; }
@@ -286,8 +360,23 @@ function avatar(id, name) {
 
 // ---------- state + routing ----------
 const TABS = [
-  ["models", "Models", "cpu"], ["providers", "Providers & keys", "plug"], ["permissions", "Permissions", "shield"], ["usage", "Usage", "chart"], ["updates", "Updates", "download"]];
-let TAB = "models";
+  ["general", "General", "home", "App"], ["updates", "Updates", "download", "App"],
+  ["models", "Models", "cpu", "AI"], ["providers", "Providers & keys", "plug", "AI"], ["permissions", "Permissions", "shield", "AI"], ["usage", "Usage", "chart", "AI"]];
+// what the settings search finds: [words people type, label shown, tab]
+const FIND = [
+  ["format aspect ratio reels tiktok youtube square default new project", "Default format", "general"],
+  ["frame rate fps", "Frame rate", "general"], ["folder location path where projects saved", "Projects folder", "general"],
+  ["motion animation reduce calm accessibility", "Reduce motion", "general"], ["tour welcome onboarding help", "Welcome tour", "general"],
+  ["whats new changelog release notes", "What's new", "general"], ["about version licence website github bug report problem", "About aiklips", "general"],
+  ["update upgrade version download restart rollback auto", "Updates", "updates"],
+  ["model chat ai editor opus sonnet haiku", "AI editor model", "models"], ["watcher director editor auditor team roles", "Generation & review team", "models"],
+  ["pass mark audit score rounds revision", "Auditor pass mark", "models"],
+  ["provider api key deepseek openrouter opencode claude sign in login", "Providers & keys", "providers"],
+  ["permission allow deny ask tools programs safety", "Permissions", "permissions"],
+  ["usage cost tokens calls spend money billing", "Usage", "usage"],
+];
+let FINDQ = "";
+let TAB = "general";
 let PUB = null, AI = null, SET = null, ROLES = null, AUDIT = null, PERM = null, USAGE = null, USAGE_DAYS = 30, UPD = null, UPD_BUSY = "";
 let WIZ = null, ADDM = null, LOGIN = null, POLL = null;
 const TESTS = {};
@@ -296,7 +385,7 @@ const TESTS = {};
 function go(hash) { if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash); route(); }
 function route() {
   const [tab, sub, arg] = location.hash.slice(1).split("/");
-  TAB = TABS.some((t) => t[0] === tab) ? tab : "models";
+  TAB = TABS.some((t) => t[0] === tab) ? tab : "general";
   if (TAB === "providers" && sub === "add" && !WIZ) WIZ = { step: 1 };
   if (TAB === "providers" && sub === "edit" && PUB) { const pv = PUB.providers.find((p) => p.id === decodeURIComponent(arg || "")); if (pv && !pv.builtin) editProvider(pv, false); }
   if (TAB === "usage" && !USAGE) loadUsage();
@@ -324,7 +413,7 @@ if (EMBED) document.body.classList.add("embed");
 const changed = (what) => EMBED && parent.postMessage({ type: "settings:changed", what }, location.origin);
 
 async function loadAll() {
-  [PUB, AI, SET, ROLES, AUDIT] = await Promise.all([get("/api/models"), get("/api/ai/status"), get("/api/settings"), get("/api/ai/roles"), get("/api/audit/settings")]);
+  [, PUB, AI, SET, ROLES, AUDIT] = await Promise.all([AK.load(), get("/api/models"), get("/api/ai/status"), get("/api/settings"), get("/api/ai/roles"), get("/api/audit/settings")]);
   route();
 }
 async function refreshModels(pub) { PUB = pub || await get("/api/models"); ROLES = await get("/api/ai/roles"); changed("models"); render(); }
@@ -333,11 +422,25 @@ const readyBuiltin = () => AI?.claude?.installed && AI?.claude?.loggedIn;
 
 function render() {
   const unready = PUB ? PUB.providers.filter((p) => !p.ready).length + (AI && !readyBuiltin() ? 1 : 0) : 0;
-  $("#nav").replaceChildren(...TABS.map(([id, label, ic]) => h("button", { class: TAB === id ? "on" : "", onclick: () => { if (id !== "providers") WIZ = null; go(id); } },
-    icon(ic), label, id === "providers" && unready ? h("span", { class: "n", title: "Some providers need sign-in or a key" }, "●") : "")));
+  const q = FINDQ.trim().toLowerCase();
+  const hits = q ? FIND.filter(([w, l]) => (w + " " + l.toLowerCase()).includes(q)) : [];
+  const search = h("label", { class: "nsearch" }, icon("search"), h("input", { type: "search", placeholder: "Search settings", value: FINDQ, "aria-label": "Search settings",
+    oninput: (e) => { FINDQ = e.target.value; render(); const i = $("#nav input"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); },
+    onkeydown: (e) => { if (e.key === "Enter" && hits[0]) { FINDQ = ""; go(hits[0][2]); } if (e.key === "Escape") { FINDQ = ""; render(); } } }));
+  const groups = [];
+  let g = null;
+  for (const [id, label, ic, grp] of TABS) {
+    if (grp !== g) { g = grp; groups.push(h("div", { class: "ngroup" }, grp)); }
+    groups.push(h("button", { class: TAB === id ? "on" : "", onclick: () => { if (id !== "providers") WIZ = null; go(id); } },
+      icon(ic), label, id === "providers" && unready ? h("span", { class: "n", title: "Some providers need sign-in or a key" }, "●") : ""));
+  }
+  $("#nav").replaceChildren(search,
+    ...(q ? [hits.length ? h("div", { class: "nhits" }, hits.map(([, l, t]) => h("button", { onclick: () => { FINDQ = ""; go(t); } },
+      h("span", {}, l), h("small", {}, TABS.find((x) => x[0] === t)[1])))) : h("div", { class: "nnone" }, "No setting matches.")] : groups),
+    h("div", { class: "ver" }, AK.app ? `aiklips ${AK.app.version}` : ""));
   const page = $("#page");
   if (!PUB) return page.replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…"));
-  page.replaceChildren(...{ models: pageModels, providers: pageProviders, permissions: pagePermissions, usage: pageUsage, updates: pageUpdates }[TAB]());
+  page.replaceChildren(...{ general: pageGeneral, models: pageModels, providers: pageProviders, permissions: pagePermissions, usage: pageUsage, updates: pageUpdates }[TAB]());
 }
 
 // ---------- Models ----------
@@ -463,7 +566,7 @@ function providerCard(pv) {
       else actions.push(h("button", { class: "primary", onclick: () => signIn("install") }, "Install Claude Code"));
     }
   } else {
-    sub = pv.base_url;
+    sub = pv.base_url + (pv.api === "openai" ? " · OpenAI API" : "");
     chip = pv.ready ? ["ok", pv.key_stored ? "Key saved" : `Key from $${pv.api_key_env}`] : ["bad", "Needs API key"];
     actions.push(h("button", { class: "ghost", onclick: () => editProvider(pv) }, pv.ready ? "Edit" : "Add key"),
       h("button", { class: "ghost danger icon", title: "Remove provider and its models", onclick: () => confirm(`Remove ${pv.name} and its ${ms.length} model(s)?`) && modelsApi(`/api/models/provider/${encodeURIComponent(pv.id)}/remove`) }, icon("trash")));
@@ -476,13 +579,13 @@ function providerCard(pv) {
 }
 function editProvider(pv, rerender = true) {
   const tpl = PUB.templates.find((t) => t.id === pv.id) || PUB.templates.find((t) => t.id === "custom");
-  WIZ = { step: 2, edit: pv, tpl, form: { name: pv.name, base_url: pv.base_url, api_key: "", api_key_env: pv.api_key_env, env: JSON.stringify(pv.env || {}) } };
+  WIZ = { step: 2, edit: pv, tpl, form: { name: pv.name, base_url: pv.base_url, api_key: "", api_key_env: pv.api_key_env, env: JSON.stringify(pv.env || {}), api: pv.api || "anthropic" } };
   if (rerender) render();
 }
 function pickTemplate(t) {
   const taken = PUB.providers.find((p) => p.id === t.id);
   if (taken) return editProvider(taken);
-  WIZ = { step: 2, tpl: { ...t, fromWizard: true }, form: { name: t.name, base_url: t.base_url, api_key: "", api_key_env: t.api_key_env, env: "{}" } };
+  WIZ = { step: 2, tpl: { ...t, fromWizard: true }, form: { name: t.name, base_url: t.base_url, api_key: "", api_key_env: t.api_key_env, env: "{}", api: t.api || "anthropic" } };
   render();
 }
 const endWiz = () => { WIZ = null; if (location.hash !== "#providers") history.replaceState(null, "", "#providers"); render(); };
@@ -507,7 +610,7 @@ function wizStep2() {
   const inp = (k, attrs = {}) => h("input", { type: "text", value: f[k], ...attrs, oninput: (e) => (f[k] = e.target.value) });
   const save = async () => {
     let env; try { env = JSON.parse(f.env || "{}"); } catch { return toast("Extra environment must be valid JSON", true); }
-    const body = { id: ed?.id, name: f.name, base_url: f.base_url, api_key_env: f.api_key_env, env };
+    const body = { id: ed?.id, name: f.name, base_url: f.base_url, api_key_env: f.api_key_env, env, api: f.api || "anthropic" };
     if (f.api_key) body.api_key = f.api_key;
     const r = await modelsApi("/api/models/provider", body);
     if (!r) return;
@@ -520,7 +623,10 @@ function wizStep2() {
       h("p", { class: "hint" }, t.blurb))),
     h("div", { class: "fields" },
       custom || ed ? [field("Name", inp("name", { placeholder: "e.g. OpenRouter", disabled: !!ed })),
-        field("Base URL", inp("base_url", { placeholder: "https://…  (without /v1)" }))] : [],
+        custom && !ed ? field("API format", h("select", { onchange: (e) => { f.api = e.target.value; render(); } },
+          h("option", { value: "anthropic", selected: f.api !== "openai" }, "Anthropic Messages (/v1/messages)"),
+          h("option", { value: "openai", selected: f.api === "openai" }, "OpenAI Chat Completions (/chat/completions)"))) : [],
+        field("Base URL", inp("base_url", { placeholder: f.api === "openai" ? "https://…/v1  (OpenAI-style root, e.g. http://localhost:11434/v1)" : "https://…  (without /v1)" }))] : [],
       field("API key", h("div", { class: "keyrow" },
         h("input", { type: "password", autocomplete: "off", value: f.api_key, oninput: (e) => (f.api_key = e.target.value),
           placeholder: ed?.key_stored ? "•••••••• saved — leave blank to keep" : "Paste your API key", onkeydown: (e) => e.key === "Enter" && save() }),
@@ -532,7 +638,7 @@ function wizStep2() {
           field("Key from env var", inp("api_key_env", { placeholder: "e.g. DEEPSEEK_API_KEY — used when no key is saved" })),
           field("Extra env", h("textarea", { rows: 2, value: f.env, oninput: (e) => (f.env = e.target.value), placeholder: '{"API_TIMEOUT_MS": "600000"}' })),
           ed?.key_stored ? field("", h("button", { class: "ghost danger", onclick: async () => {
-            const r = await modelsApi("/api/models/provider", { id: ed.id, name: ed.name, base_url: f.base_url, api_key_env: f.api_key_env, env: ed.env, api_key: "" });
+            const r = await modelsApi("/api/models/provider", { id: ed.id, name: ed.name, base_url: f.base_url, api_key_env: f.api_key_env, env: ed.env, api: f.api, api_key: "" });
             if (r) { toast("Saved key removed"); editProvider(r.models.providers.find((p) => p.id === ed.id)); } } }, "Forget saved key")) : []))),
     h("div", { class: "btnrow end" },
       h("button", { class: "ghost", onclick: () => { if (ed) endWiz(); else { WIZ = { step: 1 }; render(); } } }, ed ? "Cancel" : "Back"),
@@ -658,7 +764,8 @@ function pagePermissions() {
     h("section", {}, h("h3", {}, "Built-in rules"), h("p", { class: "sub" }, "These can't be changed, so the AI can never delete your footage or run arbitrary code unasked."),
       h("div", { class: "rules" },
         h("div", { class: "card yes" }, h("h4", {}, icon("shield-check"), "Always allowed"), R.allowed.map(rule)),
-        h("div", { class: "card no" }, h("h4", {}, icon("hand"), "Always asks"), R.always_ask.map(rule)))),
+        h("div", { class: "card no" }, h("h4", {}, icon("hand"), "Always asks"), R.always_ask.map(rule)),
+        R.never ? h("div", { class: "card no" }, h("h4", {}, icon("lock"), "Never allowed (can't be overridden)"), R.never.map(rule)) : "")),
     h("section", {}, h("h3", {}, "Your data and the AI"),
       h("div", { class: "card decl" }, R.data.map(rule))),
   ];
@@ -669,6 +776,27 @@ const TASKS = { chat: "AI editor chat", study: "Watcher · references", footage:
   planner: "Creative director · plan", concepts: "Creative director · concepts", rank: "Creative director · ranking", editor: "Editor", auditor: "Auditor",
   critic: "Auditor (older version)", fixer: "Editor · fixes (older version)" };
 async function loadUsage() { USAGE = await get(`/api/settings/usage?days=${USAGE_DAYS}`); render(); }
+// one bar per day (cost when providers report it, else calls); hover a bar for the numbers
+function dailyChart(U) {
+  const days = U.daily || [];
+  if (days.length < 2) return "";
+  const byCost = days.some((d) => d.cost_known);
+  const val = (d) => (byCost ? d.cost_usd : d.calls);
+  const n = Math.min(U.days, 90), end = new Date(), all = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const dt = new Date(end); dt.setDate(end.getDate() - i);
+    const key = dt.toISOString().slice(0, 10);
+    all.push(days.find((d) => d.day === key) || { day: key, calls: 0, cost_usd: 0, input_tokens: 0, output_tokens: 0 });
+  }
+  const max = Math.max(...all.map(val), 1e-9);
+  const tip = h("div", { class: "ctip" }, "Hover a day");
+  const bars = h("div", { class: "cbars" }, all.map((d) => h("i", {
+    style: { height: `${Math.max(val(d) ? 4 : 1, (val(d) / max) * 100)}%` }, class: val(d) ? "" : "zero",
+    onmouseenter: () => { tip.textContent = `${new Date(d.day + "T12:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} · ${d.calls} call${d.calls === 1 ? "" : "s"}${byCost ? " · " + usd(d.cost_usd || 0) : ""} · ${num((d.input_tokens || 0) + (d.output_tokens || 0))} tokens`; },
+  })));
+  return h("section", {}, h("h3", {}, byCost ? "Cost per day" : "Calls per day"),
+    h("div", { class: "card chart" }, bars, h("div", { class: "caxis" }, h("span", {}, new Date(all[0].day + "T12:00").toLocaleDateString(undefined, { day: "numeric", month: "short" })), tip, h("span", {}, "Today"))));
+}
 function pageUsage() {
   const period = h("select", { onchange: (e) => { USAGE_DAYS = Number(e.target.value); USAGE = null; loadUsage(); render(); } },
     [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"], [365, "Last year"]].map(([v, l]) => h("option", { value: v, selected: v === USAGE_DAYS }, l)));
@@ -689,6 +817,7 @@ function pageUsage() {
     h("div", { class: "tiles" },
       tile("AI calls", num(T.calls)), tile("Tokens in", num(T.input_tokens), "incl. cached"), tile("Tokens out", num(T.output_tokens)),
       tile("Reported cost", T.cost_known ? usd(T.cost_usd) : "—", T.cost_known < T.calls ? `${T.calls - T.cost_known} calls without a price` : "")),
+    dailyChart(USAGE),
     h("section", {}, h("h3", {}, "By model"), table(USAGE.models, "Model", (r) => [r.label, h("small", {}, r.key), h("i", { class: "bar", style: { width: `${(r.calls / max) * 100}%` } })])),
     h("section", {}, h("h3", {}, "By job"), table(USAGE.tasks, "Job", (r) => TASKS[r.key] || r.key)),
     partial ? h("p", { class: "hint" }, "* some calls in this row had no reported price.") : "",
@@ -711,25 +840,68 @@ async function restartApp() {
     $("#page").replaceChildren(h("p", { class: "hint" }, h("span", { class: "spin" }), " Restarting aiklips — this window reopens in a moment."));
   } else { UPD_BUSY = ""; render(); }
 }
+// release notes are markdown from GitHub: show their bullet points as a list
+function notesList(md) {
+  const items = md.split("\n").map((l) => l.trim()).filter((l) => /^[-*] /.test(l)).map((l) => l.slice(2).replace(/\*\*|`/g, "").replace(/\s*\(#?[0-9a-f]{7,}\)$/, "")
+    .replace(/^(feat|fix|perf|refactor|chore|docs|style|test|build|ci)(\([^)]*\))?!?:\s*/i, "").replace(/^./, (c) => c.toUpperCase()));
+  if (!items.length) return h("div", { class: "card", style: { padding: "12px 16px", whiteSpace: "pre-wrap" } }, md);
+  return h("ul", { class: "card notes" }, items.slice(0, 12).map((t) => h("li", {}, t)));
+}
+
+// ---------- General ----------
+const FMT = [["reels", "9:16", 7, 12], ["portrait45", "4:5", 9, 11], ["square", "1:1", 10, 10], ["landscape", "16:9", 13, 7]];
+function prow(title, sub, control) { return h("div", { class: "prow" }, h("div", { class: "pt" }, h("b", {}, title), h("span", {}, sub)), control); }
+function toggle(on, onchange) { return h("label", { class: "switch" }, h("input", { type: "checkbox", checked: on, onchange: (e) => onchange(e.target.checked) }), h("i")); }
+function pageGeneral() {
+  const pr = AK.app?.prefs || {};
+  const fmt = pr.format || "reels", fps = String(pr.fps || 30);
+  const save = async (p) => { await AK.savePrefs(p); render(); toast("Saved"); };
+  return [
+    h("h2", {}, "General"), h("p", { class: "lede" }, "How aiklips starts new projects, looks and feels."),
+    h("section", {}, h("h3", {}, "New projects"), h("div", { class: "card" },
+      prow("Default format", "The shape new projects start in. Each project can still pick its own.",
+        h("div", { class: "fmts" }, FMT.map(([id, label, w, ht]) => h("button", { class: fmt === id ? "on" : "", onclick: () => save({ format: id }) },
+          h("i", { style: { width: w + "px", height: ht + "px" } }), label)))),
+      prow("Frame rate", "Frames per second for new projects.",
+        h("select", { onchange: (e) => save({ fps: +e.target.value }) }, ["24", "25", "30", "60"].map((v) => h("option", { value: v, selected: v === fps }, `${v} fps`)))),
+      prow("Projects folder", AK.app?.projects_root || "", h("button", { onclick: () => copyText(AK.app?.projects_root || "") }, icon("copy"), "Copy path")))),
+    h("section", {}, h("h3", {}, "Appearance"), h("div", { class: "card" },
+      prow("Reduce motion", "Turn off the interface animations. Your system's reduce-motion setting is always respected.", toggle(!!pr.calm, (v) => save({ calm: v }))))),
+    h("section", {}, h("h3", {}, "Help"), h("div", { class: "card" },
+      prow("Welcome tour", "Connect your AI, pick a format and learn the editor in a minute.", h("button", { onclick: () => AK.welcome({ onDone: (a) => { if (a !== "explore") location.href = "/?do=" + (a === "import" ? "new" : a); } }) }, icon("help"), "Replay tour")),
+      prow("What's new", "Highlights from recent versions.", h("button", { onclick: () => AK.whatsNew(AK.app?.all_notes, { all: true }) }, icon("gift"), "Show")),
+      prow("Report a problem", "Opens a new issue on GitHub. Say what you did and what happened.", ext("https://github.com/TengkuMuzaffar/aiklips/issues/new", "Open GitHub")))),
+    h("section", {}, h("h3", {}, "About"), h("div", { class: "card about" }, h("img", { src: "/static/logo.svg", alt: "" }),
+      h("div", {}, h("b", {}, `aiklips ${AK.app?.version || ""}`), h("p", {}, "Free and open source under the MIT licence."),
+        h("div", { class: "links" }, ext("https://aiklips.muzdev.online", "Website"), ext("https://github.com/TengkuMuzaffar/aiklips", "Source code"), h("a", { class: "ext", href: "#updates", onclick: (e) => { e.preventDefault(); go("updates"); } }, "Check for updates"))))),
+  ];
+}
+
 function pageUpdates() {
   const head = [h("h2", {}, "Updates"), h("p", { class: "lede" }, "New versions come from the project's GitHub releases. They're signed, checked before installing, and your projects are never touched.")];
   if (!UPD) return [...head, h("p", { class: "hint" }, h("span", { class: "spin" }), " Loading…")];
   const U = UPD;
-  if (!U.enabled) return [...head, h("div", { class: "card", style: { padding: "18px" } },
-    h("b", {}, `aiklips ${U.current} (running from source)`),
-    h("p", { class: "hint", style: { margin: "6px 0 10px" } }, "This copy runs from a source checkout, so it updates with git instead:"), codeLine("git pull && uv sync"))];
+  if (!U.enabled) return [...head, h("div", { class: "card uhero ok" },
+    h("div", { class: "uh-logo" }, h("img", { src: "/static/logo.svg", alt: "" })),
+    h("div", { class: "uh-t" }, h("b", {}, `aiklips ${U.current}`), h("span", {}, "This copy runs from a source checkout, so it updates with git instead:"), codeLine("git pull && uv sync")))];
   const when = U.checked_at ? new Date(U.checked_at * 1000).toLocaleString() : "never";
   const busy = !!UPD_BUSY;
+  const hero = (state, title, sub, ...acts) => h("div", { class: `card uhero ${state}` },
+    h("div", { class: "uh-logo" }, h("img", { src: "/static/logo.svg", alt: "" }), h("span", { class: "uh-badge" }, icon(state === "ok" ? "check" : state === "busy" ? "refresh" : "download"))),
+    h("div", { class: "uh-t" }, h("b", {}, title), h("span", {}, sub), acts.length ? h("div", { class: "btnrow" }, ...acts) : ""));
   let main;
   if (U.staged) main = [h("b", {}, `Version ${U.staged} is downloaded`), h("p", { class: "hint" }, "Restart to install it. If it doesn't start properly, aiklips goes back to this version on its own."),
     h("button", { class: "primary", disabled: busy, onclick: restartApp }, "Restart to update")];
   else if (U.available) main = [h("b", {}, `Version ${U.latest} is available`), h("p", { class: "hint" }, `You have ${U.current}.`),
     h("button", { class: "primary", disabled: busy, onclick: () => updAction("Downloading…", "/api/update/apply").then((r) => r && toast(`Downloaded ${r.staged}`)) }, icon("download"), "Download update")];
   else main = [h("b", {}, `aiklips ${U.current} is up to date`), h("p", { class: "hint" }, `Last checked: ${when}`)];
+  const state = busy ? "busy" : U.staged || U.available ? "new" : "ok";
+  const [t, sub, ...acts] = [main[0].textContent, busy ? UPD_BUSY : main[1].textContent, ...main.slice(2)];
+  const cur = (AK.app?.all_notes || []).find((g) => g.version === U.current);
   return [...head,
-    h("div", { class: "card", style: { padding: "18px", display: "grid", gap: "8px", justifyItems: "start" } }, ...main,
-      busy ? h("p", { class: "hint" }, h("span", { class: "spin" }), " ", UPD_BUSY) : ""),
-    U.available && U.notes ? h("section", {}, h("h3", {}, `What's new in ${U.latest}`), h("pre", { class: "card", style: { padding: "12px", whiteSpace: "pre-wrap", margin: 0 } }, U.notes)) : "",
+    hero(state, t, sub, ...acts),
+    cur ? h("section", {}, h("h3", {}, `In version ${U.current}`), h("div", { class: "card hl" }, cur.items.map((it) => h("div", { class: "hl-i" }, h("b", {}, it.title), h("span", {}, it.body))))) : "",
+    U.available && U.notes ? h("section", {}, h("h3", {}, `What's new in ${U.latest}`), notesList(U.notes)) : "",
     h("section", {}, h("h3", {}, "Options"), h("div", { class: "card", style: { padding: "14px", display: "grid", gap: "10px", justifyItems: "start" } },
       h("label", { style: { display: "flex", gap: "8px", alignItems: "center" } },
         h("input", { type: "checkbox", checked: U.auto, onchange: (e) => updAction("", "/api/update/auto", { on: e.target.checked }) }), "Check for updates automatically"),

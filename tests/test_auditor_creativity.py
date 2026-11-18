@@ -190,8 +190,14 @@ def test_stop_hook_sends_the_edit_back_until_the_pass_mark(cli, test_clip):
     cli("layer", "set", "t1", "--end", "0.4")
     s.audit_rounds, s.audited_head = 0, None
     assert run().get("decision") == "block"
-    asyncio.run(s.set_auto_audit(True))  # the chat-pane toggle, persisted per project
-    assert ChatSession(cli.project).auto_audit_ai
+    asyncio.run(s.set_auditor("ai"))  # the chat-pane picker, persisted per project
+    assert ChatSession(cli.project).auditor == "ai"
+    # switched off: no audit at all, even with must-fix findings
+    asyncio.run(s.set_auditor("off"))
+    assert ChatSession(cli.project).auditor == "off"
+    cli("layer", "set", "t1", "--y", "97%")
+    s.audit_rounds, s.audited_head, n = 0, None, len(events)
+    assert run() == {} and not [e for e in events[n:] if e["type"] == "audit"]
 
 
 # ---- sound -----------------------------------------------------------------------------------------

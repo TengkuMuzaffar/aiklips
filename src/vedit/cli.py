@@ -1148,6 +1148,20 @@ def _region(p: Project, d: Path, clip: str | None, at: float | None, box: str | 
     return track.region(p, d, clip, at, box, obj, space, paint, keep)
 
 
+def _log(msg: str) -> None:
+    """Progress of slow one-time work (tracking, SAM) on stderr, so --json output stays clean."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _check_tracker(tracker: str | None, sam_mode: str | None) -> None:
+    from .ops import outline, sam
+
+    if tracker is not None and tracker not in outline.TRACKERS:
+        raise VeditError(f"--tracker must be one of {', '.join(outline.TRACKERS)}")
+    if sam_mode is not None and sam_mode not in sam.MODES:
+        raise VeditError(f"--sam must be one of {', '.join(sam.MODES)}")
+
+
 @mask_app.command("add")
 def mask_add(
     box: Optional[str] = typer.Option(None, help="x,y,w,h of the region on the canvas (px or %), e.g. 20%,55%,60%,10%; "
@@ -1169,10 +1183,16 @@ def mask_add(
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     invert: bool = typer.Option(False, help="Apply to everything EXCEPT the region"),
     space: str = typer.Option("canvas", help="canvas (what you see in frames) | source (original video pixels)"),
+    tracker: str = typer.Option("auto", help="auto: segment when SAM is installed, else outline | segment: SAM 2 finds the "
+                                "object again in every frame (best for turning, resizing, shape changes, entering the "
+                                "frame) | outline: follow the outline point by point (fast) | box: the older box tracker"),
+    sam_mode: str = typer.Option("auto", "--sam", help="SAM 2.1 outlines the object from your box: auto (when the "
+                                 "mask-ai extra is installed) | on (install it if needed) | off"),
 ):
     """Hide a region (labels, logos, plates, screens) with a soft-edged mask that follows it."""
     from .ops.track import STYLES
 
+    _check_tracker(tracker, sam_mode)
     if style not in STYLES:
         raise VeditError(f"--style must be one of {', '.join(STYLES)}")
     if shape not in ("rect", "ellipse"):
@@ -1189,7 +1209,8 @@ def mask_add(
 
         painted = params.get("shape") == "paint"
         params.update({"id": new_mask_id(p), "style": style, "color": color, "shape": "paint" if painted else shape,
-                       "feather": feather, "expand": expand if expand is not None else (1.0 if painted else 1.1), "track": track_, "smooth": smooth, "invert": invert})
+                       "feather": feather, "expand": expand if expand is not None else (1.0 if painted else 1.1), "track": track_, "smooth": smooth, "invert": invert,
+                       "tracker": tracker, "sam": sam_mode})
         if strength is not None:
             params["strength"] = strength
         c.effects.append(Effect(type="mask", params=params))
@@ -1216,17 +1237,25 @@ def mask_list():
 @mask_app.command("set")
 def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float] = None, color: Optional[str] = None,
              feather: Optional[float] = None, expand: Optional[float] = None, shape: Optional[str] = None,
+             tracker: Optional[str] = typer.Option(None, help="auto | segment | outline | box (switching re-tracks, one-time)"),
+             sam_mode: Optional[str] = typer.Option(None, "--sam", help="auto | on | off (re-tracks)"),
              invert: Optional[bool] = typer.Option(None, "--invert/--no-invert"),
              keep_box: Optional[str] = typer.Option(None, help="Region that must stay on top (the product in front), "
                                                     "x,y,w,h[;...] on the canvas at --at; 'none' clears it"),
              at: Optional[float] = typer.Option(None, help="Timeline seconds the --keep-box is drawn at")):
-    """Change how a mask looks (style changes don't re-track)."""
+    """Change how a mask looks (style changes don't re-track; --tracker / --sam do). MASK_ID 'all' = every mask."""
     from .ops import track
 
+    _check_tracker(tracker, sam_mode)
+    if mask_id == "all" and keep_box is not None:
+        raise VeditError("--keep-box belongs to one mask: give its id")
     with edit(f"mask {mask_id}") as tx:
-        for c, e in _masks(tx.project, mask_id):
+        hits = _masks(tx.project, None if mask_id == "all" else mask_id)
+        if not hits:
+            raise VeditError("No masks in this project")
+        for c, e in hits:
             for k, v in (("style", style), ("strength", strength), ("color", color), ("feather", feather),
-                         ("expand", expand), ("shape", shape), ("invert", invert)):
+                         ("expand", expand), ("shape", shape), ("invert", invert), ("tracker", tracker), ("sam", sam_mode)):
                 if v is not None:
                     e.params[k] = v
             if keep_box is not None:
@@ -1241,6 +1270,119 @@ def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float
                 e.params["keep"] = track.keep_region(tx.project, c, u, keep_box)
                 e.params["keep"]["at"] = round(t_src, 3)
     emit({"mask": mask_id}, f"Updated {mask_id}")
+
+
+@mask_app.command("find")
+def mask_find(at: float = typer.Option(..., help="Timeline seconds of a frame where the thing to hide is clearly visible"),
+              near: Optional[str] = typer.Option(None, help="Look closer around this area: x,y,w,h on the canvas (px or %)")):
+    """Step 1 of a precise mask: outline every object on one frame and number them (needs SAM). Read the image,
+    pick the number that is exactly the thing to hide, and add the mask with that candidate's box (`add` in the output)."""
+    from .ops import maskfind, track
+    from .render.runner import preview_dir
+
+    d = pdir()
+    p = load(d)
+    nb = None
+    if near:
+        c, _, u = track.locate(p, at)
+        nb = track.box_to_source(p, c, track.parse_box(near, p.canvas.width, p.canvas.height), u)
+    res = maskfind.find(d, p, at, nb, preview_dir(d) / f"find-{at:.2f}.jpg", _log)
+    lines = [f"Candidates at {at}s (picture: {res['image']}):"] + [
+        f"  {r['n']:>2}  box {r['box_source']:<28} area {r['area']:<7}  -> {r['add']}" for r in res["candidates"]]
+    masks = [e.params.get("id") for c, e in _masks(p, None) if c.id == res["clip"]]
+    if masks and res["candidates"]:
+        res["fix_hint"] = f"To correct an existing mask here instead: vedit mask fix {masks[0]} --at {at:g} --space source --box <candidate box>"
+        lines.append(res["fix_hint"])
+    emit(res, "\n".join(lines) if res["candidates"] else f"No objects found at {at}s ({res['image']})")
+
+
+@mask_app.command("check")
+def mask_check(mask_id: str = typer.Argument(..., help="Mask id, or 'all'"),
+               verify: bool = typer.Option(True, "--verify/--no-verify", help="Re-outline sample frames with SAM to catch drift")):
+    """Step 3: check a tracked mask (tracks it first if needed). Prints how the object moves (size, turning, speed,
+    edge, hidden), frames that look wrong, advice with exact fix commands, and a check-sheet image to Read."""
+    from .ops import maskcheck
+    from .render.runner import preview_dir
+
+    d = pdir()
+    p = load(d)
+    hits = _masks(p, None if mask_id == "all" else mask_id)
+    if not hits:
+        raise VeditError("No masks in this project")
+    out = []
+    for c, e in hits:
+        out.append(maskcheck.check(d, p, c, e, preview_dir(d) / f"maskcheck-{e.params.get('id')}.jpg", _log, verify))
+    txt = []
+    for r in out:
+        mo = r["motion"]
+        txt.append(f"{r['mask']} on {r['clip']} ({r['tracker']}): {r['verdict'].upper()}  {r['range'][0]:.2f}-{r['range'][1]:.2f}s")
+        if mo:
+            txt.append(f"  motion: size x{mo['scale_min']}-x{mo['scale_max']}, turns {mo['rotation_deg']}deg, shape change "
+                       f"{mo['shape_change']:.0%}, speed up to {mo['max_speed']:.0%} of the frame/s, at the frame edge "
+                       f"{mo['edge_share']:.0%}, visible {mo['visible_share']:.0%}")
+        if r["agreement"]["checked"]:
+            ag = r["agreement"]
+            txt.append(f"  SAM re-check on {ag['checked']} frames: covers the object {ag['cover_mean']:.0%} on average, "
+                       f"{ag['cover_min']:.0%} at worst (outline overlap {ag['mean']:.0%})")
+        for hd in r["hidden"]:
+            txt.append(f"  no mask {hd['from']:.2f}-{hd['to']:.2f}s: {hd['why']}")
+        for it in r["issues"]:
+            txt.append(f"  ! {it['t']:.2f}s {it['kind']}: {it['detail']}")
+        txt += [f"  -> {a}" for a in r["advice"]]
+        if r["sheet"]:
+            txt.append(f"  Check sheet: {r['sheet']}")
+    emit({"masks": out} if mask_id == "all" else out[0], "\n".join(txt))
+
+
+@mask_app.command("fix")
+def mask_fix(mask_id: str,
+             at: Optional[float] = typer.Option(None, help="Timeline seconds where the mask is wrong"),
+             box: Optional[str] = typer.Option(None, help="Where the object really is at --at: x,y,w,h (px or %); several "
+                                               "joined with ';' for an object in parts"),
+             space: str = typer.Option("canvas", help="canvas (what you see in frames) | source (the check sheet's grid)"),
+             clear: bool = typer.Option(False, "--clear", help="Remove all fixes from this mask"),
+             undo_at: Optional[float] = typer.Option(None, "--remove-at", help="Remove the fix at these timeline seconds")):
+    """Step 4: correct a mask where it's wrong. The fix is a reference for the tracker from that moment on, so one
+    fix repairs a whole stretch. Switches the mask to the segment tracker (SAM 2 video), which re-tracks (one-time)."""
+    from .ops import sam, track
+
+    with edit(f"fix mask {mask_id}") as tx:
+        p = tx.project
+        hits = _masks(p, mask_id)
+        c, e = hits[0]
+        fixes = list(e.params.get("fixes") or [])
+        if clear:
+            fixes = []
+        elif undo_at is not None:
+            hit, t_src, _ = track.locate(p, undo_at)
+            fixes = [f for f in fixes if abs(float(f["at"]) - t_src) > 0.5 / max(1.0, p.canvas.fps)]
+        else:
+            if at is None or not box:
+                raise VeditError("Give --at <timeline seconds> and --box x,y,w,h (where the object really is then)")
+            hit, t_src, u = track.locate(p, at)
+            if hit is not c:
+                raise VeditError(f"--at {at} is not inside {c.id}, the clip of {mask_id}")
+            src = p.sources[c.source]
+            boxes = []
+            for part in (b for b in box.split(";") if b.strip()):
+                if space == "source":
+                    sw, sh = src.width or 1080, src.height or 1920
+                    x, y, w, h = track.parse_box(part, sw, sh)
+                    boxes.append([round(x / sw, 5), round(y / sh, 5), round(w / sw, 5), round(h / sh, 5)])
+                else:
+                    boxes.append(track.box_to_source(p, c, track.parse_box(part, p.canvas.width, p.canvas.height), u))
+            fixes = [f for f in fixes if abs(float(f["at"]) - t_src) > 1e-3] + [{"at": round(t_src, 3), "boxes": boxes}]
+            fixes.sort(key=lambda f: f["at"])
+            if e.params.get("tracker") != "segment":
+                e.params["tracker"] = "segment"
+            if e.params.get("sam") == "off" or not sam.installed():
+                e.params["sam"] = "on"  # fixes need SAM 2 (installed on the next render when missing)
+        if fixes:
+            e.params["fixes"] = fixes
+        else:
+            e.params.pop("fixes", None)
+    emit({"mask": mask_id, "fixes": fixes, "tracker": e.params.get("tracker")},
+         f"{mask_id}: {len(fixes)} fix(es); re-tracks on the next preview (one-time). Then run: vedit mask check {mask_id}")
 
 
 @mask_app.command("remove")
@@ -1275,6 +1417,8 @@ def focus_add(
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     track_: bool = typer.Option(True, "--track/--no-track"),
     space: str = typer.Option("canvas", help="canvas | source"),
+    tracker: str = typer.Option("auto", help="auto | segment (SAM 2 video, every frame) | outline (follow the outline) | box"),
+    sam_mode: str = typer.Option("auto", "--sam", help="SAM 2.1 outline from your box: auto | on | off"),
 ):
     """Put the focus on one object: highlight it (spotlight, colour pop, glow, outline...) or reframe to follow it."""
     from .ops import track
@@ -1289,8 +1433,10 @@ def focus_add(
         if clip is None and at is None and len(p.clips) > 1:
             raise VeditError("Say which clip with --clip, or give --at <timeline seconds>")
         c, params, note = _region(p, d, clip, at, box, obj, space, paint_items)
+        _check_tracker(tracker, sam_mode)
         params = track.focus_params(params, mode, style, color=color, width=width, strength=strength, blur=blur, dim=dim,
                                     feather=feather, expand=expand, smooth=smooth, track=track_, zoom=zoom)
+        params.update({"tracker": tracker, "sam": sam_mode})
         c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
     emit({"clip": c.id, "mode": mode, "style": style, "shape": params["shape"], "box_source": params["box"], "note": note},
          f"Focus ({mode}, {style}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")

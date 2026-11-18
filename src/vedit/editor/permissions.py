@@ -50,13 +50,15 @@ def save(data: dict) -> dict:
 
 def check_item(item: str) -> str:
     """A program or tool name that may be always-allowed. Raises for anything that can run arbitrary code."""
-    from .agent import _NEVER_ALWAYS
+    from .agent import _NEVER_ALWAYS, _blocked_prog
 
     item = str(item or "").strip()
     if not _ITEM.match(item):
         raise PermissionSettingsError("Give one program or tool name, like ffmpeg or WebFetch.")
     if item.startswith("mcp__"):
         raise PermissionSettingsError("Connectors always ask, so they can't be always-allowed.")
+    if _blocked_prog(item) or item in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        raise PermissionSettingsError(f"“{item}” is blocked in the AI editor (it could change aiklips' code), so it can't be allowed.")
     if item in _NEVER_ALWAYS:
         raise PermissionSettingsError(f"“{item}” can do anything on your computer, so it always asks.")
     return item
@@ -72,7 +74,7 @@ def unlisted() -> str:
 
 def declaration() -> dict:
     """The built-in rules, in words, for the Settings page."""
-    from .agent import _ALLOWED_TOOLS, _NEVER_ALWAYS, _READ_ONLY
+    from .agent import _ALLOWED_TOOLS, _BLOCKED, _NEVER_ALWAYS, _READ_ONLY
 
     return {
         "allowed": [
@@ -83,8 +85,14 @@ def declaration() -> dict:
         ],
         "always_ask": [
             {"title": "Connectors", "detail": "Tools from connected apps (mcp__…) are never allowed automatically."},
-            {"title": "Programs that can do anything", "detail": ", ".join(sorted(_NEVER_ALWAYS - {"."}))},
-            {"title": "Files outside the project", "detail": "Writing anywhere else always asks."},
+            {"title": "Other programs", "detail": "Anything not listed here (ffmpeg, web tools…) asks first."},
+        ],
+        "never": [
+            {"title": "Changing aiklips itself", "detail": "Its code, tests, settings, .claude/ and Python environment. "
+                                                         "The AI edits your video, never the app."},
+            {"title": "Files outside the project", "detail": "The AI can only write inside the open project folder."},
+            {"title": "Running code, installers or git", "detail": ", ".join(sorted(_BLOCKED - {"."}))},
+            {"title": "Shell tricks", "detail": "Writing into files with > or heredocs, $(...), backticks, subshells."},
         ],
         "data": [
             {"title": "What the AI sees", "detail": "Your messages, the project's clip list and timings, and still frames "

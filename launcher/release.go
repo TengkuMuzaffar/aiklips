@@ -7,11 +7,13 @@ package main
 // into this launcher), and the payload must match the manifest's sha256.
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,7 +148,8 @@ func releaseAssets() (map[string]string, error) {
 
 // stageLatest downloads the newest release into <app>/pending (first install; later updates are staged by the app).
 func stageLatest(p paths) error {
-	status("Downloading aiklips…")
+	logf("downloading the latest aiklips")
+	tr := ui.track("aiklips", 8<<20) // registered now so the bar counts it from the start
 	assets, err := releaseAssets()
 	if err != nil {
 		return err
@@ -174,7 +177,9 @@ func stageLatest(p paths) error {
 	if url == "" {
 		return fmt.Errorf("the release is missing %s", m.Payload)
 	}
-	if err := download(url, filepath.Join(tmp, m.Payload), m.SHA256); err != nil {
+	tr.setTotal(m.Size)
+	ui.setStepLabel("download", "Download aiklips "+m.Version)
+	if err := downloadP(url, filepath.Join(tmp, m.Payload), m.SHA256, tr); err != nil {
 		return err
 	}
 	pending := filepath.Join(p.app, "pending")
@@ -198,25 +203,86 @@ func extras(p paths) []string {
 	var args []string
 	for _, x := range strings.Fields(readTrim(filepath.Join(p.app, "extras.txt"))) {
 		switch x {
-		case "ai", "bg-quality", "captions":
+		case "ai", "bg-quality", "captions", "mask-ai":
 			args = append(args, "--extra", x)
 		}
 	}
 	return args
 }
 
-// uvSync installs Python (managed by uv) and the locked dependencies into dir/.venv.
+// uvSync installs Python (managed by uv) and the locked dependencies into dir/.venv. Bytecode is compiled during the
+// install (while the setup window is up) so the first start of the app is quick.
 func uvSync(p paths, uv, dir string) error {
-	args := append([]string{"sync", "--frozen", "--no-dev", "--python", "3.12"}, extras(p)...)
+	args := append([]string{"sync", "--frozen", "--no-dev", "--python", "3.12", "--compile-bytecode"}, extras(p)...)
 	cmd := hidden(exec.Command(uv, args...))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "UV_PYTHON_PREFERENCE=only-managed")
-	out, err := cmd.CombinedOutput()
+	out, err := runLines(cmd, func(line string) {
+		if l := uvLabel(line); l != "" {
+			ui.setLabel(l)
+		}
+		if strings.HasPrefix(line, "Prepared ") {
+			ui.setFrac("install", 0.85)
+		}
+	})
 	logf("uv sync in %s:\n%s", dir, out)
 	if err != nil {
-		return fmt.Errorf("installing dependencies failed: %v\n%s", err, tail(string(out), 1200))
+		return fmt.Errorf("installing dependencies failed: %v\n%s", err, tail(out, 1200))
 	}
 	return nil
+}
+
+// pythonInstall fetches uv's managed Python early (in parallel with the app download), so uv sync only installs
+// the libraries.
+func pythonInstall(uv string) error {
+	cmd := hidden(exec.Command(uv, "python", "install", "3.12"))
+	cmd.Env = append(os.Environ(), "UV_PYTHON_PREFERENCE=only-managed")
+	out, err := cmd.CombinedOutput()
+	logf("uv python install:\n%s", out)
+	if err != nil {
+		return fmt.Errorf("installing Python failed: %v\n%s", err, tail(string(out), 600))
+	}
+	return nil
+}
+
+// runLines runs cmd, calling fn for every output line (stdout + stderr), and returns all the output.
+func runLines(cmd *exec.Cmd, fn func(string)) (string, error) {
+	r, w := io.Pipe()
+	cmd.Stdout, cmd.Stderr = w, w
+	var buf strings.Builder
+	done := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 64<<10), 1<<20)
+		for sc.Scan() {
+			line := sc.Text()
+			buf.WriteString(line + "\n")
+			fn(strings.TrimSpace(line))
+		}
+		io.Copy(io.Discard, r)
+		close(done)
+	}()
+	err := cmd.Run()
+	w.Close()
+	<-done
+	return buf.String(), err
+}
+
+// uvLabel turns a line of uv's output into a short status ("" = not worth showing).
+func uvLabel(line string) string {
+	switch {
+	case strings.HasPrefix(line, "Downloading "), strings.HasPrefix(line, "Downloaded "):
+		return line
+	case strings.HasPrefix(line, "Creating virtual environment"):
+		return "Creating the app's Python environment"
+	case strings.HasPrefix(line, "Prepared "):
+		return "Installing libraries…"
+	case strings.HasPrefix(line, "Installed "):
+		return "Optimising for a fast first start…"
+	case strings.HasPrefix(line, "Bytecode compiled"):
+		return "Almost there…"
+	}
+	return ""
 }
 
 // installPending verifies and installs <app>/pending, then makes it current. Returns the installed version.
@@ -239,7 +305,9 @@ func installPending(p paths, uv string) (string, error) {
 	if got, err := fileSHA256(payload); err != nil || !strings.EqualFold(got, m.SHA256) {
 		return "", errors.New("the downloaded update is corrupt (checksum mismatch); it was not installed")
 	}
-	status(fmt.Sprintf("Installing aiklips %s…", m.Version))
+	ui.set("verify", "done")
+	ui.set("install", "active")
+	ui.setLabel("Unpacking aiklips " + m.Version)
 	dest := filepath.Join(p.app, "versions", m.Version)
 	if !exists(filepath.Join(dest, ".installed")) {
 		// installed in place: a virtualenv records its absolute path, so it can't be built elsewhere and moved
@@ -252,6 +320,7 @@ func installPending(p paths, uv string) (string, error) {
 			os.RemoveAll(dest)
 			return "", err
 		}
+		ui.setLabel("Checking the install")
 		out, err := hidden(exec.Command(venvBin(dest, "vedit"), "--version")).Output()
 		if got := strings.TrimSpace(string(out)); err != nil || got != m.Version {
 			os.RemoveAll(dest)

@@ -10,6 +10,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,14 +79,6 @@ func openLog(p paths) {
 	}
 }
 
-// status shows progress for slow first-run steps (a notification; also logged)
-func status(msg string) {
-	logf("%s", msg)
-	if !quiet {
-		notify(msg)
-	}
-}
-
 var quiet = os.Getenv("AIKLIPS_QUIET") == "1" // tests / CI: log instead of showing notifications and dialogs
 
 // warn shows a dialog (or only logs it when quiet)
@@ -107,14 +100,57 @@ func main() {
 		os.Exit(1)
 	}
 	openLog(p)
+	ui = newSetupUI(!quiet, p.log)
 	logf("launcher %s on %s", LauncherVersion, platform())
-	code, err := run(p)
-	if err != nil {
+	for {
+		code, err := run(p)
+		if err == nil {
+			os.Exit(code)
+		}
 		logf("error: %v", err)
-		warn("aiklips couldn't start", err.Error()+"\n\nDetails are in "+p.log)
+		retry, shown := ui.fail(err)
+		if retry {
+			logf("retrying")
+			continue
+		}
+		if !shown {
+			warn("aiklips couldn't start", err.Error()+"\n\nDetails are in "+p.log)
+		}
 		os.Exit(1)
 	}
-	os.Exit(code)
+}
+
+// pendingVersion reads the staged update's version for the window title (display only: not verified yet).
+func pendingVersion(p paths) string {
+	raw, _ := os.ReadFile(filepath.Join(p.app, "pending", "manifest.json"))
+	var m manifest
+	json.Unmarshal(raw, &m)
+	return m.Version
+}
+
+// plan decides which setup steps this start needs; none for an ordinary start.
+func plan(first, pending, uvOK, ffOK bool, pv string) (title, sub string, steps []stepSpec) {
+	if !uvOK || !ffOK {
+		steps = append(steps, stepSpec{Key: "tools", Label: "Download runtime tools", Bytes: true, Weight: 25})
+	}
+	if first {
+		steps = append(steps, stepSpec{Key: "download", Label: "Download aiklips", Bytes: true, Weight: 20},
+			stepSpec{Key: "install", Label: "Install Python & libraries", Expect: 100 * time.Second, Weight: 50})
+	} else if pending {
+		steps = append(steps, stepSpec{Key: "verify", Label: "Verify the update's signature", Expect: time.Second, Weight: 3},
+			stepSpec{Key: "install", Label: "Install aiklips " + pv, Expect: 25 * time.Second, Weight: 60})
+	}
+	if len(steps) == 0 {
+		return "", "", nil
+	}
+	steps = append(steps, stepSpec{Key: "start", Label: "Start aiklips", Expect: 6 * time.Second, Weight: 5})
+	switch {
+	case first:
+		return "Setting up aiklips", "A one-time download of about 150 MB. Later starts take seconds.", steps
+	case pending:
+		return "Updating to " + pv, "Installing the new version. Your projects stay as they are.", steps
+	}
+	return "Getting aiklips ready", "Downloading the tools aiklips needs.", steps
 }
 
 func run(p paths) (int, error) {
@@ -125,50 +161,92 @@ func run(p paths) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	uv, err := ensureUV(p)
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
+	var uv, ff, fp string
+	cur := readTrim(filepath.Join(p.app, "current"))
+	pending := exists(filepath.Join(p.app, "pending", "manifest.json"))
+	first := cur == "" && !pending
+	uvOK, ffOK := uvReady(p), ffReady(p)
+	if title, sub, steps := plan(first, pending, uvOK, ffOK, pendingVersion(p)); steps != nil {
+		ui.begin(title, sub, steps)
+	}
+	// everything that downloads runs at once: uv (then Python), FFmpeg, and on a first start the app itself
+	ui.set("tools", "active")
+	ui.set("download", "active")
+	err = parallel(
+		func() error {
+			var err error
+			if uv, err = ensureUV(p); err != nil {
+				return err
+			}
+			if first {
+				return pythonInstall(uv)
+			}
+			return nil
+		},
+		func() error {
+			var err error
+			ff, fp, err = ensureFFmpeg(p)
+			if err == nil {
+				ui.set("tools", "done") // uv is small and starts first; FFmpeg is the long one
+			}
+			return err
+		},
+		func() error {
+			if !first {
+				return nil
+			}
+			if err := stageLatest(p); err != nil {
+				return err
+			}
+			ui.set("download", "done")
+			return nil
+		},
+	)
 	if err != nil {
-		unlock()
 		return 1, err
 	}
-	ff, fp, err := ensureFFmpeg(p)
-	if err != nil {
-		unlock()
-		return 1, err
+	ui.set("tools", "done")
+	if first {
+		pending = true
 	}
 	for {
 		fresh := false
-		cur := readTrim(filepath.Join(p.app, "current"))
-		pending := exists(filepath.Join(p.app, "pending", "manifest.json"))
-		if cur == "" && !pending {
-			status("Setting up aiklips. The first start downloads about 150 MB and takes a few minutes.")
-			if err := stageLatest(p); err != nil {
-				unlock()
-				return 1, err
-			}
-			pending = true
-		}
 		if pending {
+			ui.set("verify", "active")
 			v, err := installPending(p, uv)
 			if err != nil {
 				logf("update not installed: %v", err)
 				if cur == "" || !exists(filepath.Join(p.app, "versions", cur, ".installed")) {
-					unlock()
 					return 1, err
 				}
+				ui.close()
 				warn("Update not installed", err.Error()+"\n\naiklips keeps running version "+cur+".")
 			} else {
 				fresh = v != cur
 				cur = v
 				logf("installed %s", v)
 			}
+			ui.set("install", "done")
 		}
 		unlock() // the app runs unlocked: a second window may start while it is open
+		locked = false
 		start := time.Now()
 		code := launch(p, cur, uv, ff, fp)
 		logf("app %s exited with %d after %s", cur, code, time.Since(start).Round(time.Second))
 		if code == restartCode {
 			if unlock, err = lock(p); err != nil {
 				return 1, err
+			}
+			locked = true
+			pending = exists(filepath.Join(p.app, "pending", "manifest.json"))
+			if title, sub, steps := plan(false, pending, true, true, pendingVersion(p)); steps != nil {
+				ui.begin(title, sub, steps)
 			}
 			continue
 		}
@@ -179,6 +257,8 @@ func run(p paths) (int, error) {
 				if unlock, err = lock(p); err != nil {
 					return 1, err
 				}
+				locked = true
+				cur, pending = prev, false
 				continue
 			}
 		}
@@ -207,8 +287,35 @@ func launch(p paths, version, uv, ff, fp string) int {
 		defer f.Close()
 		cmd.Stdout, cmd.Stderr = f, f
 	}
+	ready := filepath.Join(p.app, ".ready") // the app may create it once its window shows (AIKLIPS_READY_FILE)
+	os.Remove(ready)
+	cmd.Env = append(cmd.Env, "AIKLIPS_READY_FILE="+ready)
 	hidden(cmd)
-	if err := cmd.Run(); err != nil {
+	ui.set("start", "active")
+	ui.setLabel("Opening aiklips…")
+	if err := cmd.Start(); err != nil {
+		logf("couldn't start the app: %v", err)
+		return 1
+	}
+	exited := make(chan struct{})
+	go func() { // the setup window goes once the editor's own window is up (or after a while, or if the app quits)
+		deadline := time.After(15 * time.Second)
+		for !exists(ready) {
+			select {
+			case <-exited:
+				ui.finish()
+				return
+			case <-deadline:
+				ui.finish()
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		ui.finish()
+	}()
+	err := cmd.Wait()
+	close(exited)
+	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return ee.ExitCode()

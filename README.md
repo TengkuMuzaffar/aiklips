@@ -151,6 +151,7 @@ Use `uv run vedit app --browser` (or `vedit serve`) to open the same editor in a
 | `ai` | Fast background removal, face mesh / AR | `uv sync --extra ai` |
 | `captions` | Offline auto-captions (faster-whisper) | `uv sync --extra captions` |
 | `bg-quality` | High-quality background removal (BiRefNet) | `uv sync --extra bg-quality` |
+| `mask-ai` | Exact object outlines for masks / focus (SAM 2.1 tiny + PyTorch; ~156 MB model downloaded on first use) | `uv sync --extra mask-ai` |
 
 See [examples/prompts.md](examples/prompts.md) for more things to ask.
 
@@ -224,4 +225,4 @@ PRs are welcome. Ideas:
 
 ## Licence & credits
 
-MIT. Built on FFmpeg, Pillow, MediaPipe (Apache-2.0), rembg / BiRefNet (MIT) and faster-whisper (MIT). Model files are downloaded from their official sources on first use. Check the licences of any stickers, fonts, music or 3D models you add.
+MIT. Built on FFmpeg, Pillow, OpenCV and MediaPipe (Apache-2.0), SAM 2.1 (Meta, Apache-2.0), PyTorch (BSD), rembg / BiRefNet (MIT) and faster-whisper (MIT). Model files are downloaded from their official sources on first use. Every component and its licence: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Check the licences of any stickers, fonts, music or 3D models you add.

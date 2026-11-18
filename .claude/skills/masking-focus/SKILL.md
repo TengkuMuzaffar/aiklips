@@ -10,20 +10,75 @@ Needs the extra once: `uv sync --extra ai` (OpenCV tracker + MediaPipe detector)
 **Never fake a mask** by generating PNG / colour patches with ffmpeg and laying them on top as image layers.
 That looks like a sticker stuck on the video and slides off when the camera moves. Use `vedit mask`.
 
-## Pick the region
+## The procedure (follow every step, in order)
 
-Boxes are `x,y,w,h` = **top-left corner + size**, on the **canvas** (what `frame` shows), in px or %.
+A mask is detailed work: find the exact thing, know how it moves, check every stretch, fix what's wrong. A mask
+you haven't checked is not done. Never answer "done" after `mask add` alone.
 
-1. Go to a moment where the thing is clearly visible: `uv run vedit --json frame --at T`.
-2. Read the frame and estimate the box in % of the frame (e.g. `20%,55%,60%,12%`).
-   Make it generous: the mask already adds 10% margin (`--expand 1.1`), but a box that's too tight leaks letters.
-3. **Odd shapes:** don't cover a lot of extra background with one big box. Join several boxes with `;`
-   (`--box "20%,10%,30%,8%;25%,18%,20%,6%"`), which makes one region shaped like their union. That keeps the
-   `remove` fill from sampling the object next to the label.
-4. If you can't see images (no-vision model) use `--object NAME` (COCO names: person, car, truck, bottle,
-   cup, cell phone, laptop, tv, book, handbag, ...; `any` = most prominent object),
-   or ask the user to mark it: **Mask** button under the preview → **Brush** (paint over it), **Grid** (tick squares)
-   or **Box**. Painted masks are stored as `shape: paint` and follow the tracked object like boxes do.
+**1. Find it exactly.** Go to the moment where the thing is largest and clearest.
+```
+uv run vedit --json mask find --at 12.4                       # SAM outlines every object, numbered, on one frame
+uv run vedit --json mask find --at 12.4 --near 20%,50%,30%,15%  # look closer at one area (small labels, logos)
+```
+Read the `image`. Pick the number whose outline is exactly the thing to hide (the label, not the whole bottle;
+the logo, not the shirt). Each candidate has a ready `add` command with its exact box (source space). Several
+pieces of one brand mark (logo + wordmark) = one mask per piece, or one with `;`-joined canvas boxes.
+No SAM (`mask find` says so) or a no-vision model: see "Without SAM" below.
+
+**2. Add it** with the candidate's command, plus the style:
+`uv run vedit --json mask add --at 12.4 --space source --box 31.2%,40.1%,12.0%,8.0% --style remove`.
+The default tracker `auto` uses SAM 2 video ("segment") when SAM is installed: it finds the object again in
+every frame, so it follows turning (another side shows), resizing, perspective, shape changes, things passing in
+front, and objects coming into view from the frame edge.
+
+**3. Check it** (tracks it first if needed; ~1-2 s per second of video, one-time):
+```
+uv run vedit --json mask check mk1        # or: mask check all
+```
+It returns:
+- `motion`: how the object moves (size range, turning, shape change, speed, time at the frame edge, visible share).
+  Use it to judge risk: big size change, shape change > 30% or edge time = watch those stretches closely.
+- `hidden`: stretches with no mask, and why (not in the shot, gone / cut, hidden behind something).
+- `issues`: frames that look wrong (size / position jumps, SAM's own outline disagreeing with the tracked one).
+- `verdict` good / check / poor, `advice` with exact commands, and `sheet`: a picture of up to 12 frames with the
+  tracked outline drawn (green ok, red flagged, yellow = SAM's own outline where it disagrees) and a 10% grid.
+
+**Always Read the sheet**, even when the verdict is good: the outline must hug the thing in every tile (no letters
+outside it, not covering the product next to it). A tile with no outline while the thing is still visible is a miss.
+
+**4. Fix what's wrong**, at the moment it's wrong, then check again:
+```
+uv run vedit --json mask fix mk1 --at 14.2 --space source --box 33%,41%,11%,9%   # where the object really is then
+uv run vedit --json mask check mk1
+```
+- Read the box off the sheet's grid (source %, top-left + size), or run `mask find --at 14.2` and use the
+  matching candidate's box. One fix guides the tracker from that moment on, so fix the **first** bad moment of a
+  bad stretch, re-check, and repeat. Usually 0-2 fixes.
+- `mask fix mk1 --remove-at 14.2` drops one fix; `--clear` drops them all.
+- A mask on `outline` / `box` that the check calls poor: `mask set mk1 --tracker segment` first, then check.
+- Stop after 3 rounds of fixes on one mask and tell the user what's still off (with the time).
+
+**5. Look at the result** in the edit: `frame --at` on 2-3 of the risky moments from the check (largest, fastest,
+nearest the edge). For `remove`, the rebuilt surface must match its surroundings.
+
+### Without SAM
+
+`mask find` / the SAM re-check need the `mask-ai` extra (~156 MB model): ask before installing (`--sam on`
+installs it). Without it: go to the clearest moment with `frame --at T`, read the box off the frame (canvas %),
+make it generous (the mask adds 10% margin), use `;`-joined boxes for odd shapes, and still run `mask check`
+(motion profile, jumps, sheet). No vision at all: `--object NAME` (person, car, bottle, cell phone, laptop, tv,
+book, `any`) or ask the user to mark it (**Mask** button in the timeline toolbar: Brush / Grid / Box).
+
+### Trackers (`--tracker`)
+
+| Tracker | How | Use |
+|---|---|---|
+| `auto` (default) | `segment` when SAM is installed, else `outline` | always, unless there's a reason below |
+| `segment` | SAM 2 video: re-finds the object in every frame, from a memory of how it looked | turning, resizing, shape changes, entering from the edge, things in front |
+| `outline` | follows the outline point by point (optical flow + one perspective fit) | flat things on a steady surface when SAM isn't installed; faster |
+| `box` | older box tracker | old masks only |
+
+Painted masks (`--paint`) keep the painted shape as the start; `segment` tracks it like any other.
 
 ## Hide something (mask)
 
@@ -92,7 +147,5 @@ uv run vedit --json focus set --style brighten --strength 0.6
 
 ## Check it
 
-Masks: `frame --at` at the **start, middle and end** of the clip. Look at the edges: no letters may peek out.
-For `remove`, also check that the fill matches the surface and hasn't picked up a nearby object's colour (tighten the region if it has).
-If they do: `mask remove`, then add again with a bigger box, or at the moment where the label is largest.
-If tracking drifts on a fast whip pan, split the clip there and mask each part.
+Masks: the procedure above (`mask check`, Read the sheet, `mask fix`, check again). Focus: `frame --at` at the
+start, middle and end. If a mask still drifts on a fast whip pan after fixes, split the clip there and mask each part.

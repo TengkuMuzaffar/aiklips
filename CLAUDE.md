@@ -21,7 +21,8 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
    - Run `uv run vedit --json audit`. Fix every **must-fix** finding, and should-fix ones where they help. Re-run until it passes.
    - In the desktop editor this is enforced: when you finish a turn that changed the edit, the auditor runs and, while
      the score is below the pass mark (`vedit audit-settings`, default 80) or must-fix findings remain, sends the
-     findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed.
+     findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed. If the
+     `<editor_context>` says `auditor: off`, the user switched it off: skip `why` / `audit` unless they ask.
    - Don't call an edit finished while the audit has must-fix findings; if one can't be fixed, say so and why.
 6. **Tell the user what changed**, in timeline seconds, the audit score, and mention they can say "undo".
 7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. Default: H.264 MP4 at the project's size and fps in `projects/<name>/exports/`; unset options reuse the project's last export settings, and a file is never overwritten (name-2…). Ask before ProRes or 2× (huge files).
@@ -30,6 +31,8 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - It re-renders automatically after every command, so you never need to start it. Suggest it once.
 - The user can also edit by hand in it (drag-and-drop timeline, inspector). Re-run `info` before acting on old assumptions.
 - Inside the editor's AI pane, every message starts with an `<editor_context>` block giving the playhead and the selected clip or layer. Words like "this" and "here" refer to that selection.
+- The chat has three modes, named in `<editor_context>`: auto (edit straight away), ask (the user approves each
+  edit command), plan (edits are blocked: look, reply with a numbered plan, end your turn; they approve with a button).
 
 ## Rules
 
@@ -104,7 +107,7 @@ captions srt <file> [--style] | captions auto [--language en|ms|...] | captions 
 bg remove [--clip --mode chroma|fast|quality --replace color:#hex|blur|image:path|video:path --key auto|#hex] | bg tune [--similarity --blend --spill --shrink --key] | bg replace <spec> | bg clear
 face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|mouth|face | face prop <model.obj> | face blur [--style pixelate] | face clear
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
-mask add --at T --box x,y,w,h[;x,y,w,h...] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse] | mask list | mask set <id> | mask remove <id|all>
+mask find --at T [--near x,y,w,h] | mask add --at T --box x,y,w,h[;x,y,w,h...] [--space source] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse --tracker auto|segment|outline|box --sam auto|on|off] | mask check <id|all> | mask fix <id> --at T --box x,y,w,h [--space source | --remove-at T | --clear] | mask list | mask set <id> [--tracker] | mask remove <id|all>
 focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|follow|both --style spotlight|colorpop|brighten|glow|outline --color --width --zoom 1.3] | focus set [--style --color --width --strength] | focus clear
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
@@ -161,7 +164,13 @@ Load the relevant one before doing that kind of edit.
   - Pure timeline ops: `ops/cut.py`
   - FFmpeg graph: `render/graph.py`
   - Overlay rendering: `render/layers.py`
-  - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus)
+  - Effects: `ops/effects.py`, `ops/bg_remove.py`, `ops/face_ar.py`, `ops/track.py` (masks and object focus;
+    `ops/segment.py` = SAM 2 video tracker (default via `auto` when SAM is installed; 512 px input, chunks, growth
+    for objects entering the frame, `fixes` as references), `ops/outline.py` = point/outline tracker (fallback),
+    `ops/sam.py` = SAM 2.1 tiny image outlines, `mask-ai` extra; `ops/maskfind.py` (`mask find`: numbered SAM
+    candidates) and `ops/maskcheck.py` (`mask check`: motion profile, flagged frames, SAM re-check, check sheet).
+    Measure tracking changes with `scripts/mask_bench.py` (exact ground truth, IoU; `--only segment`) before and after)
+  - Licences: every dependency / model with its licence in `THIRD_PARTY_NOTICES.md`; commercial use must be allowed
   - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
     applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.
   - Tracks: `Layer.track` (`normalize_tracks` in project.py), main-track gaps (`Clip.gap`), `Layer.hidden` /
@@ -192,11 +201,25 @@ Load the relevant one before doing that kind of edit.
     `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
     `docs/design/distribution.md` before changing any of them; a `project.json` format change needs `SCHEMA_VERSION`
     + a `MIGRATIONS` step in project.py.
+  - App shell (all three pages): `static/ui.css` (brand tokens, motion, shared components; loaded after each page's
+    own `<style>`) and `static/shell.js` (`AK.*`: icons, toasts, the first-run welcome tour, "what's new", the native
+    menu bar's `aiklipsMenu(cmd)` from `editor/window.py`). State in `~/.aiklips/ui.json` via `/api/app` + `/api/app/seen`
+    (onboarded, last seen version, prefs: default format / fps / calm motion). Release highlights: `whats_new.py` (add
+    an entry when a release has something users would notice). Home (`home.html`): sidebar + quick-start cards + grid /
+    list of projects; dropping files makes a project whose canvas follows the first video (`import_file(fit_canvas)`).
+    App icons: `assets/brand/` (window icon set in `editor/window.py`).
   - Settings page: `preview_server/static/settings.html` at `/settings` (home links to it; the editor opens it in an
-    iframe overlay with `?embed=1`, closed/refreshed via postMessage). Tabs: Models (chat default = `ai.json` "chat",
+    iframe overlay with `?embed=1`, closed/refreshed via postMessage). Tabs: General (default format / fps, calm motion, tour, about), Models (chat default = `ai.json` "chat",
     roles, audit pass mark), Providers & keys (`editor/models.py` registry + add-provider wizard), Permissions
     (`editor/permissions.py`: global always-allow + "ask"/"deny" for anything unlisted, checked in `ChatSession._permission`),
     Usage (`ai.client.usage_summary` over `ai-usage.jsonl`; chat turns are logged there too as task "chat").
+  - Chat modes + auditor picker: `ChatSession.mode` (auto / ask / plan) and `.auditor` (off / checks / ai), saved in
+    `.vedit/chat.json`. `vedit_kind` in `editor/agent.py` sorts vedit commands into read / note / edit (a new
+    read-only command belongs in `_VEDIT_READ*`). Plan mode is ours, not Claude Code's (its plan mode skips
+    `can_use_tool` for Bash): edits are denied, the reply becomes a `plan_offer` card, `answer_plan` carries it out.
+  - OpenAI / ChatGPT: a provider with `"api": "openai"` goes through `editor/openai_bridge.py`, a 127.0.0.1
+    Anthropic-Messages ⇄ Chat-Completions translator (streaming + tool calls) that `models.env_for` points Claude
+    Code at; the real key stays in the registry. Covers chat, Generate and the auditor.
   - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
     `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).
     Design + roadmap (AI reviewer, chat Stop hook, creativity): `docs/design/auditor-justification-creativity.md`

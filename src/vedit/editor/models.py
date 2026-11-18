@@ -22,6 +22,10 @@ because it may hold API keys:
 
 Models are addressed by key "<provider>/<model id>". The built-in provider "anthropic"
 uses the normal Claude Code login and needs no key.
+
+A provider with "api": "openai" speaks the OpenAI Chat Completions API instead (ChatGPT models from OpenAI,
+or any OpenAI-compatible server). Its base URL is the OpenAI-style root (https://api.openai.com/v1) and
+Claude Code reaches it through the local translator in `openai_bridge.py`.
 """
 
 from __future__ import annotations
@@ -37,7 +41,8 @@ from typing import Any
 from ..library import home_dir
 
 BUILTIN = "anthropic"
-BUILTIN_PROVIDER = {"id": BUILTIN, "name": "Claude", "base_url": "", "api_key": "", "api_key_env": "", "env": {}}
+BUILTIN_PROVIDER = {"id": BUILTIN, "name": "Claude", "base_url": "", "api_key": "", "api_key_env": "", "env": {}, "api": "anthropic"}
+APIS = ("anthropic", "openai")
 BUILTIN_MODELS = [
     {"provider": BUILTIN, "id": "claude-opus-5-5", "label": "Opus 5.5 (best)", "vision": True},
     {"provider": BUILTIN, "id": "claude-sonnet-5-5", "label": "Sonnet 5.5 (faster, cheaper)", "vision": True},
@@ -48,6 +53,10 @@ DEFAULT_KEY = f"{BUILTIN}/" + os.environ.get("VEDIT_MODEL", "claude-opus-5-5")
 # Starting points for the "Add provider" wizard; any other Anthropic-compatible URL works too.
 # Suggested model ids are hints only: providers rename models, so the wizard tests them.
 TEMPLATES = [
+    {"id": "openai", "name": "OpenAI (ChatGPT)", "api": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY",
+     "blurb": "GPT models with your OpenAI API key (platform.openai.com billing, not a ChatGPT Plus plan).",
+     "key_url": "https://platform.openai.com/api-keys", "docs_url": "https://platform.openai.com/docs/models",
+     "suggested": []},
     {"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/anthropic", "api_key_env": "DEEPSEEK_API_KEY",
      "blurb": "Low-cost models with an official Anthropic-compatible API.",
      "key_url": "https://platform.deepseek.com/api_keys", "docs_url": "https://api-docs.deepseek.com/guides/anthropic_api",
@@ -57,8 +66,8 @@ TEMPLATES = [
      "blurb": "One key for many hosted models (OpenCode Zen).",
      "key_url": "https://opencode.ai/v2/docs/console/harnesses/claude-code/", "docs_url": "https://opencode.ai/docs/providers",
      "suggested": []},
-    {"id": "custom", "name": "", "base_url": "", "api_key_env": "",
-     "blurb": "Any server that speaks the Anthropic Messages API: OpenRouter, LiteLLM, a local proxy…",
+    {"id": "custom", "name": "", "base_url": "", "api_key_env": "", "api": "anthropic",
+     "blurb": "Any server that speaks the Anthropic Messages API (OpenRouter, LiteLLM…) or the OpenAI API (Groq, Ollama, LM Studio…).",
      "key_url": "", "docs_url": "", "suggested": []},
 ]
 
@@ -141,12 +150,17 @@ def env_for(k: str, reg: dict | None = None) -> dict[str, str]:
     if p["id"] == BUILTIN:
         return {}
     secret = api_key(p)
-    if not secret:
+    if not secret and not (p.get("api") == "openai" and _local(p["base_url"])):
         where = f"set ${p['api_key_env']}" if p.get("api_key_env") else "add an API key"
         raise RegistryError(f"No API key for {p['name']}: {where} in Manage models.")
     mid = m["id"]
+    base = p["base_url"].rstrip("/")
+    if p.get("api") == "openai":  # Claude Code talks to the local translator; it holds the real key
+        from . import openai_bridge
+
+        base, secret = f"{openai_bridge.ensure_running()}/p/{p['id']}", openai_bridge.local_token()
     env = {
-        "ANTHROPIC_BASE_URL": p["base_url"].rstrip("/"),
+        "ANTHROPIC_BASE_URL": base,
         "ANTHROPIC_AUTH_TOKEN": secret,
         "ANTHROPIC_API_KEY": secret,
         "ANTHROPIC_MODEL": mid,
@@ -162,15 +176,19 @@ def env_for(k: str, reg: dict | None = None) -> dict[str, str]:
     return env
 
 
+def _local(url: str) -> bool:
+    return bool(re.match(r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|/|$)", url))
+
+
 def public(reg: dict | None = None) -> dict:
     """Registry for the browser: never includes the keys themselves."""
     reg = reg or load()
     providers = []
     for p in reg["providers"]:
-        has = p["id"] == BUILTIN or bool(api_key(p))
+        has = p["id"] == BUILTIN or bool(api_key(p)) or (p.get("api") == "openai" and _local(p["base_url"]))
         providers.append({"id": p["id"], "name": p["name"], "base_url": p["base_url"], "builtin": p["id"] == BUILTIN,
                           "api_key_env": p.get("api_key_env", ""), "key_stored": bool(p.get("api_key")), "ready": has,
-                          "env": p.get("env") or {}})
+                          "env": p.get("env") or {}, "api": p.get("api") or "anthropic"})
     models = [{**m, "key": key(m), "builtin": m in BUILTIN_MODELS} for m in reg["models"]]
     return {"providers": providers, "models": models, "templates": TEMPLATES}
 
@@ -185,10 +203,16 @@ def upsert_provider(data: dict) -> dict:
         raise RegistryError("Provider needs a name.")
     if pid == BUILTIN:
         raise RegistryError("“anthropic” is the built-in Claude provider; pick another name.")
+    cur0 = provider(reg, pid)
+    api = str(data.get("api") or (cur0 or {}).get("api") or "anthropic")
+    if api not in APIS:
+        raise RegistryError("API format must be anthropic or openai.")
     if not re.match(r"^https?://", base):
         raise RegistryError("Base URL must start with http:// or https://")
-    if base.endswith("/v1/messages") or base.endswith("/v1"):
+    if api == "anthropic" and (base.endswith("/v1/messages") or base.endswith("/v1")):
         raise RegistryError("Leave /v1 off the base URL (Claude Code adds /v1/messages itself).")
+    if api == "openai" and base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
     env_name = str(data.get("api_key_env", "")).strip()
     if env_name and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", env_name):
         raise RegistryError("API key env var must be a variable name like DEEPSEEK_API_KEY.")
@@ -196,11 +220,11 @@ def upsert_provider(data: dict) -> dict:
     if not isinstance(extra, dict):
         raise RegistryError("Extra env must be a JSON object.")
     cur = provider(reg, pid)
-    new = {"id": pid, "name": name, "base_url": base, "api_key_env": env_name, "env": extra,
+    new = {"id": pid, "name": name, "base_url": base, "api_key_env": env_name, "env": extra, "api": api,
            "api_key": cur.get("api_key", "") if cur else ""}
     if "api_key" in data and data["api_key"] is not None:  # "" clears a stored key; omitted keeps it
         new["api_key"] = str(data["api_key"]).strip()
-    if not new["api_key"] and not env_name:
+    if not new["api_key"] and not env_name and not (api == "openai" and _local(base)):
         raise RegistryError("Give an API key or the name of an env var that holds it.")
     reg["providers"] = [new if p["id"] == pid else p for p in reg["providers"]] if cur else reg["providers"] + [new]
     save(reg)
@@ -261,6 +285,15 @@ def _vision(x: dict) -> bool | None:
     return None
 
 
+# OpenAI's /models lists everything (embeddings, speech, images...); the editor needs chat models with tool calls
+_NOT_CHAT = re.compile(r"embed|whisper|tts|dall-e|davinci|babbage|moderation|transcribe|realtime|audio|image|"
+                       r"search|sora|computer-use|instruct|codex", re.I)
+
+
+def _openai_vision(mid: str) -> bool:
+    return bool(re.match(r"(gpt-4o|gpt-4\.1|gpt-4\.5|gpt-5|o[1-9]|chatgpt-4o|gpt-[6-9])", mid)) and "mini-tts" not in mid and not mid.startswith("o1-mini")
+
+
 def _pretty(mid: str) -> str:
     words = re.split(r"[-_/]", mid.split("/")[-1])
     return " ".join(w.upper() if re.fullmatch(r"v\d[\d.]*|[a-z]\d+", w) else w.capitalize() for w in words if w)
@@ -274,10 +307,10 @@ def list_models(pid: str) -> list[dict]:
     if p["id"] == BUILTIN:
         return [dict(m) for m in BUILTIN_MODELS]
     secret = api_key(p)
-    if not secret:
+    if not secret and not (p.get("api") == "openai" and _local(p["base_url"])):
         raise RegistryError("No API key set.")
     base = p["base_url"].rstrip("/")
-    urls = [base + "/v1/models", base + "/models"]
+    urls = [base + "/models"] if p.get("api") == "openai" else [base + "/v1/models", base + "/models"]
     if base.endswith("/anthropic"):  # e.g. DeepSeek serves the list on its OpenAI-style root
         root = base[: -len("/anthropic")]
         urls += [root + "/v1/models", root + "/models"]
@@ -302,9 +335,15 @@ def list_models(pid: str) -> list[dict]:
             mid = str(x.get("id") or x.get("name") or "").strip()
             if not mid or str(x.get("type", "chat")).lower() in ("embedding", "embeddings", "image", "audio", "tts", "moderation"):
                 continue
+            if p.get("api") == "openai" and _NOT_CHAT.search(mid):
+                continue
+            if p.get("api") == "openai" and "openai.com" in base:
+                x = {**x, "vision": _openai_vision(mid)}
             name = x.get("display_name") or (x.get("name") if x.get("name") and x.get("name") != mid else None)
-            out.append({"id": mid, "label": str(name or _pretty(mid)), "vision": _vision(x)})
+            out.append({"id": mid, "label": str(name or _pretty(mid)), "vision": x["vision"] if "vision" in x else _vision(x)})
         if out:
+            if p.get("api") == "openai" and "openai.com" in base:  # newest first: ids sort by family and date
+                out.sort(key=lambda m: m["id"], reverse=True)
             return out
     raise RegistryError("This provider doesn't publish a model list" + (f" ({', '.join(errors)})" if errors else "") + ". Type a model id instead.")
 
@@ -323,6 +362,18 @@ def test_model(pid: str, mid: str) -> str:
     m = {"id": mid}
     if p["id"] == BUILTIN:
         return "Uses your Claude Code login."
+    if p.get("api") == "openai":
+        from . import openai_bridge
+
+        try:
+            data = openai_bridge.complete(p["id"], {"model": mid, "max_tokens": 64,
+                                                    "messages": [{"role": "user", "content": "Reply with: ok"}]})
+        except openai_bridge.BridgeError as e:
+            hint = {401: "Invalid API key", 403: "Key not allowed to use this model", 404: "Model or URL not found",
+                    402: "Out of credit", 429: "Rate limited or out of quota"}.get(e.status)
+            raise RegistryError(f"{hint + ' — ' if hint else ''}{e} (HTTP {e.status})") from None
+        text = " ".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text").strip()
+        return f"OK, {mid} replied: {text[:60] or '(empty)'}"
     secret = api_key(p)
     if not secret:
         raise RegistryError("No API key set.")

@@ -4,6 +4,13 @@ Every message from the user is sent with an <editor_context> block describing wh
 is selected in the GUI and where the playhead is, so "make this clip slower" works.
 The agent may run `vedit` (plus read-only tools) freely; anything else pauses and asks the
 user to Allow or Deny it in the chat pane.
+
+Chat modes (picked in the chat pane, saved per project):
+- auto: vedit edits run straight away (the default).
+- ask:  every vedit command that changes the edit waits for the user's Allow / Deny.
+- plan: the agent may look (info, frame, sheet...) but every edit is blocked; it replies with a plan and the chat
+        shows Approve buttons under it. Approving switches to auto or ask and the agent carries the plan out.
+Auditor (also per project): off, checks (code checks when a turn changed the edit) or ai (checks + AI reviewer).
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ The current model cannot see images. Do NOT Read .jpg/.png files (frame, sheet) 
 will fail. Verify edits from `uv run vedit --json info` output instead, and tell the user
 to check the preview pane for anything visual. To mask or focus on something you can't see,
 use `--object NAME` (person, car, bottle, cell phone, any...) or ask the user to draw the box
-with the Mask / Focus buttons under the preview.
+with the Mask / Focus buttons in the timeline toolbar.
 """.strip()
 
 SYSTEM_APPEND = """
@@ -53,10 +60,12 @@ the JPGs it returns. Don't write shell loops or scripts; one vedit command per s
 
 To hide something (label, logo, brand, plate) use `vedit mask add` (tracked; default style
 `remove` rebuilds the background so it looks like the thing was never there; blur / pixelate
-for privacy), never PNG / colour patches made with ffmpeg. For an exact shape, give several
-boxes joined with ';'. For object focus use `vedit focus add`; for transitions
-`vedit transition`. Load the `masking-focus` / `transitions` skill first.
-The user can also box, brush or grid-paint a mask (Mask button under the preview) or draw a focus box.
+for privacy), never PNG / colour patches made with ffmpeg. Masks are detailed work: load the
+`masking-focus` skill and follow its steps every time: `mask find` (pick the exact outline), `mask add`,
+`mask check` (motion profile + flagged frames; Read its sheet), `mask fix` at the first wrong moment,
+check again. A mask is not done until its check is good and you've looked at the sheet.
+For object focus use `vedit focus add`; for transitions `vedit transition` (load the `transitions` skill).
+The user can also box, brush or grid-paint a mask (Mask button in the timeline toolbar) or draw a focus box.
 
 The timeline has a main track (clips; it can hold gaps) and overlay tracks above it (0 = bottom, higher =
 drawn on top). Everything you can drag there you can do with vedit: `place` (move a clip to a time / a layer to a
@@ -68,9 +77,30 @@ Keep the edit consistent: one text look for all titles (`vedit text look apply <
 fonts via `vedit fonts`, load the `animation` skill), and for colour run `vedit color match`
 then one `vedit color look <name>` on every clip (load the `color` skill). Say why you chose a look.
 
+You only edit videos. Never change aiklips itself: its code (src/), tests, settings, .claude/ or the Python
+environment are off limits, and so are running Python, tests, git or installers. Those calls are blocked
+automatically. If vedit can't do something or misbehaves, say so plainly (what you ran, what happened) so the user
+can report it, and offer the closest vedit alternative.
+
 Before you say an edit is done: record why each clip you chose is there (`vedit why <clip> "..." --role ...`),
 run `vedit --json audit`, fix every must-fix finding and re-run until it passes. Report the score.
 """.strip()
+
+CHAT_MODES = ("auto", "ask", "plan")
+AUDITORS = ("off", "checks", "ai")
+MODE_NOTES = {
+    "auto": "",
+    "ask": "chat mode: ask. The user approves each vedit command that changes the edit, so group related changes "
+           "and say in one line what the next command does before you run it.",
+    "plan": "chat mode: plan. Don't change the edit yet (edit commands are blocked). Look first if you need to (info, "
+            "frame, sheet, audit), then reply with a short numbered plan: each step's vedit command, timeline seconds "
+            "and why. End your turn there; the user approves the plan with a button, then you carry it out.",
+}
+PLAN_BLOCK = ("Plan mode: nothing may change until the user approves a plan. Only look (info, frame, sheet, audit, list "
+              "commands), then reply with the numbered plan and end your turn.")
+AUDIT_NOTES = {"off": "auditor: off. The user switched the auditor off: don't run `vedit audit` or record `vedit why` "
+                      "unless they ask; just make the edit and summarise it.",
+               "checks": "", "ai": ""}
 
 AUDIT_TIMEOUT = 300  # seconds: a render + an AI review can take a while
 
@@ -277,6 +307,218 @@ def bash_check(cmd: str, roots: tuple[Path, ...] | None = None) -> tuple[bool, s
     return (not need), need
 
 
+# vedit commands that only look (they never change project.json). Everything else counts as an edit.
+_VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts", "preview", "help"}
+_VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
+                   "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
+                   "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "update": {"status", "check"},
+                   "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
+_VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models"}  # read-only when given no options
+_VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them
+
+
+def _vedit_args(w: list[str]) -> list[str] | None:
+    """The words after `vedit` (global options dropped), or None when this segment isn't a vedit call."""
+    if not w:
+        return None
+    i = 0
+    if w[0] == "uv":
+        i = 1
+        while i < len(w) and w[i] != "vedit":
+            i += 1
+        if i >= len(w):
+            return None
+    elif not (w[0] in ("vedit", ".venv/bin/vedit") or w[0].endswith("/.venv/bin/vedit")):
+        return None
+    rest = w[i + 1:]
+    out, j = [], 0
+    while j < len(rest):
+        a = rest[j]
+        if not out and a in ("--project", "-p"):
+            j += 2
+            continue
+        if not out and a in ("--json", "-q"):
+            j += 1
+            continue
+        out.append(a)
+        j += 1
+    return out
+
+
+def vedit_kind(args: list[str]) -> str:
+    """'read', 'note' or 'edit' for one vedit invocation."""
+    if not args or "--help" in args or "-h" in args:
+        return "read"
+    cmd, opts = args[0], [a for a in args[1:] if a != "--json"]
+    if cmd in _VEDIT_READ:
+        return "read"
+    if cmd in _VEDIT_NOTES:
+        return "note"
+    if cmd == "silence-cut" and "--dry-run" in opts:
+        return "read"
+    if cmd in _VEDIT_READ_BARE and not opts:
+        return "read"
+    subs = _VEDIT_READ_SUB.get(cmd)
+    if subs is not None:
+        if not opts:
+            return "read"  # a bare group prints its help
+        if opts[0] in subs or " ".join(opts[:2]) in subs:
+            return "read"
+    return "edit"
+
+
+def vedit_edits(cmd: str) -> list[str]:
+    """Short forms of the vedit commands in `cmd` that change the edit ('note' ones included, tagged)."""
+    try:
+        segs, _ = _scan(cmd)
+    except _Unsafe:
+        return []
+    out = []
+    for seg in segs:
+        args = _vedit_args(_words(re.sub(r"^do\s+", "", seg)))
+        if args is None:
+            continue
+        k = vedit_kind(args)
+        if k != "read":
+            out.append(("note:" if k == "note" else "") + " ".join(args[:3]))
+    return out
+
+
+# ---- hard guardrails ------------------------------------------------------------------------------
+# The AI editor edits videos, never aiklips itself. These rules can't be overridden: not by clicking Allow, not by
+# an always-allow list, not by Claude Code's own settings (they run in a PreToolUse hook, before any of those).
+# Blocked: writing files outside the open project; programs that run code, install things or change files; shell
+# tricks (redirection into files, $(...), backticks, subshells); any other program pointed at aiklips' code.
+_BLOCKED = {
+    # run code
+    "python", "python3", "pythonw", "py", "ipython", "pytest", "node", "deno", "bun", "ruby", "perl", "php", "lua",
+    "osascript", "swift", "java", "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "eval", "exec", "source", ".",
+    "xargs", "env", "nohup", "timeout", "watch", "time", "nice", "sudo", "su", "doas", "script", "expect", "screen", "tmux",
+    # build, install, version control
+    "pip", "pip3", "pipx", "uvx", "conda", "poetry", "npm", "npx", "pnpm", "yarn", "brew", "port", "git", "gh", "make",
+    "cmake", "cargo", "go", "gcc", "g++", "clang", "cc", "ld", "xcodebuild", "docker",
+    # change files or the system
+    "sed", "awk", "gawk", "tee", "cp", "mv", "rm", "rmdir", "ln", "patch", "touch", "truncate", "install", "rsync",
+    "ditto", "dd", "chmod", "chown", "chflags", "xattr", "unzip", "tar", "gzip", "gunzip", "zip", "ed", "ex", "vi",
+    "vim", "nvim", "nano", "emacs", "crontab", "launchctl", "defaults", "kill", "killall", "pkill", "open", "curl",
+    "wget", "ssh", "scp", "sftp", "nc", "shred", "srm", "trash", "mkfifo", "split", "csplit",
+}
+_VERSIONED = re.compile(r"^(python|pip|pypy|node|ruby|perl|php|lua)[\d.]*$")
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+GUARD_NOTE = ("You are the video editor here, not a developer: aiklips' own code, tests and settings are off limits. "
+              "Use vedit commands only. If vedit can't do something or seems broken, tell the user what you tried and "
+              "what happened so they can report it; don't try to fix or work around aiklips itself.")
+
+
+def _prog(w: list[str]) -> tuple[str, list[str]]:
+    """(program name, its words) with leading VAR=value assignments dropped."""
+    i = 0
+    while i < len(w) and _ASSIGN.match(w[i]):
+        i += 1
+    w = w[i:]
+    return (Path(w[0]).name if w else ""), w
+
+
+def _blocked_prog(name: str) -> bool:
+    return name in _BLOCKED or bool(_VERSIONED.match(name))
+
+
+def protected_roots() -> tuple[Path, ...]:
+    """aiklips' own files: the source checkout (but not its projects/ folder), the installed package, the
+    Python environment, and Claude Code's settings."""
+    import sys
+
+    import vedit
+
+    out = [Path(vedit.__file__).resolve().parent, Path(sys.prefix).resolve(), Path.home().resolve() / ".claude"]
+    if (REPO_ROOT / "pyproject.toml").exists():
+        out += [p.resolve() for p in REPO_ROOT.iterdir() if p.name != "projects"]
+    return tuple(dict.fromkeys(out))
+
+
+def _in_protected(path: str, cwd: Path, prot: tuple[Path, ...]) -> bool:
+    if not path or path.startswith("-") or "://" in path:
+        return False
+    try:
+        p = Path(path.replace("$HOME", str(Path.home()))).expanduser()
+        p = (p if p.is_absolute() else cwd / p).resolve()
+    except (OSError, ValueError):
+        return False
+    return any(p == r or r in p.parents for r in prot)
+
+
+def bash_guard(cmd: str, pdir: Path | None = None) -> str | None:
+    """Why this shell command is never allowed in the AI editor, or None when it may go on to the normal checks."""
+    try:
+        segs, _ = _scan(cmd)
+    except _Unsafe:
+        return ("Shell tricks (writing into files with > or heredocs, $(...), backticks, subshells, &) aren't allowed in "
+                "the AI editor. Run plain vedit commands, one per step.")
+    roots = (REPO_ROOT,) + ((pdir,) if pdir else ())
+    prot = protected_roots()
+    cwd = REPO_ROOT  # the agent's working directory; `cd` moves it
+    for seg in segs:
+        if re.match(r"^for\s+[A-Za-z_]\w*\s+in\b", seg) or seg == "done":
+            continue
+        raw = _words(re.sub(r"^do\s+", "", seg))
+        name, w = _prog(raw)
+        if not name:
+            continue
+        if len(w) != len(raw):
+            return "Setting environment variables in front of a command isn't allowed in the AI editor."
+        if name == "cd":
+            if len(w) > 1:
+                t = Path(w[1].replace("$VEDIT_PROJECT", str(pdir or "")).replace("$HOME", str(Path.home()))).expanduser()
+                cwd = (t if t.is_absolute() else cwd / t).resolve()
+            continue
+        is_vedit = name in ("uv", "vedit") and _segment_ok(" ".join(shlex.quote(x) for x in w), roots)
+        if name == "uv" and not is_vedit:
+            return "Only `uv run vedit ...` is allowed: no installing, syncing, tests or Python through uv in the AI editor."
+        if is_vedit:
+            args = _vedit_args(w) or []
+            if vedit_kind(args) != "read" and any(_in_protected(a, cwd, prot) for a in args[1:]):
+                return "vedit may not write into aiklips' own files (code, tests, settings). Use a path inside the project."
+            continue
+        if _blocked_prog(name):
+            return (f"`{name}` can run code or change files, so it's never allowed in the AI editor. "
+                    "Use a vedit command instead.")
+        if name not in _READ_ONLY and any(_in_protected(a, cwd, prot) for a in w[1:]):
+            return f"`{name}` may not touch aiklips' own files (code, tests, settings) from the AI editor."
+    return None
+
+
+def file_guard(tool: str, data: dict, pdir: Path) -> str | None:
+    """Edit / Write tools: only files inside the open project, never its .vedit/ state or the original media."""
+    fp = str(data.get("file_path") or data.get("notebook_path") or "")
+    try:
+        p = Path(fp).expanduser().resolve()
+        root = pdir.resolve()
+    except (OSError, ValueError):
+        return "That path can't be checked, so it isn't allowed."
+    if not (p == root or root in p.parents):
+        return (f"The AI editor may only change files inside the open project, not {fp}. aiklips' code, tests and "
+                "settings are off limits; make the change with vedit commands.")
+    rel = p.relative_to(root).parts
+    if rel and rel[0] == ".vedit":
+        return "vedit's own state (.vedit/) is never edited by hand. Use vedit commands (undo, checkout...)."
+    if rel and rel[0] == "media" and p.exists():
+        return "The user's original media is never overwritten."
+    return None
+
+
+_FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def guard(tool: str, data: dict, pdir: Path) -> str | None:
+    """The hard rules for one tool call: a reason to block it, or None."""
+    if tool == "Bash":
+        return bash_guard(str(data.get("command", "")), pdir)
+    if tool in _FILE_TOOLS:
+        return file_guard(tool, data, pdir)
+    return None
+
+
 def _bash_allowed(cmd: str, roots: tuple[Path, ...] | None = None) -> bool:
     """vedit and a few read-only helpers, optionally chained, piped or in a simple for-loop."""
     return bash_check(cmd, roots)[0]
@@ -325,7 +567,14 @@ class ChatSession:
         self.pending: dict[str, tuple[asyncio.Future, dict]] = {}  # permission requests awaiting the user
         self.always: set[str] = set(data.get("always_allow", []))  # "Always allow" answers, per project
         # auditor: code checks run whenever a turn changed the edit; the AI reviewer only when switched on
-        self.auto_audit_ai: bool = bool(data.get("auto_audit_ai", False))
+        # (older chat.json files only have auto_audit_ai; unticked there meant "no auditor" to the user)
+        aud = data.get("auditor")
+        if aud not in AUDITORS:
+            aud = ("ai" if data["auto_audit_ai"] else "off") if "auto_audit_ai" in data else "checks"
+        self.auditor: str = aud
+        self.mode: str = data.get("mode") if data.get("mode") in CHAT_MODES else "auto"
+        self.turn_allow_edits = False  # "Allow all this turn" in ask mode
+        self.plan_offer: dict | None = None  # the Approve-plan card waiting under the last plan
         self.turn_head: int | None = None
         self.audited_head: int | None = None  # history step the last audit looked at
         self.audit_rounds = 0
@@ -335,7 +584,8 @@ class ChatSession:
 
     # ---- plumbing --------------------------------------------------------------
     def _save(self) -> None:
-        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always), "auto_audit_ai": self.auto_audit_ai}))
+        self.store.write_text(json.dumps({"model": self.model, "always_allow": sorted(self.always), "auditor": self.auditor,
+                                          "mode": self.mode}))
         if self.log:
             if self.chat_id is None:
                 self.chat_id = self._new_chat_id()
@@ -372,7 +622,7 @@ class ChatSession:
 
     def _history_event(self) -> dict:
         return {"type": "history", "log": self.log, "busy": self.busy, "model": self.model, "models": registry.public(),
-                "chats": self.chats(), "chat_id": self.chat_id, "auto_audit_ai": self.auto_audit_ai}
+                "chats": self.chats(), "chat_id": self.chat_id, "auditor": self.auditor, "mode": self.mode}
 
     async def _broadcast(self, ev: dict) -> None:
         for ws in list(self.sockets):
@@ -410,28 +660,53 @@ class ChatSession:
         await ws.send_json(self._history_event())
         for _, ev in self.pending.values():  # re-show prompts still waiting for an answer
             await ws.send_json(ev)
+        if self.plan_offer:
+            await ws.send_json(self.plan_offer)
 
     def _write_ok(self, file_path: str) -> bool:
-        """Edits inside the project are fine, except vedit's state and the user's original media."""
+        return file_guard("Write", {"file_path": file_path}, self.pdir) is None
+
+    async def _blocked(self, tool: str, data: dict, why: str) -> None:
+        detail = str(data.get("command") or data.get("file_path") or data.get("notebook_path") or "")
+        await self.emit({"type": "notice", "text": f"Blocked {tool} (guardrail): {_short_cmd(detail)[:120]}. {why.split('. ')[0]}."})
+
+    async def _pre_tool(self, data: Any, tool_use_id: str | None, context: Any) -> dict:
+        """PreToolUse hook: runs before Claude Code's own permission rules (project settings, modes), so the hard
+        guardrails hold even where those would allow the call without asking us."""
         try:
-            p = Path(file_path).expanduser().resolve()
-            root = self.pdir.resolve()
-        except OSError:
-            return False
-        if not (p == root or root in p.parents):
-            return False
-        rel = p.relative_to(root).parts
-        if rel and rel[0] == ".vedit":
-            return False
-        if rel and rel[0] == "media" and p.exists():
-            return False
-        return True
+            tool, inp = str(data.get("tool_name", "")), data.get("tool_input") or {}
+            why = guard(tool, inp, self.pdir)
+        except Exception as e:  # a guard that can't decide blocks
+            tool, inp, why = str(data.get("tool_name", "")), {}, f"guardrail check failed ({e})"
+        if not why:
+            return {}
+        await self._blocked(tool, inp, why)
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": why + " " + GUARD_NOTE}}
 
     async def _permission(self, tool: str, data: dict, ctx: Any):
         from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
         if tool in _ALLOWED_TOOLS:
             return PermissionResultAllow()
+        why = guard(tool, data, self.pdir)
+        if why:
+            await self._blocked(tool, data, why)
+            return PermissionResultDeny(message=why + " " + GUARD_NOTE)
+        if self.mode == "plan" and tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+            return PermissionResultDeny(message=PLAN_BLOCK)
+        if tool == "Bash" and self.mode != "auto":
+            edits = vedit_edits(str(data.get("command", "")))
+            real = [e for e in edits if not e.startswith("note:")]
+            if self.mode == "plan" and edits:
+                return PermissionResultDeny(message=PLAN_BLOCK)
+            if self.mode == "ask" and real and not self.turn_allow_edits:
+                answer = await self._ask_user("Bash", str(data.get("command", "")), kind="edit")
+                if answer == "turn":
+                    self.turn_allow_edits = True
+                elif not answer:
+                    return PermissionResultDeny(message="The user declined this edit. Ask what they'd like instead, "
+                                                        "or suggest a different change.")
         allowed = self.always | permissions.global_allow()  # this project's + Settings → Permissions
         always_key: str | None = None
         if tool == "Bash":
@@ -442,10 +717,8 @@ class ChatSession:
                 if need <= allowed:
                     return PermissionResultAllow()
                 always_key = ",".join(sorted(need))
-        elif tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-            fp = str(data.get("file_path") or data.get("notebook_path") or "")
-            if self._write_ok(fp):
-                return PermissionResultAllow()
+        elif tool in _FILE_TOOLS:
+            return PermissionResultAllow()  # guard() already kept it inside the project
         elif tool.startswith("mcp__"):
             pass  # connectors are never auto-allowed
         else:
@@ -462,10 +735,25 @@ class ChatSession:
             await self.emit({"type": "notice", "text": f"Blocked {tool} (Settings → Permissions is set to deny without asking): {detail[:120]}"})
             return PermissionResultDeny(message="Blocked by the user's permission settings. Use a `uv run vedit ...` command "
                                                 "instead, or tell the user what you need and why.")
+        answer = await self._ask_user(tool, detail, always=always_key)
+        if answer == "always" and always_key:
+            self.always |= set(always_key.split(","))
+            self._save()
+        allow = bool(answer)
+        verb = "Always allowing " + always_key.replace(",", ", ") if answer == "always" and always_key else ("Allowed" if allow else "Denied") + f" {tool}"
+        await self.emit({"type": "notice", "text": f"{verb}: {detail[:120]}"})
+        if allow:
+            return PermissionResultAllow()
+        return PermissionResultDeny(message="The user denied this. Prefer a `uv run vedit ...` command, "
+                                            "or ask the user how they want to proceed.")
+
+    async def _ask_user(self, tool: str, detail: str, always: str | None = None, kind: str = "tool",
+                        extra: dict | None = None) -> Any:
+        """Show an Allow / Deny card in the chat and wait for the answer (False after 10 minutes)."""
         rid = f"perm-{time.time_ns()}"
-        ev = {"type": "permission", "id": rid, "tool": tool, "detail": detail[:2000], "time": time.time()}
-        if always_key:
-            ev["always"] = always_key
+        ev = {"type": "permission", "id": rid, "tool": tool, "kind": kind, "detail": detail[:4000], "time": time.time(), **(extra or {})}
+        if always:
+            ev["always"] = always
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.pending[rid] = (fut, ev)
         await self.emit(ev, persist=False)
@@ -475,22 +763,55 @@ class ChatSession:
             answer = False
         finally:
             self.pending.pop(rid, None)
-        if answer == "always" and always_key:
-            self.always |= set(always_key.split(","))
-            self._save()
-        allow = bool(answer)
-        verb = "Always allowing " + always_key.replace(",", ", ") if answer == "always" and always_key else ("Allowed" if allow else "Denied") + f" {tool}"
-        await self.emit({"type": "notice", "text": f"{verb}: {detail[:120]}"})
-        await self.emit({"type": "permission_done", "id": rid}, persist=False)
-        if allow:
-            return PermissionResultAllow()
-        return PermissionResultDeny(message="The user denied this. Prefer a `uv run vedit ...` command, "
-                                            "or ask the user how they want to proceed.")
+            await self.emit({"type": "permission_done", "id": rid}, persist=False)
+        if kind == "edit":
+            await self.emit({"type": "notice", "text": ("Allowed edits for the rest of this request" if answer == "turn"
+                                                        else "Allowed edit" if answer else "Declined edit") + f": {_short_cmd(detail)[:120]}"})
+        return answer
+
+    async def set_mode(self, mode: str) -> None:
+        if mode not in CHAT_MODES:
+            return
+        self.mode = mode
+        self._save()
+        if mode != "plan":
+            await self._clear_plan_offer()
+        await self._broadcast({"type": "mode", "mode": self.mode})
+
+    # ---- plan mode ---------------------------------------------------------------------------------
+    # Plan mode is ours, not Claude Code's: its built-in plan mode routes Bash through its own safety check
+    # (skipping can_use_tool, so vedit edits could slip through) and doesn't work with other providers. Here the
+    # CLI stays in its default mode, `_permission` blocks every edit, the agent answers with a plan, and the chat
+    # pane shows Approve buttons under it. Approving switches to auto / ask and sends "carry it out".
+    async def _offer_plan(self, text: str) -> None:
+        self.plan_offer = {"type": "plan_offer", "id": f"plan-{time.time_ns()}", "text": text[:8000], "time": time.time()}
+        await self.emit(self.plan_offer, persist=False)
+
+    async def _clear_plan_offer(self) -> None:
+        if self.plan_offer:
+            rid, self.plan_offer = self.plan_offer["id"], None
+            await self._broadcast({"type": "permission_done", "id": rid})
+
+    async def answer_plan(self, rid: str, answer: str, ctx: dict | None = None) -> None:
+        """The user's answer to a plan: 'auto' / 'ask' (approve and carry it out that way), 'revise:<notes>', 'reject'."""
+        if not self.plan_offer or self.plan_offer["id"] != rid or self.lock.locked():
+            return
+        await self._clear_plan_offer()
+        answer = str(answer or "")
+        if answer.startswith("revise:"):
+            note = answer[len("revise:"):].strip()
+            await self.ask("Revise the plan" + (f": {note}" if note else ".") + " Don't edit yet.", ctx or {})
+        elif answer in ("auto", "ask"):
+            await self.set_mode(answer)
+            await self.ask("Plan approved. Carry it out now"
+                           + (" (I'll approve each edit)." if answer == "ask" else "."), ctx or {})
+        else:
+            await self.emit({"type": "notice", "text": "Plan rejected. Nothing was changed."})
 
     def answer_permission(self, rid: str, allow: bool | str) -> None:
         item = self.pending.get(rid)
         if item and not item[0].done():
-            item[0].set_result("always" if allow == "always" else bool(allow))
+            item[0].set_result(allow if allow in ("always", "turn") else bool(allow))
 
     def _deny_pending(self) -> None:
         for fut, _ in list(self.pending.values()):
@@ -532,12 +853,14 @@ class ChatSession:
             system_prompt={"type": "preset", "preset": "claude_code", "append": append},
             setting_sources=["project"],
             can_use_tool=self._permission,
+            disallowed_tools=["AskUserQuestion"],  # it needs a UI the chat pane doesn't have: ask in plain text
             env=env,
             resume=self.session_id if resume else None,
             max_buffer_size=32 * 1024 * 1024,  # tool results can carry images (frames Claude looks at)
             stderr=self._cli_log,  # keep Claude Code's diagnostics out of the user's terminal
             # the auditor: every time the agent says it's done, check the edit; must-fix findings send it back
-            hooks={"Stop": [HookMatcher(hooks=[self._on_stop], timeout=AUDIT_TIMEOUT)]},
+            hooks={"Stop": [HookMatcher(hooks=[self._on_stop], timeout=AUDIT_TIMEOUT)],
+                   "PreToolUse": [HookMatcher(matcher=None, hooks=[self._pre_tool], timeout=30)]},
         )
         self.client = ClaudeSDKClient(options=opts)
         await self.client.connect()
@@ -602,6 +925,7 @@ class ChatSession:
                 lines.append("selected: nothing")
         except Exception as e:  # never block a message because context failed
             lines.append(f"(context unavailable: {e})")
+        lines += [n for n in (MODE_NOTES.get(getattr(self, "mode", "auto")), AUDIT_NOTES.get(getattr(self, "auditor", "checks"))) if n]
         return "<editor_context>\n" + "\n".join(lines) + "\n</editor_context>"
 
     async def ask(self, text: str, ctx: dict) -> None:
@@ -615,8 +939,14 @@ class ChatSession:
             try:
                 await self._ensure()
                 self.turn_head, self.audit_rounds, self.audited_head = self._head(), 0, None
+                self.turn_allow_edits = False
+                await self._clear_plan_offer()
+                n0 = len(self.log)
                 await self.client.query(self.context_block(ctx) + "\n\n" + text)
                 await self._pump()
+                said = [e["text"] for e in self.log[n0:] if e.get("type") == "assistant"]
+                if self.mode == "plan" and said:
+                    await self._offer_plan(said[-1])
             except Exception as e:
                 msg = str(e) or type(e).__name__
                 if getattr(self, "provider", registry.BUILTIN) != registry.BUILTIN or isinstance(e, registry.RegistryError):
@@ -639,7 +969,7 @@ class ChatSession:
             return None
 
     def _run_audit(self) -> dict:
-        if self.auto_audit_ai:
+        if self.auditor == "ai":
             from ..review import full_audit
 
             return full_audit(self.pdir, use_ai=True)
@@ -654,6 +984,8 @@ class ChatSession:
         from .. import review
 
         try:
+            if self.auditor == "off":
+                return {}  # the user switched the auditor off in the chat pane
             head = self._head()
             if head is None or head == self.turn_head:
                 return {}  # nothing was edited this turn (a question, a look at frames...)
@@ -689,10 +1021,15 @@ class ChatSession:
             await self.emit({"type": "notice", "text": f"Audit skipped: {e}"})
             return {}
 
-    async def set_auto_audit(self, on: bool) -> None:
-        self.auto_audit_ai = bool(on)
+    async def set_auditor(self, value: str) -> None:
+        if value not in AUDITORS:
+            return
+        self.auditor = value
         self._save()
-        await self._broadcast({"type": "auto_audit", "on": self.auto_audit_ai})
+        await self._broadcast({"type": "auditor", "value": self.auditor})
+
+    async def set_auto_audit(self, on: bool) -> None:  # older editor pages: the tick box
+        await self.set_auditor("ai" if on else "off")
 
     async def _pump(self) -> None:
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -791,6 +1128,7 @@ class ChatSession:
         await self._stop_and_wait()
         await self._reset()
         self.chat_id, self.chat_created, self.log, self.session_id = None, time.time(), [], None
+        self.plan_offer = None
         self._save()
         await self._broadcast(self._history_event())
 
@@ -805,6 +1143,7 @@ class ChatSession:
         d = json.loads(f.read_text())
         self.chat_id, self.chat_created = d.get("id", f.stem), d.get("created", time.time())
         self.log, self.session_id = d.get("log", []), d.get("session_id")
+        self.plan_offer = None
         await self._broadcast(self._history_event())
 
     async def delete_chat(self, cid: str) -> None:

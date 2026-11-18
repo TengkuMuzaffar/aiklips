@@ -90,6 +90,17 @@ def test_base_hash_ignores_overlays(make_project):
     assert base_hash(p) != h
 
 
+def test_preview_hashes_change_when_effect_code_changes(make_project, monkeypatch):
+    """A new mask / background-rebuild version must re-render the preview: the project file itself doesn't change."""
+    from vedit.ops import track
+    from vedit.render.runner import project_hash
+
+    p = make_project(1)
+    h, b = project_hash(p), base_hash(p)
+    monkeypatch.setattr(track, "REMOVE_VERSION", track.REMOVE_VERSION + "-next")
+    assert project_hash(p) != h and base_hash(p) != b
+
+
 @needs_ffmpeg
 def test_text_edits_never_rerender_the_base_video(cli, test_clip):
     cli("import", str(test_clip))

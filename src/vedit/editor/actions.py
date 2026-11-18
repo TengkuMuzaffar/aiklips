@@ -166,7 +166,7 @@ def _mask_add(p: Project, a: dict) -> str:
     params.update({"id": track.new_mask_id(p), "style": style, "color": a.get("color") or "#000000",
                    "shape": "paint" if painted else (a.get("shape") or "rect"), "feather": float(a.get("feather") or 0.04),
                    "expand": float(a.get("expand") or (1.0 if painted else 1.1)), "track": bool(a.get("track", True)), "smooth": 0.6,
-                   "invert": bool(a.get("invert", False))})
+                   "invert": bool(a.get("invert", False)), "tracker": a.get("tracker") or "auto", "sam": a.get("sam") or "auto"})
     c.effects.append(Effect(type="mask", params=params))
     return f"{c.id}: mask {params['id']} ({style})"
 
@@ -177,7 +177,7 @@ def _mask_set(p: Project, a: dict) -> str:
     if not hits:
         raise VeditError(f"No mask {a['id']}")
     for e in hits:
-        for k in ("style", "strength", "color", "feather", "expand", "shape", "invert"):
+        for k in ("style", "strength", "color", "feather", "expand", "shape", "invert", "tracker", "sam"):
             if k in a and a[k] not in (None, ""):
                 e.params[k] = a[k]
     return f"mask {a['id']}: update"
@@ -236,6 +236,7 @@ def _focus_add(p: Project, a: dict) -> str:
     params = track.focus_params(params, a.get("mode") or "spotlight", a.get("style") or "spotlight",
                                 color=a.get("color") or None, width=_num(a, "width"), strength=_num(a, "strength"),
                                 track=bool(a.get("track", True)), zoom=_num(a, "zoom") or None)
+    params.update({"tracker": a.get("tracker") or "auto", "sam": a.get("sam") or "auto"})
     c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
     return f"{c.id}: focus ({params['mode']}, {params['style']})"
 
@@ -723,8 +724,21 @@ def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     return {"ok": True, "message": tx.message}
 
 
-def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index: int | None) -> dict:
-    """Store an uploaded / dropped file in media/ and add it as a source (and clip)."""
+FORMAT_SIZES = {"reels": (1080, 1920), "portrait45": (1080, 1350), "square": (1080, 1080), "landscape": (1920, 1080)}
+
+
+def closest_format(w: int, h: int) -> tuple[int, int]:
+    """The preset canvas whose aspect ratio is nearest to w:h."""
+    import math
+
+    return min(FORMAT_SIZES.values(), key=lambda s: abs(math.log((w / h) / (s[0] / s[1]))))
+
+
+def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index: int | None, fit_canvas: bool = False) -> dict:
+    """Store an uploaded / dropped file in media/ and add it as a source (and clip).
+
+    `fit_canvas`: when this is the project's first clip, switch the canvas to the format closest to the video's shape
+    (a project made by dropping a landscape video becomes 16:9)."""
     media_dir = pdir / "media"
     media_dir.mkdir(exist_ok=True)
     name = Path(filename).name or "upload.mp4"
@@ -742,4 +756,6 @@ def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index:
         clip_id = None
         if append and info["has_video"]:
             clip_id = cut.append_clip(p, sid, 0, None, index).id
+            if fit_canvas and len(p.clips) == 1 and info.get("width") and info.get("height"):
+                p.canvas.width, p.canvas.height = closest_format(info["width"], info["height"])
     return {"ok": True, "source": sid, "clip": clip_id, "has_video": info["has_video"]}

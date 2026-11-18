@@ -30,7 +30,7 @@ from .effects import EFFECT_VERSION, Writer, cache_dir, model_path, proc_size, r
 TRACK_SIDE = 640  # tracking resolution (long side)
 MASK_SIDE = 960  # mask video resolution (long side); scaled up when compositing
 REMOVE_SIDE = 1280  # resolution of the reconstructed background for style "remove"
-REMOVE_VERSION = "remove-6"  # bump when the reconstruction changes (part of the cache key)
+REMOVE_VERSION = "remove-10"  # bump when the reconstruction changes (part of the cache key); 10 = no ghost print, margin
 MASK_VERSION = "mask-2"  # bump when region_mask changes (part of the cache key); 2 = erase strokes survive the feather
 DETECTOR_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite"
 STYLES = ("remove", "blur", "pixelate", "fill", "dim")
@@ -366,7 +366,20 @@ def _smooth(boxes: np.ndarray, strength: float) -> np.ndarray:
 
 
 def track(pdir: Path, project: Project, clip_source: str, params: dict, log: Callable[[str], None]) -> dict:
-    """Boxes (normalised x,y,w,h) for every source frame; cached by source + box + range."""
+    """Boxes (normalised x,y,w,h) for every source frame; cached by source + box + range. With tracker "outline"
+    (point tracking, ops/outline.py) or "segment" (SAM 2 video, ops/segment.py; "auto" picks it when SAM is
+    installed) also the object's outline per frame."""
+    from .outline import resolve_tracker
+
+    how = resolve_tracker(params) if params.get("track", True) else "box"
+    if how == "segment":
+        from .segment import track_segment
+
+        return track_segment(pdir, project, clip_source, params, log)
+    if how == "outline":
+        from .outline import track_outline
+
+        return track_outline(pdir, project, clip_source, params, log)
     src = project.sources[clip_source]
     path = resolve_media(pdir, src.path)
     w, h, fps = source_dims(src)
@@ -441,6 +454,18 @@ class KeepMasks:
         return self.cv2.dilate(m, np.ones((k, k), np.uint8)) > 127
 
 
+def mask_at(cv2, p: dict, data: dict, i: int, mw: int, mh: int, eff_type: str = "mask") -> np.ndarray:
+    """The region's mask at source frame i: the tracked outline when there is one, else the tracked box."""
+    from .outline import frame_polys
+
+    boxes = data["boxes"]
+    pl = frame_polys(data, i)
+    box = boxes[min(i, len(boxes) - 1)]
+    if pl is False:
+        return region_mask(cv2, p, box, mw, mh, eff_type)
+    return region_mask(cv2, p, box, mw, mh, eff_type, poly=pl or [])
+
+
 def render_mask(pdir: Path, project: Project, source_id: str, eff: Effect, out: Path, log: Callable[[str], None]) -> Path:
     """Gray mask video for the whole source: white = region (or everything else when inverted)."""
     cv2 = require("cv2", "ai")
@@ -452,8 +477,8 @@ def render_mask(pdir: Path, project: Project, source_id: str, eff: Effect, out: 
     invert = bool(p.get("invert", eff.type == "focus"))
     keep = KeepMasks(cv2, pdir, project, source_id, p, log)
     wr = Writer(out, mw, mh, fps, "gray")
-    for i, bx in enumerate(data["boxes"]):
-        m = region_mask(cv2, p, bx, mw, mh, eff.type)
+    for i in range(len(data["boxes"])):
+        m = mask_at(cv2, p, data, i, mw, mh, eff.type)
         if invert:
             m = 255 - m
         km = keep(i, mw, mh)
@@ -463,12 +488,27 @@ def render_mask(pdir: Path, project: Project, source_id: str, eff: Effect, out: 
     return wr.close()
 
 
-def region_mask(cv2, p: dict, box: list[float], mw: int, mh: int, eff_type: str = "mask") -> np.ndarray:
-    """Feathered 0-255 mask of the region at a tracked box (normalised x, y, w, h)."""
+def region_mask(cv2, p: dict, box: list[float], mw: int, mh: int, eff_type: str = "mask",
+                poly: list[np.ndarray] | None = None) -> np.ndarray:
+    """Feathered 0-255 mask of the region at a tracked box (normalised x, y, w, h), or of a tracked outline
+    (`poly`: normalised polygons from ops/outline.py; [] = the object is lost / out of view in this frame)."""
     bx, by, bw, bh = box
     expand = float(p.get("expand", 1.0))
     feather = float(p.get("feather", 0.04 if eff_type == "mask" else 0.12))  # fraction of the short side
     fpx = max(0.0, feather * min(mw, mh))
+    if poly is not None:
+        from .outline import poly_mask
+
+        m = poly_mask(cv2, [np.asarray(q, np.float32) * [mw, mh] for q in poly], mw, mh)
+        if expand > 1.0 and m.any():  # margin: a share of the object's size, so the edge pixels are covered too
+            k = int((expand - 1.0) * 0.5 * np.sqrt(np.count_nonzero(m))) * 2 + 1
+            if k >= 3:
+                m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        if fpx >= 1 and m.any():
+            k = int(fpx / 2) * 2 + 1
+            m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+            m = cv2.GaussianBlur(m, (0, 0), fpx / 2)
+        return m
     shape = p.get("shape", "rect" if eff_type == "mask" else "ellipse")
     cx, cy = (bx + bw / 2) * mw, (by + bh / 2) * mh
     hw, hh = bw * mw * expand / 2, bh * mh * expand / 2
@@ -646,10 +686,17 @@ class LabelLock:
         self.plate: np.ndarray | None = None  # full-frame float, reference coordinates
 
     def homography(self, frame: np.ndarray, box_mask: np.ndarray, prev: np.ndarray | None = None) -> np.ndarray | None:
+        """Reference -> frame homography, or None. With `prev` (the lock in the neighbouring frame) the search and the
+        sanity checks follow where that lock puts the region, not the box tracker: the tracker's box can't rotate or
+        tilt, so on a turning label it drifts and would make good locks look wrong."""
         cv2 = self.cv2
         if not self.ok:
             return None
         h, w = box_mask.shape
+        if prev is not None:
+            pred = cv2.warpPerspective(self.ref_mask, prev, (w, h), flags=cv2.INTER_NEAREST)
+            if np.count_nonzero(pred > 128) >= 16:
+                box_mask = pred
         ys, xs = np.nonzero(box_mask > 2)
         if not len(ys):
             return None
@@ -682,6 +729,44 @@ class LabelLock:
             H = 0.6 * H + 0.4 * prev
         return H
 
+    def follow(self, last: np.ndarray, last_H: np.ndarray, frame: np.ndarray) -> np.ndarray | None:
+        """Reference -> frame homography by matching against the last locked frame instead of the reference. When a
+        label turns far from how it looked in the reference (a box rotated 40 degrees), matching the reference fails,
+        but neighbouring frames still look alike: chain the small frame-to-frame step onto the last lock."""
+        cv2 = self.cv2
+        if not self.ok:
+            return None
+        h, w = frame.shape[:2]
+        pm = cv2.warpPerspective(self.ref_mask, last_H, (w, h), flags=cv2.INTER_NEAREST) > 128
+        ys, xs = np.nonzero(pm)
+        if len(ys) < 16:
+            return None
+        bh, bw = ys.max() - ys.min(), xs.max() - xs.min()
+        feat = cv2.dilate(pm.astype(np.uint8) * 255, np.ones((7, 7), np.uint8))
+        kp0, d0 = self.sift.detectAndCompute(cv2.cvtColor(last, cv2.COLOR_BGR2GRAY), feat)
+        search = np.zeros((h, w), np.uint8)
+        search[max(0, ys.min() - bh // 2):ys.max() + bh // 2, max(0, xs.min() - bw // 2):xs.max() + bw // 2] = 255
+        kp1, d1 = self.sift.detectAndCompute(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), search)
+        if d0 is None or d1 is None or len(kp0) < 12 or len(kp1) < 12:
+            return None
+        good = [m for m, n in (p for p in self.matcher.knnMatch(d0, d1, k=2) if len(p) == 2) if m.distance < 0.75 * n.distance]
+        if len(good) < 12:
+            return None
+        src = np.float32([kp0[m.queryIdx].pt for m in good])
+        dst = np.float32([kp1[m.trainIdx].pt for m in good])
+        step, inl = cv2.findHomography(src, dst, cv2.RANSAC, 3.0)
+        if step is None or inl is None or int(inl.sum()) < 12:
+            return None
+        H = step @ last_H
+        H = H / H[2, 2]
+        m = cv2.warpPerspective(self.ref_mask, H, (w, h), flags=cv2.INTER_NEAREST) > 128
+        mys, mxs = np.nonzero(m)
+        # a step between neighbouring frames is small: the region keeps its size and moves a little
+        if (not len(mys) or not 0.6 < len(mys) / len(ys) < 1.6
+                or abs(mxs.mean() - xs.mean()) > 0.35 * max(bw, 1) or abs(mys.mean() - ys.mean()) > 0.35 * max(bh, 1)):
+            return None
+        return H
+
     def build_plate(self, samples: list[tuple[np.ndarray, np.ndarray]]) -> None:
         """samples: (frame, H ref->frame). Median of the frames warped back onto the reference."""
         cv2 = self.cv2
@@ -707,6 +792,10 @@ class LabelLock:
             return box_mask, None
         h, w = box_mask.shape
         m = cv2.warpPerspective(self.ref_mask, H, (w, h), flags=cv2.INTER_LINEAR)
+        # a hair of margin: on a turned label the lock is a pixel or two off at the far edge, enough for a coloured
+        # border to peek out
+        grow = max(3, int(0.012 * min(w, h))) | 1
+        m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
         if self.plate is None:
             return m, None
         warped = cv2.warpPerspective(np.nan_to_num(self.plate, nan=-1000), H, (w, h), flags=cv2.INTER_LINEAR)
@@ -724,8 +813,15 @@ class LabelLock:
         n, lab, stats, _ = cv2.connectedComponentsWithStats(occ, connectivity=8)
         keep = np.zeros_like(occ)
         min_area = max(40, int(0.02 * inside.sum()))
+        # something in front of the label (a hand, a hose) reaches in from outside, so it crosses the region's edge
+        # (not counting the frame border). A blob wholly inside is the label's own print that didn't match the plate
+        # (a label turned far from the reference, or sliding out of frame): left uncovered it shows as ghost fragments.
+        reg = (m > 128).astype(np.uint8)
+        edge = (reg - cv2.erode(reg, np.ones((7, 7), np.uint8))).astype(bool)
+        edge[:3, :] = edge[-3:, :] = False
+        edge[:, :3] = edge[:, -3:] = False
         for i in range(1, n):
-            if stats[i, cv2.CC_STAT_AREA] >= min_area:
+            if stats[i, cv2.CC_STAT_AREA] >= min_area and (edge & (lab == i)).any():
                 keep[lab == i] = 1
         if not keep.any():
             return m, None
@@ -758,19 +854,48 @@ def render_remove(pdir: Path, project: Project, source_id: str, eff: Effect, out
         ref = next(_frames(path, mw, mh, fps, at, 2.0 / fps), None)
         if ref is not None:
             fi = min(n - 1, max(0, int(round(at * fps))))
-            lock = LabelLock(cv2, ref.copy(), region_mask(cv2, p, boxes[fi], mw, mh, "mask"))
+            lock = LabelLock(cv2, ref.copy(), mask_at(cv2, p, data, fi, mw, mh, "mask"))
     if lock is not None and lock.ok:
-        samples, prev = [], None
+        samples: list = []
         step = max(1, (fb - fa) // LabelLock.SAMPLES)
-        i = fa
-        for frame in _frames(path, mw, mh, fps, fa / fps, (fb - fa) / fps):
+        lost_after = max(3, int(0.5 * fps))  # after this many missed frames, search around the tracker's box again
+        f_at = min(max(fa, int(round(float(p.get("at", a)) * fps))), max(fa, fb - 1))
+
+        state: dict = {}
+
+        def visit(i: int, frame: np.ndarray) -> None:
+            prev, miss, last = state.get("H"), state.get("miss", 0), state.get("frame")
+            near = prev if miss <= lost_after else None
+            H = lock.homography(frame, mask_at(cv2, p, data, i, mw, mh, "mask"), near)
+            if H is None and near is not None and last is not None:
+                H = lock.follow(last, near, frame)  # turned too far from the reference: step on from the last lock
+            Hs[i] = H
+            if H is None:
+                state["miss"] = miss + 1
+                return
+            if (i - fa) % step == 0:
+                samples.append((frame.copy(), H))
+            state.update(H=H, miss=0, frame=frame.copy())
+
+        # chain the lock outwards from the frame the region was marked on (where it is exactly right): forwards ...
+        state.update(H=np.eye(3), miss=0, frame=None)
+        i = f_at
+        for frame in _frames(path, mw, mh, fps, f_at / fps, (fb - f_at) / fps):
             if i >= fb:
                 break
-            H = lock.homography(frame, region_mask(cv2, p, boxes[i], mw, mh, "mask"), prev)
-            Hs[i], prev = H, H
-            if H is not None and (i - fa) % step == 0:
-                samples.append((frame.copy(), H))
+            visit(i, frame)
             i += 1
+        # ... and backwards, a chunk of frames at a time
+        state.update(H=Hs.get(f_at) if Hs.get(f_at) is not None else np.eye(3), miss=0, frame=None)
+        end = f_at
+        while end > fa:
+            start = max(fa, end - 90)
+            chunk = list(_frames(path, mw, mh, fps, start / fps, (end - start) / fps))[: end - start]
+            if state.get("frame") is None and f_at < fb:
+                state["frame"] = next(_frames(path, mw, mh, fps, f_at / fps, 1.5 / fps), None)
+            for k in range(len(chunk) - 1, -1, -1):
+                visit(start + k, chunk[k])
+            end = start
         lock.build_plate(samples)
         del samples
         # frames where the lock failed: hold the nearest good lock for short gaps (motion blur); when the
@@ -789,13 +914,15 @@ def render_remove(pdir: Path, project: Project, source_id: str, eff: Effect, out
     for _ in range(fa):
         wr.write(empty)
     i = fa
+    prev: tuple = (None, None)  # (last written patch, its lock) for steady_fill
     for frame in _frames(path, mw, mh, fps, fa / fps, (fb - fa) / fps):
         if i >= fb:
             break
-        m = region_mask(cv2, p, boxes[i], mw, mh, "mask")
+        m = mask_at(cv2, p, data, i, mw, mh, "mask")
         prot = None
-        if isinstance(Hs.get(i), str):  # "skip"
+        if isinstance(Hs.get(i), str) or not m.any():  # "skip", or the outline tracker lost the object here
             wr.write(empty)
+            prev = (None, None)
             i += 1
             continue
         if lock is not None:
@@ -803,11 +930,35 @@ def render_remove(pdir: Path, project: Project, source_id: str, eff: Effect, out
         km = keep(i, mw, mh)
         if km is not None:
             prot = km if prot is None else (prot | km)
-        wr.write(remove_frame(cv2, frame, m, seed=i, protect=prot))
+        out = remove_frame(cv2, frame, m, seed=i, protect=prot)
+        H = Hs.get(i)
+        H = H if isinstance(H, np.ndarray) else None
+        if H is not None and prev[0] is not None:
+            out = steady_fill(cv2, out, prev[0], H @ np.linalg.inv(prev[1]))
+        prev = (out, H) if H is not None else (None, None)
+        wr.write(out)
         i += 1
     for _ in range(i, n):
         wr.write(empty)
     return wr.close()
+
+
+STEADY = 0.75  # share of the previous frame's rebuilt surface kept in each new frame (0 = rebuilt fresh every frame)
+
+
+def steady_fill(cv2, out: np.ndarray, last: np.ndarray, M: np.ndarray, keep: float = STEADY) -> np.ndarray:
+    """Stop a rebuilt patch from flickering: each frame's fill is made from slightly different surrounding pixels
+    plus fresh grain, so on its own it shimmers. Move the previous frame's patch onto this frame (M = the lock's
+    motion from that frame to this one, so it sticks to the surface as it turns) and blend it in."""
+    h, w = out.shape[:2]
+    moved = cv2.warpPerspective(last, M, (w, h), flags=cv2.INTER_LINEAR)
+    both = (out[..., 3] > 0) & (moved[..., 3] > 0)
+    if both.any():
+        res = out.copy()
+        res[..., :3][both] = (keep * moved[..., :3][both].astype(np.float32)
+                              + (1 - keep) * out[..., :3][both].astype(np.float32)).round().astype(np.uint8)
+        return res
+    return out
 
 
 def _expr(ts: list[float], vs: list[int]) -> str:

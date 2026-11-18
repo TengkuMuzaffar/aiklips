@@ -248,6 +248,107 @@ def test_remove_never_paints_over_or_samples_what_is_in_front():
     assert np.abs(inside.mean(0) - [180, 120, 60]).max() < 8  # filled with cardboard, not grey product
 
 
+@needs_cv2
+def test_label_lock_follows_a_turning_label_when_the_box_tracker_drifts():
+    """A box tracker can't rotate: on a label turning ~35 degrees its box drifts off. Chained from the previous
+    frame's lock, the lock must still find the label, at its real angle."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(3)
+    H, W = 400, 400
+    bg = cv2.GaussianBlur((rng.random((H, W, 3)) * 255).astype(np.uint8), (0, 0), 6)
+    ref = bg.copy()
+    label = (rng.random((80, 160, 3)) * 255).astype(np.uint8)  # busy print, like a parts sticker
+    ref[160:240, 120:280] = cv2.GaussianBlur(label, (0, 0), 1.2)
+    ref_mask = np.zeros((H, W), np.uint8)
+    ref_mask[160:240, 120:280] = 255
+    lock = track.LabelLock(cv2, ref, ref_mask)
+    assert lock.ok
+
+    def rot(deg: float) -> np.ndarray:
+        return np.vstack([cv2.getRotationMatrix2D((200, 200), deg, 1.0), [0, 0, 1]])
+
+    true = rot(35)
+    frame = cv2.warpPerspective(ref, true, (W, H), borderMode=cv2.BORDER_REFLECT)
+    drifted = np.zeros((H, W), np.uint8)
+    drifted[160:240, 190:350] = 255  # the tracker's upright box, slid off to the side
+    assert lock.homography(frame, drifted) is None  # judged against the drifted box alone, the lock is rejected
+    got = lock.homography(frame, drifted, prev=rot(30))  # chained from the lock one frame earlier
+    assert got is not None
+    corners = np.float32([[[120, 160]], [[280, 160]], [[280, 240]], [[120, 240]]])
+    err = np.abs(cv2.perspectiveTransform(corners, got) - cv2.perspectiveTransform(corners, 0.6 * true + 0.4 * rot(30)))
+    assert err.max() < 6  # on the turned label (allowing for the light smoothing towards the previous lock)
+
+    # turned and foreshortened far from the reference: step on from the neighbouring frame instead
+    def tilt(deg: float, squash: float) -> np.ndarray:
+        return rot(deg) @ np.array([[1, 0, 0], [0, squash, 200 * (1 - squash)], [0, 0, 1]], float)
+
+    a, b = tilt(55, 0.45), tilt(60, 0.4)
+    last = cv2.warpPerspective(ref, a, (W, H), borderMode=cv2.BORDER_REFLECT)
+    now = cv2.warpPerspective(ref, b, (W, H), borderMode=cv2.BORDER_REFLECT)
+    got = lock.follow(last, a, now)
+    assert got is not None
+    err = np.abs(cv2.perspectiveTransform(corners, got) - cv2.perspectiveTransform(corners, b))
+    assert err.max() < 6
+
+
+@needs_cv2
+def test_only_things_reaching_in_from_outside_count_as_in_front():
+    """A hand reaching over the label stays on top; a patch of the label's own print that doesn't match the plate
+    (turned label, sliding out of frame) is not 'in front' and must be covered, or it shows as ghost fragments."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(7)
+    H, W = 300, 400
+    ref = np.full((H, W, 3), (60, 120, 180), np.uint8)
+    ref[100:200, 100:300] = cv2.GaussianBlur((rng.random((100, 200, 3)) * 255).astype(np.uint8), (0, 0), 1.5)
+    ref_mask = np.zeros((H, W), np.uint8)
+    ref_mask[100:200, 100:300] = 255
+    lock = track.LabelLock(cv2, ref, ref_mask)
+    lock.build_plate([(ref, np.eye(3))] * 4)
+    frame = ref.copy()
+    frame[130:170, 170:230] = 255  # print that doesn't match, wholly inside
+    frame[0:220, 330:380] = 200  # an arm reaching down beside the label: outside, nothing to do
+    frame[150:300, 240:290] = 220  # a hand coming up from below, over the label's lower right
+    m, prot = lock.frame(frame, ref_mask, np.eye(3))
+    assert prot is not None
+    assert prot[180, 265] and not prot[150, 200]  # the hand stays on top, the mismatched print gets covered
+    assert m[150, 99] > 0 and m[150, 90] == 0  # a little margin past the label's edge (1.2% of the frame)
+
+
+@needs_cv2
+def test_steady_fill_stops_a_rebuilt_patch_from_flickering():
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(5)
+    alpha = np.zeros((60, 80), np.uint8)
+    alpha[20:40, 20:60] = 255
+
+    def fresh() -> np.ndarray:  # a patch rebuilt on its own: same surface, new grain every frame
+        out = np.zeros((60, 80, 4), np.uint8)
+        out[..., :3] = np.clip(150 + rng.normal(0, 6, (60, 80, 3)), 0, 255)
+        out[..., 3] = alpha
+        return out
+
+    raw, steady = [fresh() for _ in range(12)], []
+    last = None
+    for f in raw:
+        last = f if last is None else track.steady_fill(cv2, f, last, np.eye(3))
+        steady.append(last)
+    inside = alpha > 0
+    change = lambda seq: np.mean([np.abs(a[..., :3][inside].astype(float) - b[..., :3][inside]).mean() for a, b in zip(seq, seq[1:])])
+    assert change(steady) < 0.5 * change(raw)  # the shimmer is gone
+    assert abs(steady[-1][..., :3][inside].mean() - 150) < 2  # same surface colour
+    assert (steady[-1][..., 3] == alpha).all() and (steady[-1][..., :3][~inside] == raw[-1][..., :3][~inside]).all()
+    # it follows the surface: a patch that moved 10px right is moved before blending
+    a, b = fresh(), fresh()
+    a[20:40, 20:30, :3] = 40  # a dark edge in the last frame's patch...
+    b[..., 3] = np.roll(alpha, 10, axis=1)
+    M = np.array([[1, 0, 10], [0, 1, 0], [0, 0, 1]], float)
+    got = track.steady_fill(cv2, b, a, M)
+    assert got[30, 35, :3].mean() < 100  # ...is carried along with it
+
+
 def test_paint_erase_survives_feather():
     """Erased strokes must stay erased: the feather's grow step used to fill narrow erase strips back in."""
     import cv2
