@@ -9,6 +9,11 @@ from . import __version__
 from .updater import parse_version
 
 NOTES: list[dict] = [
+    {"version": "0.2.2", "items": [
+        {"icon": "spark", "title": "Design studio", "body": "Make motion-design videos on a canvas: scenes of shapes, text and media you stretch, rotate and animate with presets or keyframes."},
+        {"icon": "wand", "title": "Storyboard with any AI", "body": "Turn a brief into scenes, design a scene from its notes, or animate a selection, with whichever AI model you've connected."},
+        {"icon": "film", "title": "Beta labels", "body": "References and Generate are marked beta while they keep improving."},
+    ]},
     {"version": "0.2.1", "items": [
         {"icon": "home", "title": "A new home", "body": "Start a project from a format or by dropping a video, and find recent work in a grid or list."},
         {"icon": "spark", "title": "Welcome tour", "body": "First-run setup that connects your AI and walks you through the editor. Replay it from Help."},

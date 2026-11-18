@@ -93,15 +93,15 @@ remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
 overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
-shape add rect|ellipse|line|arrow [--start --end --x --y --width --height --fill --border --border-color --radius --rotation --blend --preset]
+shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line|arrow [--start --end --x --y --width --height --fill --gradient '#a,#b' --gradient-angle --sides --points --inner --border --border-color --radius --rotation --blend --preset --scene ID]
 layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
-text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --preset NAME[:dur]]
+text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --bold --italic --underline --strike --list bullet|number --align --line-spacing --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
 text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
 fonts [--feel serif --sheet]
 color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID | --layer ID]
 color set [--clip | --layer ID --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear [--clip | --layer]
-layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity] | layer remove <id>
+layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity --width --height --sx --sy (stretch)] | layer dup <id> [--dx --dy] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
 captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
 bg remove [--clip --mode chroma|fast|quality --replace color:#hex|blur|image:path|video:path --key auto|#hex] | bg tune [--similarity --blend --spill --shrink --key] | bg replace <spec> | bg clear
@@ -126,6 +126,8 @@ proxy make | proxy status | proxy clean
 preview [--open] | frame --at T[,T2,...] | sheet | serve
 export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
 ref add <videos...> | ref list | ref show <id> | ref recipe <id> | ref set <id> <trait.path> <json> | ref remove <id>
+design new <dir> [--format reels|square|landscape|portrait45 --dur 5 --background #hex] | design build plan.json [--new DIR --format reels] | design split <sheet.png> [--grid 2x3 --cutout --out DIR] | design catalog
+scene list | scene add [--dur 5 --after ID --name --background #hex --transition cut|fade|slide|zoom|pop|wipe --notes] | scene set <id> [--dur --name --background --transition --notes --why] | scene move <id> N | scene dup <id> | scene remove <id>
 gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
 ```
 
@@ -144,6 +146,19 @@ gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|direct
 - To keep the AI improving one generated video that's below the pass mark (and not edited by hand):
   `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.
 
+**Design: motion-design videos (the Design studio):**
+- A design project (`vedit design new`, or the studio) is made of **scenes** played back to back (`vedit scene
+  list|add|set|move|dup|remove`); each element belongs to the scene its times fall in and moves with it. Load the
+  `motion` skill for any design or motion-graphics work.
+- Elements: shapes (`shape add star --scene sc1 --gradient ...`; 12 kinds), text, the user's images / clips. Animate
+  with presets (enter / during / exit) and keyframes, including shape size `w` / `h`, stretch `sx` / `sy` and `fill`.
+- A whole video at once: ONE MotionPlan JSON with `vedit design build plan.json` (one undoable step per scene; it
+  becomes a design project) instead of dozens of commands; then check with `vedit sheet` and fix with normal commands.
+- `vedit design split sheet.png --cutout` cuts a character / storyboard sheet into PNG pieces (background removed).
+- `vedit design catalog` lists what a plan may use (frames, presets, looks, textures, fonts).
+- In the studio the user can also ask the AI (any connected model) for a storyboard, a scene from its notes, or
+  motion for the selection: 1 call each.
+
 ## Skills
 
 Detailed recipes live in `.claude/skills/`:
@@ -155,6 +170,7 @@ Detailed recipes live in `.claude/skills/`:
 - `masking-focus`: remove / hide / censor regions with tracking (box, multi-box or painted shape), and spotlight or follow an object
 - `transitions`
 - `color`: match clips to each other or a reference, grade with looks, LUTs
+- `motion`: design projects (Design studio): scenes, shapes, stretch / size / colour motion, and whole videos in one MotionPlan
 
 Load the relevant one before doing that kind of edit.
 
@@ -196,6 +212,16 @@ Load the relevant one before doing that kind of edit.
     (`tests/test_live_preview.py` checks they agree). The "Final" toggle and `vedit frame` / audit use the full render.
     Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
     frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
+  - Design studio: `Project.kind == "design"` + `Project.scenes` (`Scene`), scene ops `ops/scenes.py` (ripple layer
+    times, scene backgrounds = bottom-track rect layers, main track = background clips; `reconcile` on every save keeps
+    `Layer.scene` true to the layer's times), shape geometry `ops/shapes.py` **mirrored in `static/shapes.js`** (SVG in
+    the studio; `tests/test_shapes_js.py`), stretch `Layer.sx/sy` + keyframed `w/h/sx/sy/fill` in `ops/animate.py` /
+    `static/animate.js` and `render/layers.py`. UI: `static/studio.html` + `static/studio.js` at `/studio` (`/editor`
+    redirects designs there); every change is an editor action (`batch` groups a drag into one undo step). AI actions
+    (storyboard / scene / animate, one structured `ai.call` each, the model picked in the studio):
+    `design/studio_ai.py`, API `preview_server/design_routes.py`. MotionPlans: `design/` (spec, planner = validate +
+    fit + patches, builder = plan -> design project, sheet = panel splitting). Old Design (beta) versions become
+    designs when opened (`scenes.adopt_legacy`). Note: `docs/design/design-motion.md`.
   - References / Generate: `references/` (analysis = measured by code, dna = Style DNA schema + merge, store), `generate/` (footage log, planner = axes + AI plans, timing = beat snapping, executor = plan → vedit ops, batch = jobs), `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
   - Distribution: `launcher/` (Go: install, signed updates, rollback), `updater.py` (check + stage + on-demand extras,
     `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
