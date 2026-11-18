@@ -198,8 +198,17 @@ Load the relevant one before doing that kind of edit.
   - Licences: every dependency / model with its licence in `THIRD_PARTY_NOTICES.md`; commercial use must be allowed
   - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
     applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.
-  - Tracks: `Layer.track` (`normalize_tracks` in project.py), main-track gaps (`Clip.gap`), `Layer.hidden` /
-    `Project.main_hidden`. Timeline ops shared by the editor and the CLI live in `ops/tracks.py`; **every editor action
+  - Tracks (equal): `Layer.track` (`normalize_tracks` in project.py, which also keeps `Project.main_z` = the video
+    track's height, i.e. how many tracks are under it), video-track gaps (`Clip.gap`), `Layer.hidden` /
+    `Project.main_hidden`. `Project.duration` = whatever ends last (clips or a layer's end); a project can have no
+    clips. Render: `graph.build` draws canvas -> layers under the video -> the video track with alpha (`keep_alpha`
+    around grade / filters, transparent gaps / bars, `replace none` keys) -> layers over it; with nothing under the
+    video it keeps the old opaque path. The editor's base.mp4 bakes in the layers under the video (`base_hash`), the
+    browser draws only those over it. The 0s rule is `tracks.zero_guard` (editor `ZERO_GUARDED` ops + CLI moves),
+    which also refuses a clip over an element on the video track (`Layer.on_video`, `tracks.put_on_video_track`;
+    such layers stay out of the track rows and are drawn right after the video). Preview transform box:
+    `drawSelBox` / `transformDrag` in index.html (corners = scale, sides = width / height for shapes else sx / sy,
+    knob = rotation; one `batch` op per drag). Timeline ops shared by the editor and the CLI live in `ops/tracks.py`; **every editor action
     (`editor/actions.py` `@op`) needs a CLI command too, so the AI can do it** (`tests/test_ai_parity.py` checks this).
   - Overlays: `Layer` types video / shape + frame fields (blend, radius, border, mask, chroma) in `project.py`;
     `ops/overlays.py` (add / order / style + the generated library, cached in ~/.aiklips/overlays), pixels in

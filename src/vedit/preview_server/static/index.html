@@ -480,7 +480,13 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .blk.clip.gap .bl { background: transparent; border-bottom: none; color: var(--faint); text-shadow: none; }
 #pv-hit { position: absolute; z-index: 3; cursor: default; touch-action: none; }
 #pv-hit.over { cursor: move; }
-#pv-selbox { position: absolute; z-index: 3; pointer-events: none; border: 1.5px solid var(--sel); border-radius: 2px; display: none; box-shadow: 0 0 0 1px #0008; }
+#pv-selbox { position: absolute; z-index: 4; pointer-events: none; border: 1.5px solid var(--sel); border-radius: 2px; display: none; box-shadow: 0 0 0 1px #0008; transform-origin: 50% 50%; }
+/* transform handles: corners scale, sides stretch, the knob above rotates (pointer events only on the handles) */
+#pv-selbox .th { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; background: #fff; border: 1.5px solid var(--sel); border-radius: 2px; pointer-events: auto; touch-action: none; box-shadow: 0 1px 3px #0008; }
+#pv-selbox .th.side { width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; }
+#pv-selbox .th.rot { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; top: -26px; left: 50%; cursor: grab; }
+#pv-selbox .th.rot::after { content: ""; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 14px; margin-left: -.75px; background: var(--sel); pointer-events: none; }
+#pv-selbox.small .th.side { display: none; }
 #pv-guides { position: absolute; z-index: 2; pointer-events: none; display: none; overflow: visible; }
 #pv-snap { position: absolute; z-index: 3; pointer-events: none; display: none; overflow: visible; }
 .seg-row { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -1273,6 +1279,7 @@ function drawVideoLayer(v, l, pr, box, cv, T) {
   const st = v.el.style;
   st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
   st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
+  v.g = { x: pr.x, y: pr.y, w, h: hh, rot: pr.rotation };
   st.borderRadius = l.mask === "circle" ? "50%" : `${(l.radius || 0) * k}px`;
   v.bord.style.border = l.border_width > 0 ? `${l.border_width * k}px solid ${l.border_color}` : "none";
   const keyed = !!l.chroma;
@@ -1303,7 +1310,13 @@ function drawOverlays() {
     if (ldur <= 0.01 || t < 0 || t >= ldur || l.hidden) { v.el.style.display = "none"; if (v.vid && !v.vid.paused) v.vid.pause(); return; }
     if (l.type === "adjust") { v.el.style.display = "none"; return; } // already in the base video
     const pr = VAnim.propsAt(l, t, ldur, cv);
-    if (PVD.drag && PVD.drag.id === l.id) { pr.x = PVD.drag.x; pr.y = PVD.drag.y; } // being dragged in the preview
+    if (PVD.drag && PVD.drag.id === l.id) { // being dragged / resized / rotated in the preview
+      const d = PVD.drag; pr.x = d.x; pr.y = d.y;
+      if (d.k) pr.scale *= d.k;
+      if (d.kx) pr.sx = (pr.sx ?? 1) * d.kx;
+      if (d.ky) pr.sy = (pr.sy ?? 1) * d.ky;
+      if (d.rot != null) pr.rotation = d.rot;
+    }
     if (l.type === "video") return drawVideoLayer(v, l, pr, box, cv, T);
     const [key, extra] = spriteFor(l, T, pr);
     if (key && SPRITES.has(key)) v.shown = key; // otherwise keep the last sprite until the new one arrives
@@ -1316,6 +1329,8 @@ function drawOverlays() {
     const st = v.el.style;
     st.display = "block"; st.width = `${w}px`; st.height = `${hh}px`; st.opacity = pr.opacity;
     st.transform = `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px) rotate(${pr.rotation}deg)`;
+    v.g = { x: pr.x, y: pr.y, w, h: hh, rot: pr.rotation }; // for the transform box (screen px size, canvas px centre)
+    st.clipPath = l.type !== "text" && pr.reveal < 0.999 ? `inset(0 ${(1 - pr.reveal) * 100}% 0 0)` : "";
   });
   for (const [id, v] of LV) if (!seen.has(id)) { if (v.vid) v.vid.pause(); v.el.remove(); LV.delete(id); }
   drawSelBox();
@@ -1373,11 +1388,94 @@ function placePreviewTools(box) {
   lab(W - 4, y1 - 6, sz.z.labels[2], "end");
 }
 function layerEl(id) { const v = LV.get(id); return v && v.el.style.display !== "none" ? v.el : null; }
+// The selected layer's transform box: drawn on the layer itself (rotated with it), with handles to scale (corners),
+// stretch (sides) and rotate (the knob above). Works for every layer type drawn in the preview.
+const TH = [["nw", -1, -1], ["n", 0, -1], ["ne", 1, -1], ["e", 1, 0], ["se", 1, 1], ["s", 0, 1], ["sw", -1, 1], ["w", -1, 0]];
 function drawSelBox() {
   const sb = $("#pv-selbox"), l = SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id), el = l && l.type !== "adjust" && layerEl(l.id);
-  if (!el || DRAW) { sb.style.display = "none"; return; }
-  const r = el.getBoundingClientRect(), st = $("#stage").getBoundingClientRect();
-  Object.assign(sb.style, { display: "block", left: `${r.left - st.left - 2}px`, top: `${r.top - st.top - 2}px`, width: `${r.width + 4}px`, height: `${r.height + 4}px` });
+  const g = el && LV.get(l.id)?.g;
+  if (!g || DRAW) { sb.style.display = "none"; return; }
+  if (!sb.children.length) { // build the handles once
+    for (const [k, hx, hy] of TH) {
+      const t = h("div", { class: "th" + (hx && hy ? "" : " side"), "data-h": k, style: { left: `${(hx + 1) * 50}%`, top: `${(hy + 1) * 50}%` } });
+      t.addEventListener("pointerdown", (e) => transformDrag(e, k, hx, hy));
+      sb.append(t);
+    }
+    const r = h("div", { class: "th rot", "data-h": "rot", title: "Drag to rotate (snaps to 0 / 45 / 90°, Shift = 15° steps)" });
+    r.addEventListener("pointerdown", (e) => transformDrag(e, "rot", 0, 0));
+    sb.append(r);
+  }
+  const box = videoBox();
+  Object.assign(sb.style, { display: "block", left: `${box.left + g.x * box.sc - g.w / 2}px`, top: `${box.top + g.y * box.sc - g.h / 2}px`,
+    width: `${g.w}px`, height: `${g.h}px`, transform: `rotate(${g.rot}deg)` });
+  sb.classList.toggle("small", g.w < 36 || g.h < 36);
+  for (const t of sb.children) {
+    const k = t.dataset.h, cur = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 }[k];
+    if (cur != null) t.style.cursor = ["ns-resize", "nesw-resize", "ew-resize", "nwse-resize"][Math.round(((cur + g.rot) % 180 + 180) % 180 / 45) % 4];
+  }
+}
+// Drag a transform handle. Corners scale uniformly about the opposite corner; sides stretch about the opposite side
+// (shapes: their real width / height, so the outline stays crisp; others: sx / sy); "rot" rotates about the centre.
+// One undo step per drag (batch); an animated property gets a keyframe at the playhead instead.
+function transformDrag(e, k, hx, hy) {
+  e.preventDefault(); e.stopPropagation();
+  if (!ST || aiBlocked()) return;
+  const l = SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id), v = l && LV.get(l.id), g = v?.g;
+  if (!g) return;
+  const box = videoBox(), st = $("#stage").getBoundingClientRect(), cv = P().canvas;
+  const th = (g.rot * Math.PI) / 180, cos = Math.cos(th), sin = Math.sin(th);
+  const hw = g.w / 2 / box.sc, hh = g.h / 2 / box.sc; // half size in canvas px
+  const toCanvas = (ev) => [(ev.clientX - st.left - box.left) / box.sc, (ev.clientY - st.top - box.top) / box.sc];
+  const local = ([px, py]) => { const dx = px - g.x, dy = py - g.y; return [dx * cos + dy * sin, -dx * sin + dy * cos]; };
+  const world = ([ux, uy]) => [g.x + ux * cos - uy * sin, g.y + ux * sin + uy * cos];
+  const p0 = toCanvas(e), a0 = Math.atan2(p0[1] - g.y, p0[0] - g.x);
+  const d = { id: l.id, x: g.x, y: g.y, moved: false };
+  const tgt = e.currentTarget; tgt.setPointerCapture(e.pointerId);
+  const mv = (ev) => {
+    const p = toCanvas(ev);
+    if (!d.moved && Math.hypot(p[0] - p0[0], p[1] - p0[1]) * box.sc < 2) return;
+    d.moved = true; PVD.drag = d;
+    if (k === "rot") {
+      let r = g.rot + ((Math.atan2(p[1] - g.y, p[0] - g.x) - a0) * 180) / Math.PI;
+      r = ((r + 180) % 360 + 360) % 360 - 180;
+      const step = ev.shiftKey ? 15 : 45, near = Math.round(r / step) * step;
+      if (ev.shiftKey || Math.abs(r - near) < 4) r = near;
+      d.rot = +r.toFixed(1);
+      return;
+    }
+    const u = local(p);
+    if (hx && hy) { // corner: uniform, about the opposite corner
+      const A = [-hx * hw, -hy * hh], D = [2 * hx * hw, 2 * hy * hh];
+      const f = Math.max(0.05, ((u[0] - A[0]) * D[0] + (u[1] - A[1]) * D[1]) / (D[0] * D[0] + D[1] * D[1]));
+      d.k = f; [d.x, d.y] = world([A[0] + (D[0] * f) / 2, A[1] + (D[1] * f) / 2]);
+    } else if (hx) { // left / right side: width, about the opposite side
+      const nw = Math.max(4, hx > 0 ? u[0] + hw : hw - u[0]);
+      d.kx = nw / (2 * hw); [d.x, d.y] = world([hx * (nw / 2 - hw), 0]);
+    } else { // top / bottom side: height
+      const nh = Math.max(4, hy > 0 ? u[1] + hh : hh - u[1]);
+      d.ky = nh / (2 * hh); [d.x, d.y] = world([0, hy * (nh / 2 - hh)]);
+    }
+  };
+  tgt.addEventListener("pointermove", mv);
+  tgt.addEventListener("pointerup", async () => {
+    tgt.removeEventListener("pointermove", mv);
+    if (!d.moved) { PVD.drag = null; return; }
+    const kf = (prop) => l.keyframes.some((x) => x[prop] != null), t = +video.currentTime.toFixed(3);
+    const ops = [], set = {};
+    const put = (prop, value) => { if (kf(prop)) ops.push({ op: "keyframe_set", args: { layer: l.id, t, prop, value } }); else set[prop] = value; };
+    if (k === "rot") put("rotation", d.rot);
+    else {
+      put("x", Math.round(d.x)); put("y", Math.round(d.y));
+      if (d.k) put("scale", +((l.scale || 1) * d.k).toFixed(3));
+      const shape = l.type === "shape" && l.width;
+      if (d.kx) { if (shape) set.width = Math.max(1, Math.round(l.width * d.kx)); else put("sx", +((l.sx ?? 1) * d.kx).toFixed(3)); }
+      if (d.ky) { if (shape && l.height) set.height = Math.max(1, Math.round(l.height * d.ky)); else put("sy", +((l.sy ?? 1) * d.ky).toFixed(3)); }
+    }
+    if (Object.keys(set).length) ops.unshift({ op: "layer_set", args: { layer: l.id, ...set } });
+    Object.assign(l, set); // no jump back while the edit saves
+    PVD.drag = null;
+    if (ops.length) await op("batch", { ops });
+  }, { once: true });
 }
 function layerAtPoint(x, y) { // the top-most visible overlay under the pointer
   const ls = P().layers;
