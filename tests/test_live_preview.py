@@ -33,6 +33,13 @@ def _layers() -> list[Layer]:
             Keyframe(t=1.6, x=700, y="80%", rotation=-30, ease="elastic_out"),
             Keyframe(t=2.4, reveal=0.5, ease="step"),
         ]),
+        Layer(id="stretch", type="shape", shape="star", width=300, height=200, sx=1.2, fill="#112233", keyframes=[
+            Keyframe(t=0, w=100, h=80, sx=0.5, fill="#FF0000", ease="back_out"),
+            Keyframe(t=1.0, w=420, sy=1.6, fill="#00FF0080", ease="elastic_out"),
+            Keyframe(t=2.2, h=500, sx=1.0, sy=0.7, fill="#0000FF", ease="ease_in"),
+        ]),
+        Layer(id="cycle", type="shape", shape="rect", presets=[Preset(name="color_cycle", params={"colors": ["#000", "#FFFFFF", "#FF00FF"], "period": 1.3}),
+                                                                 Preset(name="squash_stretch"), Preset(name="stretch_in", params={"axis": "y"})]),
         Layer(id="typ", type="text", text="typed out slowly", presets=[Preset(name="typewriter"), Preset(name="fade_out")]),
     ]
     params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20}}
@@ -64,8 +71,12 @@ def test_js_props_at_matches_python():
     js = json.loads(res.stdout)
     for lid, frames in py.items():
         for t, a, b in zip(times, frames, js[lid]):
-            for k in ("x", "y", "scale", "rotation", "opacity", "reveal"):
+            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy"):
+                if a[k] is None:
+                    assert b[k] is None, f"{lid} {k} at t={t:.2f}: python None js {b[k]}"
+                    continue
                 assert b[k] == pytest.approx(a[k], abs=1e-6), f"{lid} {k} at t={t:.2f}: python {a[k]} js {b[k]}"
+            assert b["fill"] == a["fill"], f"{lid} fill at t={t:.2f}: python {a['fill']} js {b['fill']}"
 
 
 @needs_node

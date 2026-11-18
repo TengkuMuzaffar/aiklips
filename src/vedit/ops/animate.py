@@ -12,7 +12,8 @@ from typing import Callable
 
 from ..project import Canvas, Keyframe, Layer, Preset, VeditError, parse_pos
 
-PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal")
+PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy")
+COLOR_PROPS = ("fill",)
 
 
 # ---- easing -------------------------------------------------------------------
@@ -145,6 +146,104 @@ def _spin(pr, p, t, k, c):
     pr["rotation"] += 360 * t / float(k.get("period", 3.0))
 
 
+def _float(pr, p, t, k, c):
+    amp, period = float(k.get("amplitude", 18)), float(k.get("period", 3.0))
+    pr["y"] += math.sin(2 * math.pi * t / period) * amp
+    pr["rotation"] += math.sin(2 * math.pi * t / (period * 1.3)) * float(k.get("degrees", 2.5))
+
+
+def _sway(pr, p, t, k, c):
+    pr["rotation"] += math.sin(2 * math.pi * t / float(k.get("period", 2.4))) * float(k.get("degrees", 8))
+
+
+def _orbit(pr, p, t, k, c):
+    r, period = float(k.get("radius", 24)), float(k.get("period", 4.0))
+    pr["x"] += math.cos(2 * math.pi * t / period) * r
+    pr["y"] += math.sin(2 * math.pi * t / period) * r
+
+
+def _drift(pr, p, t, k, c):
+    pr["x"] += float(k.get("speed_x", 30)) * t
+    pr["y"] += float(k.get("speed_y", 0)) * t
+
+
+def _push(pr, p, t, k, c):
+    pr["scale"] *= 1 + float(k.get("rate", 0.03)) * t
+
+
+def _stretch_in(pr, p, t, k, c):
+    v = max(0.0, ease("back_out", p))
+    if k.get("axis", "x") == "y":
+        pr["sy"] *= v
+    else:
+        pr["sx"] *= v
+    pr["opacity"] *= min(1.0, p * 3)
+
+
+def _grow_in(pr, p, t, k, c):
+    v = ease("ease_out", p)
+    if k.get("axis", "y") == "x":
+        pr["sx"] *= v
+    else:
+        pr["sy"] *= v
+
+
+def _rise_in(pr, p, t, k, c):
+    pr["y"] += (1 - ease("ease_out", p)) * float(k.get("distance", 80))
+    pr["scale"] *= 0.94 + 0.06 * ease("ease_out", p)
+    pr["opacity"] *= ease("ease_out", p)
+
+
+def _wipe(pr, p, t, k, c):
+    pr["reveal"] *= ease("ease_in_out", p)
+
+
+def _shrink_out(pr, p, t, k, c):
+    pr["scale"] *= ease("ease_in_out", p)
+    pr["opacity"] *= min(1.0, p * 2)
+
+
+def _breathe(pr, p, t, k, c):
+    amt, period = float(k.get("amount", 0.04)), float(k.get("period", 3.0))
+    pr["scale"] *= 1 + amt * math.sin(2 * math.pi * t / period)
+
+
+def _squash(pr, p, t, k, c):
+    amt, period = float(k.get("amount", 0.08)), float(k.get("period", 0.9))
+    v = math.sin(2 * math.pi * t / period)
+    pr["sx"] *= 1 + amt * v
+    pr["sy"] *= 1 - amt * v
+
+
+def _color_cycle(pr, p, t, k, c):
+    cols = k.get("colors") or ["#FF3B6B", "#FFC23B", "#22D3EE"]
+    period = float(k.get("period", 3.0))
+    if len(cols) < 2 or period <= 0:
+        return
+    x = (t / period % 1.0) * len(cols)
+    i = int(x) % len(cols)
+    pr["fill"] = mix_hex(cols[i], cols[(i + 1) % len(cols)], x - int(x))
+
+
+def _hex4(v: str) -> tuple[int, int, int, int]:
+    h = str(v).strip().lstrip("#")
+    if len(h) in (3, 4):
+        h = "".join(ch * 2 for ch in h)
+    if len(h) == 6:
+        h += "FF"
+    if len(h) != 8:
+        raise VeditError(f"Not a colour: {v!r} (use #RRGGBB or #RRGGBBAA)")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16)
+
+
+def mix_hex(a: str, b: str, p: float) -> str:
+    """Colour between a and b (p 0..1), in RGB(A); #RRGGBB unless either has alpha. Same rounding as animate.js."""
+    ca, cb = _hex4(a), _hex4(b)
+    v = [math.floor(x + (y - x) * p + 0.5) for x, y in zip(ca, cb)]
+    alpha = ca[3] != 255 or cb[3] != 255
+    return "#" + "".join(f"{max(0, min(255, n)):02X}" for n in (v if alpha else v[:3]))
+
+
 PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "fade_in": ("in", 0.4, _fade, "Fade in"),
     "fade_out": ("out", 0.4, _fade, "Fade out"),
@@ -162,6 +261,20 @@ PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "pulse": ("loop", 0.0, _pulse, "Breathing scale pulse. params: amount=0.06, period=0.8"),
     "wiggle": ("loop", 0.0, _wiggle, "Rotate back and forth. params: degrees=6, period=0.6"),
     "spin": ("loop", 0.0, _spin, "Continuous rotation. params: period=3"),
+    "float": ("loop", 0.0, _float, "Weightless float: drifts up and down with a slight tilt. params: amplitude=18, period=3, degrees=2.5"),
+    "sway": ("loop", 0.0, _sway, "Slow side-to-side tilt, like a character idling. params: degrees=8, period=2.4"),
+    "orbit": ("loop", 0.0, _orbit, "Small circular drift. params: radius=24, period=4"),
+    "drift": ("loop", 0.0, _drift, "Slow steady pan across the frame (px per second). params: speed_x=30, speed_y=0"),
+    "push": ("loop", 0.0, _push, "Slow camera push-in (Ken Burns on a layer). params: rate=0.03 per second"),
+    "stretch_in": ("in", 0.45, _stretch_in, "Stretch open from a line, with overshoot. params: axis=x|y"),
+    "grow_in": ("in", 0.5, _grow_in, "Grow from flat (bars, underlines). params: axis=y|x"),
+    "rise_in": ("in", 0.5, _rise_in, "Rise a little while fading in (calm titles). params: distance=80"),
+    "wipe_in": ("in", 0.5, _wipe, "Wipe on from the left"),
+    "wipe_out": ("out", 0.4, _wipe, "Wipe off to the left"),
+    "shrink_out": ("out", 0.3, _shrink_out, "Shrink to nothing"),
+    "breathe": ("loop", 0.0, _breathe, "Slow, calm scale in and out. params: amount=0.04, period=3"),
+    "squash_stretch": ("loop", 0.0, _squash, "Cartoon squash and stretch (wide <-> tall). params: amount=0.08, period=0.9"),
+    "color_cycle": ("loop", 0.0, _color_cycle, "Shape fill cycles through colours. params: colors=[hex...], period=3"),
 }
 
 
@@ -175,6 +288,8 @@ def validate_keyframes(kfs: list[Keyframe]) -> None:
         ease(k.ease, 0.5)
         if k.t < 0:
             raise VeditError("Keyframe t must be >= 0 (seconds from layer start)")
+        if k.fill is not None:
+            _hex4(k.fill)
 
 
 def _preset_duration(layer: Layer, preset: Preset) -> float:
@@ -184,6 +299,20 @@ def _preset_duration(layer: Layer, preset: Preset) -> float:
     if preset.name == "typewriter":
         return max(0.2, 0.045 * len(layer.text or ""))
     return default
+
+
+def _interp_color(kfs: list[Keyframe], prop: str, t: float) -> str | None:
+    pts = [(k.t, getattr(k, prop), k.ease) for k in kfs if getattr(k, prop) is not None]
+    if not pts:
+        return None
+    pts.sort(key=lambda x: x[0])
+    if t <= pts[0][0]:
+        return mix_hex(pts[0][1], pts[0][1], 0)
+    for (t0, v0, e0), (t1, v1, _) in zip(pts, pts[1:]):
+        if t0 <= t <= t1:
+            p = (t - t0) / (t1 - t0) if t1 > t0 else 1.0
+            return mix_hex(v0, v1, ease(e0, p))
+    return mix_hex(pts[-1][1], pts[-1][1], 0)
 
 
 def _interp(kfs: list[Keyframe], prop: str, t: float, total: float) -> float | None:
@@ -202,21 +331,32 @@ def _interp(kfs: list[Keyframe], prop: str, t: float, total: float) -> float | N
     return conv(pts[-1][1])
 
 
-def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict[str, float]:
-    """Resolved transform of a layer at local time t (seconds since layer start), in canvas px."""
-    pr = {
+def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict:
+    """Resolved transform of a layer at local time t (seconds since layer start), in canvas px. Besides the
+    transform: w / h (the layer's width / height, None when it has none: animating them redraws a shape at that
+    size), sx / sy (stretch of the drawn sprite) and fill (shape colour, a hex string or None)."""
+    pr: dict = {
         "x": parse_pos(layer.x, canvas.width),
         "y": parse_pos(layer.y, canvas.height),
         "scale": layer.scale,
         "rotation": layer.rotation,
         "opacity": layer.opacity,
         "reveal": 1.0,
+        "w": None if layer.width is None else float(layer.width),
+        "h": None if layer.height is None else float(layer.height),
+        "sx": layer.sx,
+        "sy": layer.sy,
+        "fill": layer.fill,
     }
     for prop in PROPS:
         total = canvas.width if prop == "x" else canvas.height
         v = _interp(layer.keyframes, prop, t, total)
         if v is not None:
             pr[prop] = v
+    for prop in COLOR_PROPS:
+        c = _interp_color(layer.keyframes, prop, t)
+        if c is not None:
+            pr[prop] = c
     for preset in layer.presets:
         phase, _, fn, _ = PRESETS[preset.name]
         d = _preset_duration(layer, preset)
@@ -231,4 +371,9 @@ def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict[st
     pr["opacity"] = max(0.0, min(1.0, pr["opacity"]))
     pr["reveal"] = max(0.0, min(1.0, pr["reveal"]))
     pr["scale"] = max(0.0, pr["scale"])
+    pr["sx"] = max(0.0, pr["sx"])
+    pr["sy"] = max(0.0, pr["sy"])
+    for k in ("w", "h"):
+        if pr[k] is not None:
+            pr[k] = max(1.0, pr[k])
     return pr

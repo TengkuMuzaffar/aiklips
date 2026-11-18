@@ -238,4 +238,5 @@ def test_shape_previews(cli, test_clip):
         img = Image.open(io.BytesIO(r.content)).convert("RGB")
         bg = img.getpixel((2, 2))
         assert any(img.getpixel((x, img.height // 2)) != bg for x in range(0, img.width, 4)), f"{key}: nothing drawn"
-    assert client.get("/api/overlays/shape-star/thumb.jpg").status_code == 404
+    assert client.get("/api/overlays/shape-star/thumb.jpg").status_code == 200  # every ops/shapes.py kind
+    assert client.get("/api/overlays/shape-nonsense/thumb.jpg").status_code == 404

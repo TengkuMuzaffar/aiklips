@@ -20,7 +20,7 @@ from ..ops.overlay_style import render_shape, style_frame, video_width
 from ..ops.text import find_font, render_image, render_text
 from ..project import Layer, Project, VeditError, resolve_media, state_dir
 
-RENDER_VERSION = "4"
+RENDER_VERSION = "5"
 
 
 def even(v: float) -> int:
@@ -166,10 +166,27 @@ class _SpriteSource:
         if self.video:
             self.video.close()
 
-    def get(self, t_abs: float, reveal: float) -> tuple[Image.Image | None, float]:
+    def shape_at(self, pr: dict) -> Image.Image:
+        """A shape redrawn crisp at its animated size / fill (cached per distinct size and colour)."""
+        L = self.layer
+        w = L.width if pr.get("w") is None else round(pr["w"])
+        h = L.height if pr.get("h") is None else round(pr["h"])
+        fill = pr.get("fill", L.fill)
+        if (w, h, fill) == (L.width, L.height, L.fill):
+            return self.image
+        key = ("shape", w, h, fill)
+        if key not in self.cache:
+            if len(self.cache) > 256:
+                self.cache.clear()
+            self.cache[key] = render_shape(L, self.scale, w, h, fill)
+        return self.cache[key]
+
+    def get(self, t_abs: float, reveal: float, pr: dict | None = None) -> tuple[Image.Image | None, float]:
         """Sprite for this moment + an extra scale multiplier. Video layers: call once per frame, in order."""
         L = self.layer
-        if L.type in ("image", "shape"):
+        if L.type == "shape":
+            return (self.shape_at(pr) if pr else self.image), 1.0
+        if L.type == "image":
             return self.image, 1.0
         if L.type == "video":
             return self.video.next(), 1.0  # type: ignore[union-attr]
@@ -233,18 +250,25 @@ def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0)
         for i in range(n):
             t = i / fps
             pr = props_at(layer, t, dur, canvas)
-            sprite, extra = sprites.get(start + t, pr["reveal"])
+            sprite, extra = sprites.get(start + t, pr["reveal"], pr)
             s = pr["scale"] * extra
-            if sprite is None or pr["opacity"] <= 0.001 or s <= 0.001:
+            sx, sy = s * pr["sx"], s * pr["sy"]
+            wipe = pr["reveal"] if layer.type != "text" else 1.0  # text reveals letter by letter instead
+            if sprite is None or pr["opacity"] <= 0.001 or sx <= 0.001 or sy <= 0.001 or wipe <= 0.001:
                 proc.stdin.write(blank_bytes)
                 continue
-            fkey = (id(sprite), round(s, 4), round(pr["rotation"], 2), round(pr["opacity"], 3), round(pr["x"], 1), round(pr["y"], 1))
+            fkey = (id(sprite), round(sx, 4), round(sy, 4), round(pr["rotation"], 2), round(pr["opacity"], 3),
+                    round(pr["x"], 1), round(pr["y"], 1), round(wipe, 3))
             if fkey == last_key:
                 proc.stdin.write(last_bytes)
                 continue
             img = sprite
-            if abs(s - 1) > 1e-3:
-                img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.BICUBIC)
+            if wipe < 0.999:  # wipe on from the left: hide everything right of the revealed part
+                img = img.copy()
+                cut = round(img.width * wipe)
+                img.paste((0, 0, 0, 0), (cut, 0, img.width, img.height))
+            if abs(sx - 1) > 1e-3 or abs(sy - 1) > 1e-3:
+                img = img.resize((max(1, round(img.width * sx)), max(1, round(img.height * sy))), Image.BICUBIC)
             if abs(pr["rotation"]) > 0.01:
                 img = img.rotate(-pr["rotation"], resample=Image.BICUBIC, expand=True)
             if pr["opacity"] < 0.999:

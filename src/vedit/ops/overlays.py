@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import media
+from . import shapes
 from ..project import BLEND_MODES, SHAPE_KINDS, Layer, Project, Source, VeditError, normalize_tracks, spans_overlap, store_media_path
 
 # ---- adding / changing layers ----------------------------------------------------------------------------------
@@ -56,12 +57,7 @@ def add_video(p: Project, source: str, start: float = 0.0, end: float | None = N
     return layer
 
 
-SHAPE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "rect": {"width": 600, "height": 220, "radius": 24, "fill": "#000000B0"},
-    "ellipse": {"width": 360, "height": 360, "fill": None, "border_width": 10, "border_color": "#FFE600"},
-    "line": {"width": 600, "height": 14, "fill": "#FFFFFF"},
-    "arrow": {"width": 320, "height": 110, "fill": "#FFE600"},
-}
+SHAPE_DEFAULTS: dict[str, dict[str, Any]] = shapes.DEFAULTS  # per kind; one definition in ops/shapes.py
 
 
 def shape_thumb(shape: str, extra: dict | None = None, size: tuple[int, int] = (320, 200)) -> bytes:
@@ -95,6 +91,22 @@ def add_shape(p: Project, shape: str = "rect", start: float = 0.0, end: float | 
     return layer
 
 
+def duplicate_layer(p: Project, layer_id: str, dx: float | str = 40, dy: float | str = 40) -> Layer:
+    """A copy of a layer, nudged by dx / dy canvas px (0 = same place), drawn on top."""
+    import re
+
+    from ..project import parse_pos
+
+    src = p.layer(layer_id)
+    prefix = re.sub(r"\d+$", "", src.id) or "l"
+    copy = src.model_copy(deep=True, update={"id": p.new_id(prefix), "track": None})
+    for k, d, total in (("x", dx, p.canvas.width), ("y", dy, p.canvas.height)):
+        if float(d or 0):
+            setattr(copy, k, round(parse_pos(getattr(src, k), total) + float(d), 1))
+    p.layers.append(copy)
+    return copy
+
+
 # fields of the overlay frame / video / shape that `layer_set` and `vedit layer style` can change
 FRAME_FIELDS: dict[str, Callable[[Any], Any]] = {
     "blend": str, "radius": lambda v: max(0, int(float(v))), "border_width": lambda v: max(0, int(float(v))),
@@ -107,7 +119,26 @@ FRAME_FIELDS: dict[str, Callable[[Any], Any]] = {
     "fit": str,
     "flip_h": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"),
     "flip_v": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"),
+    "fill_gradient": lambda v: _gradient_list(v),
+    "gradient_angle": lambda v: float(v) % 360,
+    "sides": lambda v: min(24, max(3, int(float(v)))),
+    "points": lambda v: min(24, max(3, int(float(v)))),
+    "inner": lambda v: min(0.95, max(0.05, float(v))),
+    "sx": lambda v: max(0.01, float(v)),
+    "sy": lambda v: max(0.01, float(v)),
 }
+
+
+def _gradient_list(v: Any) -> list[str] | None:
+    """A shape gradient from the GUI ("#top,#bottom") or JSON (a list); "", "none" or one colour = off."""
+    if v in (None, "", "none"):
+        return None
+    cols = [c.strip() for c in (v.split(",") if isinstance(v, str) else v) if str(c).strip()]
+    if len(cols) < 2:
+        return None
+    from .animate import mix_hex
+
+    return [mix_hex(c, c, 0) for c in cols[:6]]
 
 
 def set_fields(layer: Layer, values: dict) -> list[str]:

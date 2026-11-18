@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class VeditError(Exception):
@@ -169,7 +169,12 @@ class Keyframe(_Model):
     scale: float | None = None
     rotation: float | None = None
     opacity: float | None = None
-    reveal: float | None = None  # 0..1 fraction of text shown (typewriter)
+    reveal: float | None = None  # 0..1 fraction shown (text: typewriter; other layers: wipe from the left)
+    w: float | None = None  # shape / image / video width in canvas px (stretch; shapes are redrawn crisp)
+    h: float | None = None  # shape height in canvas px
+    sx: float | None = None  # non-uniform stretch (multiplies the drawn width / height, any layer)
+    sy: float | None = None
+    fill: str | None = None  # shape fill colour, blended in RGB between keyframes
     ease: str = "ease_in_out"  # easing used from this keyframe to the next
 
 
@@ -199,6 +204,11 @@ class TextStyle(_Model):
     glow_size: int = 18
     gradient: list[str] | None = None  # fill top -> bottom, e.g. ["#FFE600", "#FF6A00"]
     look: str | None = None  # name of the text look this style came from (informational)
+    bold: bool = False  # heavier letters (a fill-colour stroke on top of the font's own weight)
+    italic: bool = False  # slanted (sheared) letters
+    underline: bool = False
+    strike: bool = False  # strikethrough
+    list_style: Literal["none", "bullet", "number"] = "none"  # each line (paragraph) as a list item
 
 
 class Word(_Model):
@@ -208,7 +218,9 @@ class Word(_Model):
 
 
 BLEND_MODES = ("normal", "screen", "multiply", "overlay", "add", "lighten", "darken")
-SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
+SHAPE_KINDS = ("rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
+               "arrow")
+SCENE_TRANSITIONS = ("cut", "fade", "slide", "zoom", "pop", "wipe")
 
 
 class Layer(_Model):
@@ -228,6 +240,9 @@ class Layer(_Model):
     scale: float = 1.0
     rotation: float = 0.0
     opacity: float = 1.0
+    sx: float = 1.0  # non-uniform stretch of the drawn layer (1 = as drawn); shapes stretch with width / height instead
+    sy: float = 1.0
+    scene: str | None = None  # design projects: the scene (Project.scenes) this layer belongs to; None = whole video
     keyframes: list[Keyframe] = Field(default_factory=list)
     presets: list[Preset] = Field(default_factory=list)
     text: str | None = None
@@ -258,9 +273,15 @@ class Layer(_Model):
     chroma: str | None = None  # key colour made transparent, e.g. "#00FF00"
     chroma_similarity: float = 0.25
     # shape layers
-    shape: Literal["rect", "ellipse", "line", "arrow"] = "rect"
+    shape: Literal["rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
+                   "arrow"] = "rect"
     height: int | None = None  # shape height in canvas px (line / arrow: thickness)
     fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
+    fill_gradient: list[str] | None = None  # shape fill as a linear gradient (2+ colours), replaces `fill`
+    gradient_angle: float = 90.0  # degrees: 0 = left -> right, 90 = top -> bottom
+    sides: int = 6  # polygon
+    points: int = 5  # star
+    inner: float = 0.5  # star: inner radius / outer; ring: hole size / outer
     # adjustment layers: filters and a colour grade applied to everything under them (clips and the layers below)
     effects: list[Effect] = Field(default_factory=list)
     grade: Grade | None = None
@@ -288,8 +309,24 @@ class Marker(_Model):
     color: str = "#FBBF24"
 
 
+class Scene(_Model):
+    """A design project's scene ("page"): a stretch of the timeline. Scenes play back to back in list order; a scene's
+    start is the sum of the durations before it (`Project.scene_starts`). Layers point at their scene with
+    `Layer.scene`, and scene ops (`ops/scenes.py`) move those layers' absolute times along when scenes change."""
+
+    id: str
+    name: str = ""
+    dur: float = 5.0
+    background: str | None = None  # hex; drawn as the scene's bottom full-canvas layer (`bg_layer`)
+    bg_layer: str | None = None
+    transition: Literal["cut", "fade", "slide", "zoom", "pop", "wipe"] = "cut"  # how this scene's layers enter
+    notes: str = ""  # storyboard text: what happens / is said in this scene
+    why: str | None = None
+
+
 class Project(_Model):
     version: int = SCHEMA_VERSION
+    kind: Literal["edit", "design"] = "edit"  # design = made in the Design studio: scenes of animated elements
     name: str = "untitled"
     canvas: Canvas = Field(default_factory=Canvas)
     sources: dict[str, Source] = Field(default_factory=dict)
@@ -299,6 +336,20 @@ class Project(_Model):
     notes: EditNotes | None = None
     markers: list[Marker] = Field(default_factory=list)
     main_hidden: bool = False  # main video track hidden (eye): its picture becomes the background; sound still plays
+    scenes: list[Scene] = Field(default_factory=list)  # design projects only
+
+    def scene_starts(self) -> list[float]:
+        starts, t = [], 0.0
+        for sc in self.scenes:
+            starts.append(round(t, 4))
+            t += sc.dur
+        return starts
+
+    def scene(self, scene_id: str) -> Scene:
+        for sc in self.scenes:
+            if sc.id == scene_id:
+                return sc
+        raise VeditError(f"No scene '{scene_id}'. Scenes: {', '.join(s.id for s in self.scenes) or 'none'}")
 
     # ---- timeline helpers -------------------------------------------------
     @property
@@ -331,6 +382,7 @@ class Project(_Model):
             + [m.id for m in self.music]
             + [k.id for k in self.markers]
             + list(self.sources)
+            + [s.id for s in self.scenes]
         )
         n = 0
         for u in used:
@@ -375,7 +427,9 @@ def find_project_dir(explicit: str | None = None) -> Path:
 
 # project.json format migrations: MIGRATIONS[n] turns a version-n dict into version n+1. When the format changes,
 # bump SCHEMA_VERSION and add a step here, so projects saved by older versions keep opening.
-MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+MIGRATIONS: dict[int, Callable[[dict], dict]] = {
+    1: lambda d: d,  # 2: design projects (kind, scenes), stretch (sx / sy), more shapes, keyframed size / fill
+}
 
 
 def migrate(data: dict) -> dict:
@@ -478,6 +532,10 @@ def normalize_gaps(project: Project) -> None:
 
 
 def save(pdir: Path, project: Project) -> None:
+    if project.kind == "design" and project.scenes:
+        from .ops.scenes import reconcile
+
+        reconcile(project)
     normalize_tracks(project)
     normalize_gaps(project)
     validate(project)
