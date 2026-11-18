@@ -28,8 +28,11 @@ CLI_FOR_OP = {
     "clip_place": "place", "clip_to_overlay": "to-overlay", "overlay_to_clip": "to-clip", "layer_move": "layer order",
     "layer_remove": "layer remove", "preset_add": "animate preset", "preset_remove": "animate preset",
     "canvas_set": "canvas",
+    "scene_add": "scene add", "scene_set": "scene set", "scene_move": "scene move", "scene_dup": "scene dup",
+    "scene_remove": "scene remove", "layer_dup": "layer dup",
 }
 UI_ONLY = {
+    "batch": "groups other editor actions (each has its own CLI command) into one undo step",
     "rename": "project name in the home screen; not an edit the AI is asked for",
 }
 

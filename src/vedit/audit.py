@@ -171,7 +171,7 @@ def check_color(p: Project, pdir: Path) -> list[dict]:
     from .ops import color
 
     out = []
-    video = [c for c in p.clips if p.sources[c.source].has_video and not c.gap]
+    video = [c for c in p.clips if p.sources[c.source].has_video and not _plain(p, c)]
     if len(video) < 2:
         return out
     looks = {(c.grade.look if c.grade else None) for c in video}
@@ -198,12 +198,17 @@ def check_color(p: Project, pdir: Path) -> list[dict]:
     return out
 
 
+def _plain(p: Project, c) -> bool:
+    """A gap, or a Design background clip (the canvas-colour file played as a clip): no footage to judge."""
+    return c.gap or Path(p.sources[c.source].path).name.startswith(".gap-")
+
+
 def check_pacing(p: Project, pdir: Path) -> list[dict]:
     out = []
     target = p.notes.target_shot_s if p.notes else None
     limit = max(1.5, 3 * target) if target else 6.0
     for c, start in zip(p.clips, p.clip_starts()):
-        if c.duration > limit and not c.gap:
+        if c.duration > limit and not _plain(p, c):
             out.append(_finding("note", "pacing", f"Clip {c.id} holds for {c.duration:.1f}s"
                                 + (f", over 3x the {target:g}s target shot." if target else "."), start,
                                 f"{c.duration:.2f}s > {limit:.1f}s", f"vedit split --at {start + c.duration / 2:.2f}"))
@@ -216,7 +221,7 @@ def check_footage(p: Project, pdir: Path) -> list[dict]:
     for i, a in enumerate(p.clips):
         for j in range(i + 1, len(p.clips)):
             b = p.clips[j]
-            if a.source != b.source or a.gap:
+            if a.source != b.source or _plain(p, a):
                 continue
             ov = min(a.out, b.out) - max(a.in_, b.in_)
             if ov > 0.3:
@@ -318,7 +323,7 @@ def check_justification(p: Project, pdir: Path) -> list[dict]:
     if not beats:
         return out
     for c in p.clips:
-        if not c.gap and not (c.meta and c.meta.why):
+        if not _plain(p, c) and not (c.meta and c.meta.why):
             out.append(_finding("note", "justification", f"Clip {c.id} has no stated reason.", starts[c.id], "",
                                 f'vedit why {c.id} "<what it shows and which beat it serves>" --beat <id>'))
     used = {c.meta.beat for c in p.clips if c.meta and c.meta.beat}
@@ -336,10 +341,45 @@ def check_sound(p: Project, pdir: Path) -> list[dict]:
     return sound.check_sound(p, pdir)
 
 
+def check_motion(p: Project, pdir: Path) -> list[dict]:
+    """Design videos (motion graphics on a plain background): a stretch of 3s+ where nothing moves looks frozen."""
+    from .ops import animate as anim
+
+    if not p.clips or not all(_plain(p, c) for c in p.clips):
+        return []
+
+    def moving(t: float) -> bool:
+        for l in p.layers:
+            end = p.duration if l.end is None else l.end
+            if l.hidden or not (l.start <= t < end):
+                continue
+            if l.type == "video" or l.keyframes:
+                return True
+            for pr in l.presets:
+                phase = anim.PRESETS.get(pr.name, ("loop",))[0]
+                d = anim._preset_duration(l, pr) if pr.name in anim.PRESETS else 0
+                if phase == "loop" or (phase == "in" and t - l.start < d) or (phase == "out" and end - t < d):
+                    return True
+        return False
+
+    out, run_start, t, step = [], None, 0.0, 0.25
+    while t <= p.duration:
+        if moving(t) or t >= p.duration - step:
+            if run_start is not None and t - run_start >= 3.0:
+                out.append(_finding("should-fix", "motion", f"Nothing moves from {run_start:.1f}s to {t:.1f}s.", run_start,
+                                    f"{t - run_start:.1f}s with no animated layer",
+                                    "give a layer there a loop preset (bob, pulse, float) or a keyframe path"))
+            run_start = None
+        elif run_start is None:
+            run_start = t
+        t = round(t + step, 3)
+    return out
+
+
 CHECKS: list[tuple[str, Callable]] = [
     ("hook", check_hook), ("readability", check_readability), ("layout", check_layout), ("typography", check_typography),
     ("colour", check_color), ("pacing", check_pacing), ("footage", check_footage), ("justification", check_justification),
-    ("sound", check_sound),
+    ("sound", check_sound), ("motion", check_motion),
 ]
 
 

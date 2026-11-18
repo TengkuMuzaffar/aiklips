@@ -48,13 +48,15 @@ adjust_app = typer.Typer(help="Adjustment layers: filters + colour over a time r
 proxy_app = typer.Typer(help="Proxy media: small copies of big (4K) sources so previews are fast; exports use the originals")
 track_app = typer.Typer(help="Timeline tracks: list them, hide / show the main track or an overlay track")
 marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTube chapters from them")
-shape_app = typer.Typer(help="Shapes: boxes, circles, lines, arrows (callouts, lower-third backgrounds)")
+shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
+                             "backgrounds, motion-design elements)")
+scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
                   ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
-                  ("version", version_app), ("template", template_app), ("track", track_app)]:
+                  ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -563,12 +565,18 @@ def text_add(
     glow: Optional[str] = typer.Option(None, help="Glow colour behind the letters, e.g. '#FF2BD6'"),
     gradient: Optional[str] = typer.Option(None, help="Fill gradient top->bottom, e.g. '#FFE600,#FF6A00'"),
     preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 .. (overrides the look's)"),
+    bold: Optional[bool] = None, italic: Optional[bool] = None, underline: Optional[bool] = None, strike: Optional[bool] = None,
+    list_style: Optional[str] = typer.Option(None, "--list", help="none | bullet | number (each line an item)"),
+    align: Optional[str] = typer.Option(None, help="left | center | right"),
+    line_spacing: Optional[float] = None,
 ):
     """Add a text overlay (titles, hooks, CTAs)."""
     from .ops import text_looks
 
     kw = dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width, bg_color=bg, max_width=max_width,
-              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient))
+              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient),
+              bold=bold, italic=italic, underline=underline, strike=strike, list_style=list_style, align=align,
+              line_spacing=line_spacing)
     with edit(f"add text '{text[:30]}'" + (f" ({look})" if look else "")) as tx:
         p = tx.project
         layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y)
@@ -592,6 +600,10 @@ def text_edit(
     letter_spacing: Optional[float] = None,
     glow: Optional[str] = typer.Option(None, help="Glow colour, or 'none' to remove"),
     gradient: Optional[str] = typer.Option(None, help="'#top,#bottom' colours, or 'none' to remove"),
+    bold: Optional[bool] = None, italic: Optional[bool] = None, underline: Optional[bool] = None, strike: Optional[bool] = None,
+    list_style: Optional[str] = typer.Option(None, "--list", help="none | bullet | number (each line an item)"),
+    align: Optional[str] = typer.Option(None, help="left | center | right"),
+    line_spacing: Optional[float] = None,
 ):
     """Change the text or style of a text/captions layer."""
     with edit(f"edit text {layer_id}") as tx:
@@ -600,7 +612,8 @@ def text_edit(
             l.text = text
         l.style = _style_from(l.style, size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
                               bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight,
-                              letter_spacing=letter_spacing,
+                              letter_spacing=letter_spacing, bold=bold, italic=italic, underline=underline, strike=strike,
+                              list=list_style, align=align, line_spacing=line_spacing,
                               glow_color=None if glow in (None, "none") else glow,
                               gradient=None if gradient in (None, "none") else _gradient(gradient))
         if glow == "none":
@@ -785,27 +798,40 @@ def overlay_add(
 
 @shape_app.command("add")
 def shape_add(
-    shape: str = typer.Argument(..., help="rect | ellipse | line | arrow"),
-    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    shape: str = typer.Argument(..., help="rect | ellipse | triangle | diamond | polygon | star | ring | heart | bubble | "
+                                            "blob | line | arrow"),
+    start: Optional[float] = typer.Option(None, help="Timeline seconds (design: default = start of --scene)"),
+    end: Optional[float] = None, x: str = "50%", y: str = "50%",
     width: Optional[int] = None, height: Optional[int] = None, fill: Optional[str] = typer.Option(None, help="Fill colour, or 'none'"),
+    gradient: Optional[str] = typer.Option(None, help="Gradient fill instead: '#FF3B6B,#7C5CFF' (2-6 colours)"),
+    gradient_angle: Optional[float] = typer.Option(None, help="Gradient direction in degrees (0 = left->right, 90 = top->bottom)"),
+    sides: Optional[int] = typer.Option(None, help="polygon: number of sides"),
+    points: Optional[int] = typer.Option(None, help="star: number of points"),
+    inner: Optional[float] = typer.Option(None, help="star: inner radius 0..1; ring: hole size 0..1"),
     border: Optional[int] = None, border_color: Optional[str] = None, radius: Optional[int] = None,
     rotation: float = 0.0, blend: Optional[str] = None, preset: Optional[list[str]] = typer.Option(None),
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in (default: the scene at --start)"),
 ):
-    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it)."""
-    from .ops import overlays
+    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it, a star that pops in)."""
+    from .ops import overlays, scenes
 
     with edit(f"shape add {shape}") as tx:
+        p = tx.project
+        t0 = start if start is not None else (scenes.scene_range(p, scene)[0] if scene and p.scenes else 0.0)
         kw: dict[str, Any] = {"x": x, "y": y, "rotation": rotation}
         for k, v in (("width", width), ("height", height), ("radius", radius), ("border_width", border), ("border_color", border_color)):
             if v is not None:
                 kw[k] = v
-        layer = overlays.add_shape(tx.project, shape, start, end, **kw)
-        vals = {} if fill is None else {"fill": fill}
-        if blend:
-            vals["blend"] = blend
+        layer = overlays.add_shape(p, shape, t0, end, **kw)
+        vals: dict[str, Any] = {} if fill is None else {"fill": fill}
+        for k, v in (("blend", blend), ("fill_gradient", gradient), ("gradient_angle", gradient_angle), ("sides", sides),
+                     ("points", points), ("inner", inner)):
+            if v is not None:
+                vals[k] = v
         overlays.set_fields(layer, vals)
         layer.presets = _presets(preset)
-    emit({"layer": layer.id}, f"Added {shape} {layer.id}")
+        scenes.place_in_scene(p, layer, scene)
+    emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
 
 
 @layer_app.command("order")
@@ -858,15 +884,31 @@ def layer_set(
     start: Optional[float] = None, end: Optional[float] = None,
     x: Optional[str] = None, y: Optional[str] = None,
     scale: Optional[float] = None, rotation: Optional[float] = None, opacity: Optional[float] = None,
-    width: Optional[int] = None,
+    width: Optional[int] = None, height: Optional[int] = typer.Option(None, help="Shape height (px)"),
+    sx: Optional[float] = typer.Option(None, help="Stretch: width multiplier of the drawn layer (1 = as drawn)"),
+    sy: Optional[float] = typer.Option(None, help="Stretch: height multiplier"),
 ):
-    """Change timing / position / transform of a layer."""
+    """Change timing / position / transform / size / stretch of a layer."""
     with edit(f"set {layer_id}") as tx:
         l = tx.project.layer(layer_id)
-        for k, v in dict(start=start, end=end, x=x, y=y, scale=scale, rotation=rotation, opacity=opacity, width=width).items():
+        for k, v in dict(start=start, end=end, x=x, y=y, scale=scale, rotation=rotation, opacity=opacity, width=width,
+                         height=height).items():
             if v is not None:
                 setattr(l, k, v)
+        for k, v in (("sx", sx), ("sy", sy)):
+            if v is not None:
+                setattr(l, k, max(0.01, v))
     emit({"layer": l.model_dump(mode="json", exclude={"words"})}, f"Updated {layer_id}")
+
+
+@layer_app.command("dup")
+def layer_dup(layer_id: str, dx: float = typer.Option(40, help="Offset of the copy (canvas px)"), dy: float = 40):
+    """Duplicate a layer (on top, nudged by dx / dy; 0 0 = same place)."""
+    from .ops import overlays
+
+    with edit(f"duplicate {layer_id}") as tx:
+        l = overlays.duplicate_layer(tx.project, layer_id, dx, dy)
+    emit({"layer": l.id}, f"Duplicated {layer_id} as {l.id}")
 
 
 @layer_app.command("remove")
@@ -903,7 +945,8 @@ def anim_preset(layer_id: str, name: str, duration: Optional[float] = None,
 @anim_app.command("keyframes")
 def anim_keyframes(layer_id: str, keyframes: str = typer.Argument(..., help='JSON list: [{"t":0,"x":"50%","scale":0,"ease":"back_out"},{"t":0.5,"scale":1}]'),
                    append: bool = typer.Option(False, help="Add to existing keyframes instead of replacing")):
-    """Set custom keyframes (t = seconds from layer start; x,y,scale,rotation,opacity,reveal; ease)."""
+    """Set custom keyframes (t = seconds from layer start; x, y, scale, rotation, opacity, reveal, w / h (shape size,
+    stays crisp), sx / sy (stretch), fill (hex, shapes); ease)."""
     from .project import Keyframe
 
     try:
@@ -2459,6 +2502,176 @@ def gen_list():
 
     rows = batch.list_batches()
     emit({"batches": rows}, "\n".join(f"{b['id']}  {b['status']:<9} {b['done']}/{b['count']}  {b['name']}" for b in rows) or "No batches yet")
+
+
+design_app = typer.Typer(help="Design: motion-design videos made of scenes of animated shapes, text and media")
+app.add_typer(design_app, name="design")
+
+
+@design_app.command("new")
+def design_new(
+    folder: Path = typer.Argument(..., help="New project folder, e.g. projects/my-promo"),
+    fmt: str = typer.Option("reels", "--format", help="reels | square | landscape | portrait45"),
+    name: Optional[str] = None,
+    dur: float = typer.Option(5.0, "--dur", help="Length of the first scene (s)"),
+    background: Optional[str] = typer.Option(None, help="Canvas colour, e.g. #101014"),
+):
+    """Start a blank design (one scene) and make it the active project. Open it in the Design studio."""
+    from . import library
+    from .ops import scenes
+
+    d = folder.expanduser().resolve()
+    if (d / PROJECT_FILE).exists():
+        raise VeditError(f"{d} already has a project.json")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "media").mkdir(exist_ok=True)
+    (d / "exports").mkdir(exist_ok=True)
+    proj = Project(name=name or d.name)
+    sc = scenes.new_design(proj, d, fmt, name, dur, background)
+    save(d, proj)
+    history.commit(d, proj, f"new design ({fmt})")
+    library.register(d)
+    (Path.cwd() / ACTIVE_FILE).write_text(str(d))
+    emit({"project": str(d), "scene": sc.id}, f"Created design {d} with scene {sc.id} (now active)")
+
+
+@scene_app.command("list")
+def scene_list():
+    """The design's scenes: times, background, transition, notes and their layers."""
+    from .ops import scenes
+
+    p = load(pdir())
+    scenes.require_design(p)
+    rows = scenes.summary(p)
+    emit({"scenes": rows}, "\n".join(f"{r['id']}  {r['start']:6.2f}-{r['end']:6.2f}s  {r['name']}  [{r['transition']}]"
+                                      f"  {len(r['layers'])} layers" + (f"  bg {r['background']}" if r['background'] else "")
+                                      for r in rows))
+
+
+@scene_app.command("add")
+def scene_add(
+    dur: float = typer.Option(5.0, "--dur"), after: Optional[str] = typer.Option(None, help="Insert after this scene (default: at the end)"),
+    name: str = "", background: Optional[str] = typer.Option(None, help="Scene background colour (hex)"),
+    transition: str = typer.Option("cut", help="How its elements enter: cut | fade | slide | zoom | pop | wipe"),
+    notes: str = typer.Option("", help="Storyboard notes: what happens in this scene"),
+):
+    """Add a scene."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit("scene add") as tx:
+        sc = scenes.add(tx.project, d, dur, after, name, background, transition, notes)
+        st = scenes.scene_range(tx.project, sc.id)
+    emit({"scene": sc.id, "start": st[0], "end": st[1]}, f"Added {sc.id} at {st[0]:g}-{st[1]:g}s")
+
+
+@scene_app.command("set")
+def scene_set(
+    scene_id: str, dur: Optional[float] = typer.Option(None, "--dur"), name: Optional[str] = None,
+    background: Optional[str] = typer.Option(None, help="Hex colour, or 'none'"),
+    transition: Optional[str] = None, notes: Optional[str] = None, why: Optional[str] = None,
+):
+    """Change a scene: length (later scenes and their elements move along), name, background, transition, notes."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"scene {scene_id}") as tx:
+        bg: Any = False if background is None else (None if background.lower() == "none" else background)
+        scenes.set_scene(tx.project, d, scene_id, dur, name, bg, transition, notes, why)
+        st = scenes.scene_range(tx.project, scene_id)
+    emit({"scene": scene_id, "start": st[0], "end": st[1]}, f"Updated {scene_id} ({st[0]:g}-{st[1]:g}s)")
+
+
+@scene_app.command("move")
+def scene_move(scene_id: str, index: int = typer.Argument(..., help="New position (0 = first)")):
+    """Reorder a scene; its elements move with it."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"move scene {scene_id}") as tx:
+        scenes.move(tx.project, d, scene_id, index)
+    emit({"scene": scene_id, "index": index}, f"Moved {scene_id} to position {index}")
+
+
+@scene_app.command("dup")
+def scene_dup(scene_id: str):
+    """Duplicate a scene with all its elements, right after it."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"duplicate scene {scene_id}") as tx:
+        sc = scenes.duplicate(tx.project, d, scene_id)
+    emit({"scene": sc.id}, f"Duplicated {scene_id} as {sc.id}")
+
+
+@scene_app.command("remove")
+def scene_remove(scene_id: str):
+    """Delete a scene and its elements; later scenes move up."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"remove scene {scene_id}") as tx:
+        scenes.remove(tx.project, d, scene_id)
+    emit({"removed": scene_id}, f"Removed {scene_id}")
+
+
+@design_app.command("build")
+def design_build(
+    plan_file: Path = typer.Argument(..., help="MotionPlan JSON (optionally with a \"files\": {id: path} map)"),
+    new: Path | None = typer.Option(None, "--new", help="Create this new project folder for it (default: the active project)"),
+    fmt: str = typer.Option("reels", "--format", help="reels|square|landscape|portrait45 (with --new)"),
+):
+    """Build a whole motion-graphics video from one plan, in one step per scene (undoable). Rebuilds the project's
+    timeline: its layers, clips and music are replaced by the plan's."""
+    from .design import builder
+    from .generate.executor import create_project
+
+    plan, raw_files = builder.load_plan_file(plan_file)
+    files = builder.files_from_json(raw_files)
+    if new:
+        if (new / PROJECT_FILE).exists():
+            raise VeditError(f"{new} already has a project.json")
+        create_project(new, plan.title or new.name, fmt)
+        d = new
+    else:
+        d = pdir()
+    rep = builder.build(plan, d, files)
+    emit({"project": str(d), **rep},
+         f"built {rep['length']:g}s in {d}: {len(rep['applied'])} parts" + (f", skipped {len(rep['skipped'])}:\n  " + "\n  ".join(rep["skipped"]) if rep["skipped"] else ""))
+
+
+@design_app.command("split")
+def design_split(
+    image: Path = typer.Argument(..., exists=True, help="Image sheet: character sheet, storyboard grid, stickers"),
+    out: Path | None = typer.Option(None, "--out", help="Folder for the pieces (default: <project>/media/pieces)"),
+    grid: str | None = typer.Option(None, "--grid", help="Force an even grid, e.g. 2x3 (rows x columns)"),
+    cutout: bool = typer.Option(False, "--cutout", help="Make the sheet's background colour transparent"),
+):
+    """Cut an image sheet into its panels (PNG pieces to animate)."""
+    from .design import sheet
+
+    dest = out or (pdir() / "media" / "pieces")
+    pieces = sheet.split(image, dest, grid, cutout)
+    for i, pc in enumerate(pieces, 1):
+        pc["id"] = f"p{i}"
+    over = sheet.contact(pieces, dest / f"{image.stem}-pieces.png")
+    emit({"pieces": pieces, "overview": str(over)},
+         "\n".join(f"{pc['id']}  {pc['width']}x{pc['height']}  {pc['path']}" for pc in pieces) + f"\noverview: {over}")
+
+
+@design_app.command("catalog")
+def design_catalog():
+    """What a MotionPlan may use: frames, transitions, styles, animation presets, text looks, textures, fonts."""
+    from .design import spec
+    from .ops import animate as anim
+    from .ops import fonts, overlays, text_looks
+
+    data = {"frames": list(spec.FRAMES), "transitions": list(spec.TRANSITIONS), "styles": spec.STYLES,
+            "presets": {k: v[3] for k, v in anim.PRESETS.items()},
+            "looks": [x["name"] for x in text_looks.catalog()],
+            "textures": [k for k, it in overlays.LIBRARY.items() if it.kind == "video"],
+            "fonts": list(fonts.FONTS), "max_length": spec.MAX_LENGTH}
+    emit(data)
 
 
 update_app = typer.Typer(help="App updates (installed desktop app; in a git checkout use `git pull`)")

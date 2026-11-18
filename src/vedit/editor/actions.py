@@ -470,9 +470,12 @@ def _layer_set(p: Project, a: dict) -> str:
         if k in ("start", "end", "scale", "rotation", "opacity"):
             v = None if (v is None or v == "") and k == "end" else float(v)
         elif k in ("width", "words_per_group"):
-            v = None if v in (None, "") else int(v)
+            v = None if v in (None, "") else int(float(v))
         setattr(l, k, v)
         changed.append(k)
+    if "height" in a:
+        l.height = None if a["height"] in (None, "") else max(1, int(float(a["height"])))
+        changed.append("height")
     from ..ops import overlays
 
     changed += overlays.set_fields(l, a)
@@ -518,10 +521,21 @@ def _text_look(p: Project, a: dict) -> str:
 
 @op("layer_add_text")
 def _layer_add_text(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
     start = float(a.get("start") or 0)
     l = Layer(id=p.new_id("t"), type="text", text=a.get("text") or "New text", start=start,
-              end=_num(a, "end") or min(p.duration, start + 3), y=a.get("y") or "30%")
+              end=_num(a, "end") or min(p.duration, start + 3), y=a.get("y") or "30%", x=a.get("x") or "50%")
+    if isinstance(a.get("style"), dict):
+        data = l.style.model_dump()
+        data.update({k: v for k, v in a["style"].items() if k in data})
+        l.style = TextStyle(**data)
     p.layers.append(l)
+    if a.get("look"):
+        from ..ops import text_looks
+
+        text_looks.apply(l, a["look"], animation=a.get("animation", True))
+    scenes.place_in_scene(p, l, a.get("scene"))
     return f"add text {l.id}"
 
 
@@ -566,10 +580,58 @@ def _template_apply(p: Project, a: dict) -> str:
 
 @op("layer_add_shape")
 def _layer_add_shape(p: Project, a: dict) -> str:
-    from ..ops import overlays
+    from ..ops import overlays, scenes
 
-    l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"))
+    kw = {k: a[k] for k in ("x", "y") if a.get(k) not in (None, "")}
+    l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"), **kw)
+    overlays.set_fields(l, {k: v for k, v in a.items() if k in overlays.FRAME_FIELDS})
+    scenes.place_in_scene(p, l, a.get("scene"))
     return f"add {l.shape} {l.id}"
+
+
+# ---- design scenes (Design studio) -----------------------------------------------------------------------------
+
+@op("scene_add")
+def _scene_add(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    sc = scenes.add(p, _PDIR[0], float(a.get("dur") or 5), a.get("after"), a.get("name") or "",
+                    a.get("background") or None, a.get("transition") or "cut", a.get("notes") or "")
+    return f"add scene {sc.id}"
+
+
+@op("scene_set")
+def _scene_set(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    bg = (a["background"] or None) if "background" in a else False
+    scenes.set_scene(p, _PDIR[0], a["scene"], _num(a, "dur"), a.get("name"), bg, a.get("transition"), a.get("notes"),
+                     a.get("why"))
+    return f"{a['scene']}: " + ", ".join(k for k in a if k != "scene")
+
+
+@op("scene_move")
+def _scene_move(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    scenes.move(p, _PDIR[0], a["scene"], int(a["index"]))
+    return f"move scene {a['scene']} to {a['index']}"
+
+
+@op("scene_dup")
+def _scene_dup(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    sc = scenes.duplicate(p, _PDIR[0], a["scene"])
+    return f"duplicate scene {a['scene']} as {sc.id}"
+
+
+@op("scene_remove")
+def _scene_remove(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    scenes.remove(p, _PDIR[0], a["scene"])
+    return f"remove scene {a['scene']}"
 
 
 @op("overlay_add")
@@ -595,6 +657,8 @@ def _layer_place(p: Project, a: dict) -> str:
 def _layer_add_media(p: Project, a: dict) -> str:
     """A video or image from the Media bin dropped on an overlay track: picture-in-picture / b-roll / sticker."""
     from ..ops import tracks
+
+    from ..ops import scenes
 
     track = int(a["track"]) if a.get("track") not in (None, "") else None
     l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")))
@@ -643,13 +707,40 @@ def _layer_remove(p: Project, a: dict) -> str:
 
 @op("preset_add")
 def _preset_add(p: Project, a: dict) -> str:
+    """Add an animation preset. replace_phase: it replaces the layer's other preset of the same phase (in / out /
+    loop), as the Design studio's Animate panel does (one entrance, one exit, one loop)."""
     from ..project import Preset
 
-    pr = Preset(name=a["name"])
+    pr = Preset(name=a["name"], duration=_num(a, "duration"), params=a.get("params") or {})
     anim.validate_preset(pr)
     l = p.layer(a["layer"])
-    l.presets = [x for x in l.presets if x.name != pr.name] + [pr]
+    phase = anim.PRESETS[pr.name][0]
+    keep = [x for x in l.presets if x.name != pr.name
+            and not (a.get("replace_phase") and anim.PRESETS.get(x.name, ("",))[0] == phase)]
+    l.presets = keep + [pr]
     return f"{l.id}: animate {pr.name}"
+
+
+@op("layer_dup")
+def _layer_dup(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    l = overlays.duplicate_layer(p, a["layer"], a.get("dx", 40), a.get("dy", 40))
+    return f"duplicate {a['layer']} as {l.id}"
+
+
+@op("batch")
+def _batch(p: Project, a: dict) -> str:
+    """Several actions as one undo step (a drag that moves three layers, a resize that sets size and position)."""
+    msgs = []
+    for item in a.get("ops") or []:
+        name = item.get("op")
+        if name == "batch" or name not in _OPS:
+            raise VeditError(f"Unknown action '{name}'")
+        msgs.append(_OPS[name](p, item.get("args") or {}))
+    if not msgs:
+        raise VeditError("Nothing to do")
+    return msgs[0] if len(msgs) == 1 else f"{len(msgs)} changes: " + "; ".join(msgs)[:200]
 
 
 @op("preset_remove")
@@ -700,7 +791,7 @@ def _music_remove(p: Project, a: dict) -> str:
     return f"remove music {a['music']}"
 
 
-_ID_KEYS = {"clip", "layer", "music", "source", "id", "effect", "index"}
+_ID_KEYS = {"clip", "layer", "music", "source", "id", "effect", "index", "scene"}
 
 
 def _shape(v: Any, key: str = "") -> Any:

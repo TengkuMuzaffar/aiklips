@@ -312,7 +312,7 @@ _VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts"
 _VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
                    "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
                    "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
-                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "update": {"status", "check"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"},
                    "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
 _VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models"}  # read-only when given no options
 _VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them
@@ -884,6 +884,19 @@ class ChatSession:
             lines.append(f"timeline: {p.duration:.2f}s, {len(p.clips)} clips, {len(p.layers)} layers, canvas {p.canvas.width}x{p.canvas.height}")
             if ctx.get("playhead") is not None:
                 lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
+            if p.kind == "design":
+                from ..ops import scenes as scene_ops
+
+                rows = scene_ops.summary(p)
+                lines.append("DESIGN project (Design studio): scenes play back to back; edit with `vedit scene ...`, "
+                             "`vedit shape add <kind> --scene ID`, `vedit text add ... --start/--end inside the scene`, "
+                             "`vedit animate preset|keyframes`, `vedit layer set --sx --sy`. Load the `motion` skill.")
+                for r in rows:
+                    lines.append(f"  scene {r['id']} {r['start']:.2f}-{r['end']:.2f}s \"{r['name']}\" [{r['transition']}]"
+                                 + (f" bg {r['background']}" if r['background'] else "") + f", layers: {', '.join(r['layers']) or 'none'}"
+                                 + (f" | notes: {r['notes'][:160]}" if r['notes'] else ""))
+                if ctx.get("scene"):
+                    lines.append(f"current scene (where the user is): {ctx['scene']}")
             sel = ctx.get("selection") or {}
             kind, sid = sel.get("kind"), sel.get("id")
             if kind == "clip":
