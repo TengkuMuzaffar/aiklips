@@ -196,13 +196,15 @@ def _bg_remove(p: Project, a: dict) -> str:
         return "background removal off"
     if mode not in ("chroma", "fast", "quality"):
         raise VeditError("mode must be chroma, fast, quality or off")
-    replace = a.get("replace") or "color:#00B140"
+    # keying a green screen and filling the hole with green looks like nothing happened: use the canvas colour
+    replace = a.get("replace") or (f"color:{p.canvas.background}" if mode == "chroma" else "color:#00B140")
     for c in targets:
         if mode == "chroma":
-            prm = chroma.clean({k: a[k] for k in chroma.PARAMS if a.get(k) not in (None, "")})
-            prm = {**chroma.DEFAULTS, **prm}
+            given = chroma.clean({k: a[k] for k in chroma.PARAMS if a.get(k) not in (None, "")})
+            prm = {**chroma.DEFAULTS, **given}
             if prm["key"] in ("", "auto") or "key" not in a:
                 prm["key"] = chroma.clip_key(_PDIR[0], p, c)
+            prm.update(chroma.fit_tolerance(prm["key"], given.get("similarity"), given.get("blend")))
         else:
             prm = {"smooth": float(a.get("smooth") or 0.5)}
         c.effects = [e for e in c.effects if e.type != "bg"] + [Effect(type="bg", params={**prm, "mode": mode, "replace": replace})]
@@ -223,6 +225,8 @@ def _bg_set(p: Project, a: dict) -> str:
         upd = {k: v for k, v in vals.items() if k == "replace" or e.params.get("mode") == "chroma"}
         if upd.get("key") == "auto":
             upd["key"] = chroma.clip_key(_PDIR[0], p, c)
+        if "key" in upd:  # a new key colour: re-fit the tolerance unless this same call sets it
+            upd.update(chroma.fit_tolerance(upd["key"], upd.get("similarity"), upd.get("blend")))
         e.params.update(upd)
     return f"background: {', '.join(f'{k}={v}' for k, v in vals.items())}"
 

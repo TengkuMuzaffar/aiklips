@@ -340,10 +340,14 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .drawbar .sep { width: 1px; height: 18px; background: var(--line2); margin: 0 2px; }
 .brushcur { position: absolute; border: 1.5px solid #fff; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px #000a; transform: translate(-50%, -50%); z-index: 4; }
 .brushcur.erase { border-style: dashed; }
-.drawpop { position: absolute; z-index: 7; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; min-width: 210px; box-shadow: 0 10px 30px #000a; font-size: 12px; }
+.drawpop { position: absolute; z-index: 7; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; width: 240px; box-sizing: border-box; box-shadow: 0 10px 30px #000a; font-size: 12px; }
 .drawpop .row { display: flex; gap: 6px; align-items: center; }
 .drawpop .row > label { width: 54px; color: var(--muted); }
-.drawpop select { flex: 1; }
+/* long option labels must not widen the popup: WebKit only shrinks a <select> below its text with an explicit width,
+   and grid rows need min-width 0 or the longest option still sets the column width */
+.drawpop > * { min-width: 0; }
+.drawpop select { flex: 1 1 0; width: 0; min-width: 0; text-overflow: ellipsis; }
+.drawbar.away { display: none; }  /* the choose-how popup is open: painting is done, keep the picture clear */
 .transport button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 #p-chat { position: relative; }
 #chatlist { position: absolute; top: 40px; right: 8px; left: 8px; max-height: 60%; overflow: auto; z-index: 20; background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 30px #000b; padding: 6px; }
@@ -1609,7 +1613,9 @@ function colorIn(value, commit, live = null) {
   return h("input", { type: "color", value: v, onchange: (e) => commit(e.target.value), oninput: live && ((e) => live(e.target.value)) });
 }
 function selectIn(value, options, commit) {
-  return h("select", { onchange: (e) => commit(e.target.value) }, options.map(([v, l]) => h("option", { value: v, selected: v === value }, l)));
+  // blur first: a focused field blocks the inspector re-render (refresh), so fields that appear for the new
+  // value (e.g. Background → green screen shows Pick + sliders) would never show
+  return h("select", { onchange: (e) => { e.target.blur(); commit(e.target.value); } }, options.map(([v, l]) => h("option", { value: v, selected: v === value }, l)));
 }
 // ---- typography: bundled fonts + text looks (from /api/typography) ----
 let TYPO = null;
@@ -4068,7 +4074,7 @@ function boxMode(layer, kind, vb, active) {
   let box = null;
   layer.addEventListener("pointerdown", (e) => {
     if (!active() || e.target.closest(".drawpop, .drawbar")) return;
-    layer.querySelector(".drawpop")?.remove(); box?.remove();
+    closeDrawPop(layer); box?.remove();
     const r = layer.getBoundingClientRect(), x0 = e.clientX - r.left, y0 = e.clientY - r.top;
     box = h("div", { class: "drawbox" + (kind === "focus" ? " ellipse" : "") }); layer.append(box);
     layer.setPointerCapture(e.pointerId);
@@ -4151,7 +4157,7 @@ function paintMode(layer, vb, kind = "mask") {
     sizeIn.style.display = t === "brush" ? "" : "none";
     for (const b of [keepB, eraseB, undoB, clearB, done]) b.style.display = t === "box" || (focus && b === keepB) ? "none" : "";
     layer.classList.toggle("painting", t === "brush");
-    layer.querySelector(".drawbox")?.remove(); layer.querySelector(".drawpop")?.remove();
+    layer.querySelector(".drawbox")?.remove(); closeDrawPop(layer);
     redraw();
   }
   PAINT_UNDO = { undo: () => undoB.click(), key: (k) => {
@@ -4169,7 +4175,7 @@ function paintMode(layer, vb, kind = "mask") {
   layer.addEventListener("pointerleave", () => { cur.style.display = "none"; });
   layer.addEventListener("pointerdown", (e) => {
     if (tool === "box" || e.target.closest(".drawbar, .drawpop")) return;
-    layer.querySelector(".drawpop")?.remove();
+    closeDrawPop(layer);
     layer.setPointerCapture(e.pointerId);
     const group = []; groups.push(group);
     let mv;
@@ -4207,6 +4213,8 @@ function paintMode(layer, vb, kind = "mask") {
   }
   setTool("brush");
 }
+// close the choose-how popup (clicking the video, a tool key, Back) and bring the paint toolbar back
+function closeDrawPop(layer) { layer.querySelector(".drawpop")?.remove(); $("#stage .drawbar")?.classList.remove("away"); }
 function drawPopup(layer, kind, bx, sc, paint = null) {
   const at = video.currentTime;
   const cbox = [bx.x, bx.y, bx.w, bx.h].map((v) => Math.round(v / sc)).join(",");
@@ -4237,12 +4245,20 @@ function drawPopup(layer, kind, bx, sc, paint = null) {
     h("b", {}, kind === "mask" ? "Hide this region" : "Highlight this object"),
     ...Object.entries(opts).map(([k, el]) => h("div", { class: "row" }, h("label", {}, k[0].toUpperCase() + k.slice(1)), el)),
     h("label", { class: "row", style: { cursor: "pointer" } }, track, h("span", {}, "Follow it as it moves (tracking)")),
-    h("div", { class: "row" }, h("button", { class: "primary", onclick: apply }, "Apply"), h("button", { onclick: endDraw }, "Cancel")));
-  const lw = layer.clientWidth, lh = layer.clientHeight;
-  pop.style.left = `${Math.max(4, Math.min(lw - 220, bx.x))}px`;
-  const ph = kind === "focus" ? 240 : 170;
-  pop.style.top = `${bx.y + bx.h + 8 + ph < lh ? bx.y + bx.h + 8 : Math.max(4, bx.y - ph - 8)}px`;
+    h("div", { class: "row" }, h("button", { class: "primary", onclick: apply }, "Apply"),
+      h("button", { title: "Back to painting (your strokes are kept)", onclick: back }, "Back")));
+  // the toolbar sits beside / over the video too: hide it while this is open so nothing overlaps
+  const bar = $("#stage .drawbar");
+  bar?.classList.add("away");
+  function back() { closeDrawPop(layer); }
+  layer.querySelector(".drawpop")?.remove();
   layer.append(pop);
+  // place it after it's in the page (real size): below the region, else above, else pinned to the bottom;
+  // horizontally kept on the video, centred when the video is narrower than the popup
+  const lw = layer.clientWidth, lh = layer.clientHeight, pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = `${pw + 8 > lw ? (lw - pw) / 2 : Math.max(4, Math.min(lw - pw - 4, bx.x))}px`;
+  const below = bx.y + bx.h + 8, above = bx.y - ph - 8;
+  pop.style.top = `${below + ph <= lh - 4 ? below : above >= 4 ? above : Math.max(4, lh - ph - 4)}px`;
 }
 $("#t-mask").onclick = () => startDraw("mask");
 $("#t-focus").onclick = () => startDraw("focus");

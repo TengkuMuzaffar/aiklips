@@ -111,3 +111,26 @@ def test_editor_actions(cli, green_clip):
     assert e.params["similarity"] == 0.3 and e.params["replace"] == "color:#FF0000"
     actions._OPS["bg_remove"](p, {"clip": "c1", "mode": "off"})
     assert not p.clips[0].effects
+
+
+def test_pale_screen_tolerance_keeps_whites_solid():
+    """A washed-out screen (#69DE94) is close to neutral in UV: the default 0.12 + 0.08 turned white clothes
+    see-through. The fitted tolerance stays below the white/grey distance; saturated screens keep the defaults."""
+    pale = "#69DE94"
+    fit = chroma.fit_tolerance(pale)
+    assert fit["similarity"] + fit["blend"] < chroma.neutral_distance(pale)
+    assert chroma.fit_tolerance("#00FF00") == {"similarity": chroma.DEFAULTS["similarity"], "blend": chroma.DEFAULTS["blend"]}
+    assert chroma.fit_tolerance(pale, similarity=0.3)["similarity"] == 0.3  # a value the user gave is kept
+
+
+@needs_ffmpeg
+def test_editor_chroma_defaults_to_canvas_colour_and_refits_on_new_key(cli, green_clip):
+    cli("import", str(green_clip))
+    d = cli.project
+    p = load(d)
+    actions._PDIR[0] = d
+    actions._OPS["bg_remove"](p, {"clip": "c1", "mode": "chroma"})
+    e = p.clips[0].effects[0]
+    assert e.params["replace"] == f"color:{p.canvas.background}"  # not green over a green screen
+    actions._OPS["bg_set"](p, {"clip": "c1", "key": "#69DE94"})
+    assert e.params["similarity"] + e.params["blend"] < chroma.neutral_distance("#69DE94")

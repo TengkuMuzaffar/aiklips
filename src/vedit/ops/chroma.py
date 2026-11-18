@@ -42,6 +42,32 @@ def screen_type(key: str) -> str:
     return "blue" if b > g else "green"
 
 
+def neutral_distance(key: str) -> float:
+    """How far white / grey / skin-neutral pixels are from the key, in chromakey's own units (UV distance / 255·√2).
+
+    chromakey ignores brightness, so a pale, washed-out screen sits close to neutral in UV: with a tolerance wider than
+    this, white clothes and teeth turn see-through."""
+    r, g, b = rgba(key)[:3]
+    u = -0.148 * r - 0.291 * g + 0.439 * b
+    v = 0.439 * r - 0.368 * g - 0.071 * b
+    return float(np.hypot(u, v) / (255 * np.sqrt(2)))
+
+
+def fit_tolerance(key: str, similarity: float | None = None, blend: float | None = None) -> dict:
+    """Tolerance + softness for this key that never reach neutral colours (keeps 20% margin).
+
+    Values the caller gives are kept as they are; only the missing ones are fitted."""
+    room = 0.8 * neutral_distance(key)
+    b = DEFAULTS["blend"] if blend is None else blend
+    s = DEFAULTS["similarity"] if similarity is None else similarity
+    if s + b > room:
+        if blend is None:
+            b = round(max(0.02, min(b, room * 0.3)), 4)
+        if similarity is None:
+            s = round(max(0.03, room - b), 4)
+    return {"similarity": s, "blend": b}
+
+
 def key_chain(params: dict) -> str:
     """Filter chain (no labels) that turns the clip into RGBA with the screen transparent and its spill removed."""
     p = {**DEFAULTS, **{k: v for k, v in params.items() if v is not None}}

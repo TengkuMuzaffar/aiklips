@@ -982,11 +982,11 @@ def _clear_effect(p: Project, clip: str | None, types: tuple[str, ...]) -> list[
 def bg_remove(
     clip: Optional[str] = typer.Option(None, help="Only this clip (default: all clips)"),
     mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow) | chroma (green/blue screen, instant)"),
-    replace: str = typer.Option("color:#00B140", help="color:#RRGGBB | blur[:sigma] | image:path | video:path"),
+    replace: Optional[str] = typer.Option(None, help="color:#RRGGBB | blur[:sigma] | image:path | video:path (default: chroma = canvas colour, AI = #00B140)"),
     smooth: float = typer.Option(0.5, help="fast/quality: temporal smoothing 0..0.9 (less flicker)"),
     key: str = typer.Option("auto", help="chroma: screen colour #RRGGBB, or auto (sampled from each clip)"),
-    similarity: float = typer.Option(0.12, help="chroma: how far from the key colour still counts as screen (0.01-0.6)"),
-    blend: float = typer.Option(0.08, help="chroma: edge softness (0-0.5)"),
+    similarity: Optional[float] = typer.Option(None, help="chroma: how far from the key colour still counts as screen (0.01-0.6; default fitted to the key, at most 0.12)"),
+    blend: Optional[float] = typer.Option(None, help="chroma: edge softness (0-0.5; default fitted to the key, at most 0.08)"),
     spill: float = typer.Option(0.6, help="chroma: remove green/blue cast on the person's edges (0-1)"),
     shrink: int = typer.Option(1, help="chroma: pull the matte edge in by N px (0-4) to hide fringes"),
 ):
@@ -996,12 +996,15 @@ def bg_remove(
     if mode not in ("fast", "quality", "chroma"):
         raise VeditError("--mode must be fast, quality or chroma")
     d = pdir()
-    with edit(f"remove background ({mode}, {replace})") as tx:
+    with edit(f"remove background ({mode}, {replace or 'default'})") as tx:
         p = tx.project
+        if replace is None:
+            replace = f"color:{p.canvas.background}" if mode == "chroma" else "color:#00B140"
         if mode != "chroma":
             ids = _set_effect(p, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
         else:
-            base = chroma.clean({"key": key, "similarity": similarity, "blend": blend, "spill": spill, "shrink": shrink})
+            base = chroma.clean({"key": key, "spill": spill, "shrink": shrink,
+                                 **{k: v for k, v in (("similarity", similarity), ("blend", blend)) if v is not None}})
             ids, keys = [], {}
             for c in ([p.clip(clip)] if clip else p.clips):
                 if c.gap:
@@ -1010,8 +1013,9 @@ def bg_remove(
                 if k == "auto":
                     k = chroma.clip_key(d, p, c)
                 keys[c.id] = k
+                tol = chroma.fit_tolerance(k, base.get("similarity"), base.get("blend"))  # pale screens: keep whites solid
                 c.effects = [e for e in c.effects if e.type != "bg"]
-                c.effects.append(Effect(type="bg", params={**base, "mode": "chroma", "key": k, "replace": replace}))
+                c.effects.append(Effect(type="bg", params={**base, **tol, "mode": "chroma", "key": k, "replace": replace}))
                 ids.append(c.id)
     if mode == "chroma":
         emit({"clips": ids, "keys": keys},
@@ -1047,6 +1051,8 @@ def bg_tune(
                     upd = dict(vals)
                     if upd.get("key") == "auto":
                         upd["key"] = chroma.clip_key(d, p, c)
+                    if "key" in upd:
+                        upd.update(chroma.fit_tolerance(upd["key"], upd.get("similarity"), upd.get("blend")))
                     e.params.update(upd)
                     n += 1
         if not n:
