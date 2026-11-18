@@ -764,7 +764,7 @@ header #status.error { color: var(--danger); }
   <!-- 1. project / inspector -->
   <section class="pane" id="p-insp">
     <div class="pane-h">
-      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="overlays" title="Overlays: light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture">Overlays</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
+      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="elements" title="Elements: colour screens, light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture. Click to add at the playhead, or drag onto a track">Elements</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
     <div class="ai-lock slim" id="insp-lock" hidden><div class="ai-card"><span class="ai-orb"></span><span>AI is editing, so properties are locked</span></div></div>
@@ -914,6 +914,8 @@ const ICONS = {
   "skip-back": '<path d="M19 20 9 12l10-8z"/><path d="M5 19V5"/>',
   "chevron-left": '<path d="m15 18-6-6 6-6"/>',
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+  "chevron-up": '<path d="m18 15-6-6-6 6"/>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>',
   scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
@@ -1087,7 +1089,7 @@ function updatePreviewBusy() {
   const waiting = PV.waitUntil > Date.now();
   // an instant frame already shows the edit: the header pill says it's rendering, no card over the picture
   const quiet = FRAME.active && !PV.op;
-  const on = !quiet && (!!(ST && P().clips.length && (PV.op || rendering || waiting || PV.loading)) || !!PV.op);
+  const on = !quiet && (!!(hasTimeline() && (PV.op || rendering || waiting || PV.loading)) || !!PV.op);
   const box = $("#pv-busy");
   if (!on) {
     box.hidden = true; PV.t0 = 0; PV.label = null; clearInterval(PV.timer); PV.timer = null; return;
@@ -1280,8 +1282,8 @@ function drawVideoLayer(v, l, pr, box, cv, T) {
 function drawOverlays() {
   requestAnimationFrame(drawOverlays);
   const stage = $("#pv-layers");
-  const on = ST && (liveMode() || FRAME.active) && P().clips.length && video.style.display !== "none" && video.videoWidth;
-  const ready = ST && P().clips.length && video.style.display !== "none" && video.videoWidth;
+  const on = hasTimeline() && (liveMode() || FRAME.active) && video.style.display !== "none" && video.videoWidth;
+  const ready = hasTimeline() && video.style.display !== "none" && video.videoWidth;
   placePreviewTools(ready ? videoBox() : null);
   if (!on) { if (stage.style.display !== "none") { stage.style.display = "none"; stopLayerVideos(); } return; }
   const box = videoBox(), cv = P().canvas, D = dur();
@@ -1290,7 +1292,7 @@ function drawOverlays() {
   const want = Math.max(0.25, Math.min(1, Math.ceil(((box.width * (window.devicePixelRatio || 1)) / cv.width) * 4) / 4));
   if (want !== SPR_SCALE) SPR_SCALE = want;
   const T = PV_TIME.override ?? video.currentTime, seen = new Set();
-  P().layers.forEach((l, z) => {
+  P().layers.filter((l) => !underVideo(l)).forEach((l, z) => {
     seen.add(l.id);
     let v = LV.get(l.id);
     if (v && v.type !== l.type && (v.type === "video" || l.type === "video")) { v.el.remove(); v = null; }
@@ -1381,7 +1383,7 @@ function layerAtPoint(x, y) { // the top-most visible overlay under the pointer
   const ls = P().layers;
   for (let i = ls.length - 1; i >= 0; i--) {
     const l = ls[i];
-    if (l.type === "adjust") continue;
+    if (l.type === "adjust" || underVideo(l)) continue; // under the video: baked into it, picked through the clip
     const el = layerEl(l.id);
     if (!el) continue;
     const r = el.getBoundingClientRect();
@@ -1453,7 +1455,7 @@ requestAnimationFrame(drawOverlays);
 // While a slider is dragged the clip's unsaved values go with the request, so the drag itself is live.
 const FRAME = { active: false, busy: false, next: null, gen: 0, at: 0 };
 function requestFrame(clip = null) {
-  if (!ST || !P().clips.length) return;
+  if (!hasTimeline()) return;
   FRAME.next = { t: video.currentTime, clip: clip ? JSON.parse(JSON.stringify(clip)) : null, gen: ++FRAME.gen };
   if (!FRAME.busy) pumpFrame();
 }
@@ -1502,7 +1504,7 @@ function scrubClip(c) { if (c.type) return; requestFrame(c); refreshScopes(c); }
 // scopes follow the frame (and the dragged values): one request in flight, the newest wins
 const SCOPES = { on: false, busy: false, next: undefined, w: null, v: null };
 function refreshScopes(clip = null) {
-  if (!SCOPES.on || !ST || !P().clips.length) return;
+  if (!SCOPES.on || !hasTimeline()) return;
   SCOPES.next = { t: video.currentTime, clip: clip ? JSON.parse(JSON.stringify(clip)) : null };
   if (!SCOPES.busy) pumpScopes();
 }
@@ -1521,6 +1523,19 @@ async function pumpScopes() {
   if (SCOPES.next) pumpScopes();
 }
 video.addEventListener("seeked", () => refreshScopes());
+// equal tracks: the timeline has something to play (clips, or layers only), and layers under the video track
+// (track < main_z) are baked into the base video, so the live overlay stage leaves them out
+// run an add op, then select the layer it made (layers are sorted by track, so the new one isn't always last)
+async function addAndSelect(name, args) {
+  const had = new Set(P().layers.map((l) => l.id)), r = await op(name, args);
+  if (!r) return r;
+  toast(r.message);
+  const l = P().layers.find((x) => !had.has(x.id));
+  if (l) select({ kind: "layer", id: l.id });
+  return r;
+}
+function hasTimeline() { return !!(ST && (P().clips.length || P().layers.length)); }
+function underVideo(l) { return (l.track ?? 0) < (P().main_z || 0); }
 async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
 function layerLabel(l) {
   if (l.type === "text") return l.text || "";
@@ -1548,8 +1563,8 @@ async function refresh() {
   if (SEL && !selExists()) SEL = null;
   $("#proj-name").textContent = P().name; $("#proj-name").title = P().name;
   $("#canvas-info").textContent = `${P().canvas.width}×${P().canvas.height} · ${P().canvas.fps}fps · ${fmt(dur())}`;
-  $("#nomedia").style.display = P().clips.length ? "none" : "flex";
-  video.style.display = P().clips.length ? "" : "none";
+  $("#nomedia").style.display = hasTimeline() ? "none" : "flex";
+  video.style.display = hasTimeline() ? "" : "none";
   setStatus(ST.render);
   const editing = $("#insp-body").contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if (!editing) renderInspector();
@@ -1789,7 +1804,7 @@ function renderInspector() {
   if (TAB === "history") return body.append(renderHistory());
   if (TAB === "media") return body.append(...renderMedia());
   if (TAB === "effects") return body.append(...renderEffects());
-  if (TAB === "overlays") return body.append(...renderOverlays());
+  if (TAB === "elements") return body.append(...renderElements());
   if (!SEL) return body.append(...renderRoot());
   const p = P();
   body.append(propSearch());
@@ -1969,7 +1984,7 @@ function paletteItems() {
   for (const m of FX?.moves || []) items.push({ k: "Move", t: m.name.replace(/_/g, " "), d: m.about, run: () => moveApply(m) });
   for (const o of OVL || []) items.push({ k: "Overlay", t: o.label, d: o.about, s: o.tags.join(" "), run: () => overlayAdd({ op: "overlay_add", a: { key: o.key } }) });
   for (const [k, n, a] of SHAPES) items.push({ k: "Shape", t: n, d: a, run: () => overlayAdd({ op: "layer_add_shape", a: { shape: k } }) });
-  act("Open Overlays", "", () => { TAB = "overlays"; setTabs(); renderInspector(); });
+  act("Open Elements", "", () => { TAB = "elements"; setTabs(); renderInspector(); });
   if (c && P().clips.indexOf(c) > 0) for (const [v, l] of TRANSITION_OPTS) items.push({ k: "Transition", t: l, d: `into ${c.id}`, run: () => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 }) });
   if (SEL && TAB === "inspector") document.querySelectorAll("#insp-body .fields > label:not(.full)").forEach((lb) => {
     const t = lb.textContent.trim();
@@ -2009,7 +2024,9 @@ function openPalette() {
   draw(""); inp.focus();
 }
 
-// ---------- Overlays tab: the overlay library, shapes, and your own videos as picture-in-picture ----------
+// ---------- Elements tab: colour screens, the overlay library, shapes, adjustment layers, templates and your own
+// videos as picture-in-picture. Each card adds at the playhead on click, or drags onto a timeline track ("New track"
+// gives it a track of its own): the drag carries {op, a} as application/x-vedit-element, see setupTrackDrop ----------
 let OVL = null, OVL_Q = "", TPL = [];
 function loadTemplates() { return fetch("/api/templates").then((r) => r.json()).then((d) => { TPL = d.templates; }).catch(() => {}); }
 loadTemplates();
@@ -2019,21 +2036,36 @@ async function saveTemplate(l) {
   if (!name) return;
   const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, layers: ids }) });
   if (!r.ok) { let d = "Could not save"; try { d = (await r.json()).detail; } catch {} return toast(d, true); }
-  await loadTemplates(); toast(`Saved template “${name}” — find it in the Overlays tab`);
+  await loadTemplates(); toast(`Saved template “${name}” — find it in the Elements tab`);
 }
-fetch("/api/overlays").then((r) => r.json()).then((d) => { OVL = d.library; if (TAB === "overlays") renderInspector(); }).catch(() => {});
+fetch("/api/overlays").then((r) => r.json()).then((d) => { OVL = d.library; if (TAB === "elements") renderInspector(); }).catch(() => {});
 const SHAPES = [["rect", "Box", "Dark rounded box (behind a title)"], ["ellipse", "Ring", "Ring around a detail"], ["line", "Line", "Underline / divider"], ["arrow", "Arrow", "Point at something"]];
 function overlayAdd(args) { return op(args.op, { start: +video.currentTime.toFixed(3), ...args.a }).then((r) => r && toast(r.message)); }
-function renderOverlays() {
-  if (!OVL) return [h("div", { class: "empty" }, "Loading overlays…")];
+// full-canvas screens: plain shape rects (`full` = canvas size, square corners), recoloured in Properties
+const SCREENS = [
+  { n: "Colour screen", a: "Solid colour over the whole frame: a blank screen, a title card, a fade-to-colour", bg: "#111318", args: { shape: "rect", full: true, fill: "#000000" } },
+  { n: "White screen", a: "Solid white over the whole frame", bg: "#f2f2f2", args: { shape: "rect", full: true, fill: "#FFFFFF" } },
+  { n: "Gradient screen", a: "Two-colour gradient over the whole frame (colours and angle in Properties)", bg: "linear-gradient(180deg, #7C5CFF, #FF3B6B)",
+    args: { shape: "rect", full: true, fill_gradient: "#7C5CFF,#FF3B6B", gradient_angle: 90 } },
+];
+function renderElements() {
+  if (!OVL) return [h("div", { class: "empty" }, "Loading elements…")];
   const p = P(), grid = h("div");
   const match = (txt) => OVL_Q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => txt.toLowerCase().includes(w));
-  const card = (thumbStyle, name, about, onclick, badge, iconName) => h("button", { class: "fx-card", title: `${about}\nAdds at the playhead`, onclick },
+  // drag: {op, a} for an element (dropped on a track it lands there), or a media source id (PiP videos)
+  const card = (thumbStyle, name, about, onclick, badge, iconName, drag) => h("button", { class: "fx-card", title: `${about}\nClick: adds at the playhead${drag ? " · drag onto a track (or New track)" : ""}`, onclick,
+    draggable: !!drag, ondragstart: drag ? (e) => { e.dataTransfer.effectAllowed = "copy";
+      if (drag.source) e.dataTransfer.setData("application/x-vedit-source", drag.source);
+      else e.dataTransfer.setData("application/x-vedit-element", JSON.stringify(drag)); } : null },
     h("div", { class: "fx-th", style: thumbStyle }, iconName ? h("span", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" } }, icon(iconName)) : null,
       badge ? h("span", { class: "fx-badge", style: { background: "var(--pane3)", color: "var(--muted)" } }, badge) : null),
     h("div", { class: "fx-nm" }, name), h("div", { class: "fx-ab" }, about));
   const draw = () => {
     grid.innerHTML = "";
+    const screens = SCREENS.filter((x) => match(`${x.n} ${x.a} blank solid colour color background screen gradient`));
+    const addSelect = (args) => addAndSelect("layer_add_shape", { start: +video.currentTime.toFixed(3), ...args });
+    if (screens.length) grid.append(h("div", { class: "fx-cat" }, "Basics"), h("div", { class: "fx-grid" }, screens.map((x) =>
+      card({ background: x.bg }, x.n, x.a, () => addSelect(x.args), null, null, { op: "layer_add_shape", a: x.args }))));
     const lib = OVL.filter((o) => o.kind !== "shape" && match(`${o.label} ${o.about} ${o.tags.join(" ")} ${o.blend}`));
     if (lib.length) grid.append(h("div", { class: "fx-cat" }, "Library"), h("div", { class: "fx-grid" }, lib.map((o) =>
       // stickers and frames are shown whole (contain); textures fill the card (cover)
@@ -2064,7 +2096,7 @@ function renderOverlays() {
         () => overlayAdd({ op: "layer_add_video", a: { source: id } }), "PiP", null, { source: id })))
       : h("div", { class: "empty" }, "Import a video (Media tab or drop it here) to put it on top as picture-in-picture."));
   };
-  const search = h("input", { type: "search", id: "fx-q", value: OVL_Q, placeholder: "Search overlays…  (leak, dust, frame, arrow, retro…)",
+  const search = h("input", { type: "search", id: "fx-q", value: OVL_Q, placeholder: "Search elements…  (colour, leak, dust, frame, arrow, retro…)",
     oninput: (e) => { OVL_Q = e.target.value; draw(); } });
   draw();
   return [h("div", { class: "fx-search" }, search, h("div", { class: "fx-target" }, `Click to add at the playhead (${fmt(video.currentTime)}), or drag onto a track (New track = a track of its own). Select it afterwards to change colour, blend, frame, timing and animation.`)), grid];
@@ -2384,14 +2416,16 @@ function bgFields(c) {
   const curKind = cut < 0 ? rep : rep.slice(0, cut), val = cut < 0 ? "" : rep.slice(cut + 1);
   const kind = BG_KIND[c.id] || curKind;
   const media = Object.values(P().sources).map((s) => s.path);
-  const valIn = kind === "color" ? colorIn(curKind === "color" ? val : "#00B140", (v) => setBg({ replace: `color:${v}` }))
+  const valIn = kind === "none" ? h("span", { class: "hint" }, (P().main_z || 0) ? "tracks under the video show" : "move the video track up (▲) over a track to see it")
+    : kind === "color" ? colorIn(curKind === "color" ? val : "#00B140", (v) => setBg({ replace: `color:${v}` }))
     : kind === "blur" ? numIn(curKind === "blur" ? val || 25 : 25, (v) => setBg({ replace: `blur:${v}` }), 1, { min: 2, max: 80, title: "Blur strength" })
     : h("span", {}, textIn(curKind === kind ? val : "", (v) => { delete BG_KIND[c.id]; v && setBg({ replace: `${kind}:${v}` }); },
         { placeholder: `path to ${kind} file`, list: `bgmedia-${c.id}` }),
       h("datalist", { id: `bgmedia-${c.id}` }, media.map((m) => h("option", { value: m }))));
   rows.push(field("Replace with", h("div", { class: "pair" },
-    selectIn(kind, [["color", "Colour"], ["blur", "Blurred original"], ["image", "Image"], ["video", "Video"]], (v) => {
-      if (v === "color") { delete BG_KIND[c.id]; setBg({ replace: "color:#00B140" }); }
+    selectIn(kind, [["color", "Colour"], ["blur", "Blurred original"], ["image", "Image"], ["video", "Video"], ["none", "Nothing (tracks under the video)"]], (v) => {
+      if (v === "none") { delete BG_KIND[c.id]; setBg({ replace: "none" }); }
+      else if (v === "color") { delete BG_KIND[c.id]; setBg({ replace: "color:#00B140" }); }
       else if (v === "blur") { delete BG_KIND[c.id]; setBg({ replace: "blur:25" }); }
       else { BG_KIND[c.id] = v; renderInspector(); }
     }), valIn)));
@@ -2552,6 +2586,13 @@ function renderLayer(l) {
       numIn(l.height ?? "", (v) => set({ height: v }), 2, { title: "Height px (line / arrow: thickness)", placeholder: "auto" }))),
     field("Fill", h("div", { class: "pair" }, colorIn(l.fill || "#FFFFFF", (v) => set({ fill: v }), l.fill ? lf("fill") : null),
       h("button", { class: "ghost", onclick: () => set({ fill: l.fill ? "" : "#FFFFFF" }) }, l.fill ? "No fill" : "Fill"))),
+    field("Gradient", h("div", { class: "pair" },
+      colorIn(l.fill_gradient?.[0] || "#7C5CFF", (v) => set({ fill_gradient: `${v},${l.fill_gradient?.[1] || "#FF3B6B"}` })),
+      colorIn(l.fill_gradient?.[1] || "#FF3B6B", (v) => set({ fill_gradient: `${l.fill_gradient?.[0] || "#7C5CFF"},${v}` })),
+      h("button", { class: "ghost", onclick: () => set({ fill_gradient: l.fill_gradient ? "" : "#7C5CFF,#FF3B6B" }) }, l.fill_gradient ? "Off" : "On"))),
+    l.fill_gradient ? field("Angle", rangeIn(l.gradient_angle ?? 90, 0, 359, 1, (v) => set({ gradient_angle: v }), lf("gradient_angle"))) : null,
+    l.shape === "rect" ? field("Screen", h("button", { class: "ghost", title: "Cover the whole canvas (a colour / gradient screen)",
+      onclick: () => set({ width: P().canvas.width, height: P().canvas.height, x: "50%", y: "50%", radius: 0, rotation: 0, scale: 1 }) }, "Fill screen")) : null,
   ] : [
     l.type === "text" && TYPO ? field("Look", lookIn(l)) : null,
     field("Font", fontIn(s.font, st("font"), s.uppercase ? (l.text || "").toUpperCase() : l.text, lst("font"))),
@@ -3250,6 +3291,13 @@ function fxRows(lane, holder, hs, he, label) {
 function headButtons(head, { fx, eye, move }) {
   if (head.classList.contains("squash")) return;
   const box = h("span", { class: "hbtns" });
+  for (const [dir, ok, tip] of move ? [["up", move.up, "Move the video track up: tracks under it show where the video is transparent (gaps, bars, keyed green screen)"],
+    ["down", move.down, "Move the video track down, under more tracks"]] : []) {
+    if (!ok) continue;
+    const b = h("span", { class: "hbtn", title: tip }, icon(`chevron-${dir}`));
+    b.addEventListener("click", (e) => { e.stopPropagation(); move.go(dir); });
+    box.append(b);
+  }
   if (fx) {
     const b = h("span", { class: "hbtn pen" + (fx.open ? " on" : ""), title: fx.open ? "Hide the effect rows" :
       `Edit effects: show the ${fx.count} effect${fx.count > 1 ? "s" : ""} on this track as rows (drag to set when each applies, click one to change it)` },
@@ -3346,37 +3394,26 @@ function renderTimeline() {
     ruler.addEventListener("pointerup", () => ruler.removeEventListener("pointermove", mv), { once: true });
   });
 
-  // overlay tracks, CapCut-style, above the main video: the top row is drawn on top. Layers share a track when their
+  // tracks, CapCut-style: the top row is drawn on top. Equal tracks: the video track (the clips) sits among them at
+  // height main_z (tracks under it show through its gaps, bars and keyed backgrounds). Layers share a track when their
   // times don't overlap; drag a block up / down to put it above or below others, or onto "New track"
   const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
     video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"] };
-  const nTracks = p.layers.length ? Math.max(...p.layers.map((l) => l.track ?? 0)) + 1 : 0;
-  const trackLanes = [];
+  const rowLayers = p.layers.filter((l) => !l.on_video); // the video track's own elements are drawn in its lane
+  const nTracks = rowLayers.length ? Math.max(...rowLayers.map((l) => l.track ?? 0)) + 1 : 0;
+  const trackLanes = [], MZ = Math.min(p.main_z || 0, nTracks);
   TL = { tracks: trackLanes, main: null };
   const nl = lane("newtrack" + sq(false), LANES.newtrack, "plus", "New track", "", "transparent");
-  nl.append(h("div", { class: "nt-hint" }, p.layers.length ? "Drag a layer or media here for a new top track" : "Drop video or images here to overlay them"));
+  nl.append(h("div", { class: "nt-hint" }, p.layers.length ? "Drag a layer, element or media here for a new top track" : "Drop an element, video or image here to put it on its own track"));
   trackLanes.push({ el: nl, track: nTracks, isNew: true });
   setupTrackDrop(nl, nTracks, true);
-  for (let t = nTracks - 1; t >= 0; t--) {
-    const ls = p.layers.filter((l) => (l.track ?? 0) === t);
-    const types = [...new Set(ls.map((l) => l.type))];
-    const meta = types.length === 1 ? TYPE_META[types[0]] : ["layers", "Overlay", "var(--muted)"];
-    const el = lane("track" + sq(ls.some((l) => FX_OPEN.has(l.id))), ls.some((l) => l.type === "video") ? LANES.vlayer : LANES.layer, meta[0], meta[1], "", meta[2]);
-    heads.lastElementChild.title = `Track ${t + 1} of ${nTracks}` + (t === nTracks - 1 ? " (top: drawn over everything)" : "") +
-      (t === 0 ? " (lowest overlay track, just above the main video)" : "") + "\nHigher tracks are drawn on top of lower ones. Drag a block up or down to change that.";
-    trackLanes.push({ el, track: t, isNew: false });
-    {
-      const vids = ls.filter((l) => l.type === "video"), nfx = vids.reduce((n, l) => n + fxList(l).length, 0), visible = !ls.every((l) => l.hidden);
-      headButtons(heads.lastElementChild, {
-        fx: nfx ? { count: nfx, open: vids.some((l) => FX_OPEN.has(l.id)), toggle: () => toggleFxOpen(vids) } : null,
-        eye: { visible, toggle: () => op("track_visible", { track: t, visible: !visible }) } });
-      if (!visible) el.classList.add("hidden-t");
-    }
-    for (const l of ls) {
+  // a layer's block: drag = move in time / to another track (the video track's middle: onto it), edges = trim.
+  // `t` = its track number, or "video" for an element on the video track itself
+  const layerBlock = (l, t) => {
       const s = l.start, e = layerEnd(l), m = TYPE_META[l.type];
       const vid = l.type === "video" && p.sources[l.source]?.has_video;
       const b = h("div", { class: `blk ${l.type}` + (vid ? " vthumb" : "") + (SEL?.id === l.id ? " sel" : "") + (MULTI.has(l.id) ? " multi" : ""), "data-id": l.id,
-        title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}\nDrag to move (up / down = above / below other layers) · drag the edges to trim`,
+        title: `${l.id} · ${fmt(s)}–${fmt(e)} · ${layerLabel(l)}` + (l.on_video ? " · on the video track" : "") + `\nDrag to move (up / down = above / below other layers, onto the Video lane = on the video track) · drag the edges to trim`,
         style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px`, ...(vid ? { backgroundImage: `url(${srcThumb(l.source)})` } : {}) } },
         h("div", { class: "hd l" }), h("div", { class: "hd r" }),
         l.keyframes.map((k) => h("span", { class: "kf", title: `keyframe at ${fmt(s + k.t)}`, style: { left: `${k.t * PPS}px` } })),
@@ -3396,39 +3433,61 @@ function renderTimeline() {
           const args = { layer: l.id, start: +ns.toFixed(3) };
           if (mode !== "l" || l.end != null) args.end = +ne.toFixed(3);
           if (src && mode === "l") args.src_in = +Math.max(0, l.src_in + (ns - s)).toFixed(3);
-          if (tgt?.main) return op("overlay_to_clip", { layer: l.id, index: tgt.index });
-          if (tgt) { args.track = tgt.track; if (tgt.isNew) args.new_track = true; }
+          // onto the video track: a video becomes a clip there; anything else sits on it (in a gap / past the clips)
+          if (tgt?.main) return src && !l.on_video ? op("overlay_to_clip", { layer: l.id, start: +ns.toFixed(3) }) : op("layer_place", { ...args, video_track: true });
+          if (tgt) { args.track = tgt.track; if (tgt.isNew) args.new_track = true; if (tgt.under) args.under_video = true; }
+          else if (l.on_video) args.video_track = true; // trimmed / moved along the video track
           return op("layer_place", args);
         } }));
-      el.append(b);
+      return b;
+  };
+  const trackRow = (t) => {
+    const ls = rowLayers.filter((l) => (l.track ?? 0) === t);
+    const types = [...new Set(ls.map((l) => l.type))];
+    const meta = types.length === 1 ? TYPE_META[types[0]] : ["layers", "Overlay", "var(--muted)"];
+    const el = lane("track" + sq(ls.some((l) => FX_OPEN.has(l.id))), ls.some((l) => l.type === "video") ? LANES.vlayer : LANES.layer, meta[0], meta[1], "", meta[2]);
+    heads.lastElementChild.title = `Track ${t + 1} of ${nTracks}` + (t === nTracks - 1 && MZ < nTracks ? " (top: drawn over everything)" : "") +
+      (t < MZ ? " (under the video: shows where the video is transparent)" : "") + "\nHigher tracks are drawn on top of lower ones. Drag a block up or down to change that.";
+    trackLanes.push({ el, track: t, isNew: false });
+    {
+      const vids = ls.filter((l) => l.type === "video"), nfx = vids.reduce((n, l) => n + fxList(l).length, 0), visible = !ls.every((l) => l.hidden);
+      headButtons(heads.lastElementChild, {
+        fx: nfx ? { count: nfx, open: vids.some((l) => FX_OPEN.has(l.id)), toggle: () => toggleFxOpen(vids) } : null,
+        eye: { visible, toggle: () => op("track_visible", { track: t, visible: !visible }) } });
+      if (!visible) el.classList.add("hidden-t");
     }
+    for (const l of ls) el.append(layerBlock(l, t));
     el.addEventListener("pointerdown", (ev) => { if (ev.target === el) { seek(timeAt(ev.clientX)); select(null); } });
     setupTrackDrop(el, t, false);
     for (const l of ls) if (l.type === "video") fxRows(lane, l, l.start, layerEnd(l), l.id);
   };
 
-  // video clips
+  // video clips: the video track, at its height among the tracks
+  const videoRow = () => {
   const vl = lane("clips main" + sq(p.clips.some((c) => FX_OPEN.has(c.id))), LANES.clips, "film", "Video", "", "var(--clip-b)");
   TL.main = vl;
+  trackLanes.push({ el: vl, video: true });
+  heads.lastElementChild.title = `Video track: the clips, ${MZ ? `over ${MZ} track(s)` : "at the bottom"}.\nUse the arrows to move it up / down among the tracks; tracks under it show through gaps, letterbox bars and a keyed green screen.`;
   {
     const nfx = p.clips.reduce((n, c) => n + fxList(c).length, 0);
     headButtons(heads.lastElementChild, {
       fx: nfx ? { count: nfx, open: p.clips.some((c) => FX_OPEN.has(c.id)), toggle: () => toggleFxOpen(p.clips) } : null,
-      eye: { visible: !p.main_hidden, title: p.main_hidden ? "Show the main video track" : "Hide the main video track (its picture becomes the background; sound still plays)",
+      move: nTracks ? { up: MZ < nTracks, down: MZ > 0, go: (to) => op("track_video", { to }) } : null,
+      eye: { visible: !p.main_hidden, title: p.main_hidden ? "Show the video track" : "Hide the video track (sound still plays)",
         toggle: () => op("track_visible", { track: "main", visible: !!p.main_hidden }) } });
     if (p.main_hidden) vl.classList.add("hidden-t");
   }
   p.clips.forEach((c, i) => {
     const s = ST.starts[i], d = clipDur(c);
-    if (c.gap) { // empty space on the main track: shows the background colour. Trim its edges, or select + Delete to close it
-      const g = h("div", { class: "blk clip gap" + (SEL?.id === c.id ? " sel" : ""), "data-id": c.id, title: `Gap · ${fmt(s)}–${fmt(s + d)} (background colour)\nDrag its edges to resize · select it and press Delete to close it`,
+    if (c.gap) { // empty space on the video track: the tracks under it (or the background colour) show. Trim its edges, or select + Delete to close it
+      const g = h("div", { class: "blk clip gap" + (SEL?.id === c.id ? " sel" : ""), "data-id": c.id, title: `Gap · ${fmt(s)}–${fmt(s + d)} (tracks under the video, or the background colour)\nDrag its edges to resize · select it and press Delete to close it`,
         style: { left: `${s * PPS}px`, width: `${Math.max(6, d * PPS - 2)}px` } },
         h("div", { class: "hd l" }), h("div", { class: "hd r" }), h("div", { class: "bl" }, h("span", { class: "nm" }, d * PPS > 50 ? "Gap" : "")));
       g.addEventListener("pointerdown", (e) => clipPointer(e, g, c, i));
       vl.append(g);
       return;
     }
-    const b = h("div", { class: "blk clip" + (SEL?.id === c.id ? " sel" : "") + (MULTI.has(c.id) ? " multi" : ""), "data-id": c.id, title: `${c.id} · ${fmt(s)}–${fmt(s + d)}\nDrag to move in time (it stays where you drop it) · drag up to make it an overlay · drag the edges to trim`,
+    const b = h("div", { class: "blk clip" + (SEL?.id === c.id ? " sel" : "") + (MULTI.has(c.id) ? " multi" : ""), "data-id": c.id, title: `${c.id} · ${fmt(s)}–${fmt(s + d)}\nDrag to move in time (it stays where you drop it) · drag up or down onto another track to make it an element there · drag the edges to trim`,
       style: { left: `${s * PPS}px`, width: `${Math.max(6, d * PPS - 2)}px`, backgroundImage: `url(${srcThumb(c.source)})` } },
       h("div", { class: "hd l" }), h("div", { class: "hd r" }),
       h("div", { class: "bl" }, h("span", { class: "nm" }, sourceName(p.sources[c.source])),
@@ -3445,10 +3504,17 @@ function renderTimeline() {
     m.addEventListener("pointerdown", (e) => { e.stopPropagation(); select({ kind: "clip", id: c.id }); });
     vl.append(m);
   });
+  for (const l of p.layers) if (l.on_video) vl.append(layerBlock(l, "video")); // elements on the video track itself
   vl.append(h("div", { id: "insmark", style: { height: `${LANES.clips}px` } }));
   p.clips.forEach((c, i) => fxRows(lane, c, ST.starts[i], ST.starts[i] + clipDur(c), c.id));
   vl.addEventListener("pointerdown", (e) => { if (e.target === vl) { seek(timeAt(e.clientX)); select(null); } });
   setupDrop(vl);
+  if (!p.clips.length) vl.append(h("div", { id: "tl-empty" }, p.layers.length ? "Video track: drop video here" : "Drop video here or drag from Media",
+    h("button", { class: "ghost", onclick: () => $("#file").click() }, icon("upload"), "Import")));
+  };
+  for (let t = nTracks - 1; t >= MZ; t--) trackRow(t);
+  videoRow();
+  for (let t = MZ - 1; t >= 0; t--) trackRow(t);
 
   // audio waveform
   const wl = lane("wave" + sq(false), LANES.wave, "wave", "Audio", "", "var(--muted)");
@@ -3503,12 +3569,15 @@ function clipPointer(e, b, c, idx) {
     moved = true; b.classList.add("drag");
     const dt = dx / PPS;
     if (mode === "move" && c.gap) return; // gaps only resize
-    if (mode === "move" && TL.main && ev.clientY < TL.main.getBoundingClientRect().top) {
-      // above the main track: it will become an overlay (its own track) at the dropped time
-      up = trackTarget(ev.clientY, ev.clientX) || { track: 0, isNew: true };
+    const vr = TL.main?.getBoundingClientRect();
+    if (mode === "move" && vr && (ev.clientY < vr.top || ev.clientY >= vr.bottom)) {
+      // off the video track, up or down: it becomes a video element on that track at the dropped time
+      const z = P().main_z || 0;
+      up = trackTarget(ev.clientY, ev.clientX);
+      if (!up || up.main) up = ev.clientY < vr.top ? { track: z, isNew: true } : { track: z, isNew: true, under: true };
       ns = Math.max(0, snap(s0 + dt, c.id));
       b.style.transform = `translate(${(ns - s0) * PPS}px, ${ev.clientY - y0}px)`;
-      showTarget(up); b.title = `${fmt(ns)} · as an overlay` + (up.isNew ? " on a new track" : ` on track T${up.track + 1}`);
+      showTarget(up); b.title = `${fmt(ns)} · as an element` + (up.isNew ? " on a new track" : ` on track T${up.track + 1}`) + (up.under || up.track < z ? " (under the video)" : "");
       return;
     }
     if (up) { up = null; showTarget(null); }
@@ -3538,7 +3607,7 @@ function clipPointer(e, b, c, idx) {
     b.removeEventListener("pointermove", onMove);
     mark.style.display = "none"; showTarget(null);
     if (!moved) { select({ kind: "clip", id: c.id }); return; }
-    if (up) return op("clip_to_overlay", { clip: c.id, start: +ns.toFixed(3), track: up.track, new_track: up.isNew });
+    if (up) return op("clip_to_overlay", { clip: c.id, start: +ns.toFixed(3), track: up.track, new_track: up.isNew, under_video: !!up.under });
     if (mode === "move") { if (Math.abs(ns - s0) > 1e-3) await op("clip_place", { clip: c.id, start: +ns.toFixed(3) }); else renderTimeline(); }
     else await op("retime_clip", { clip: c.id, in: +nin.toFixed(3), out: +nout.toFixed(3) });
   };
@@ -3546,15 +3615,13 @@ function clipPointer(e, b, c, idx) {
   b.addEventListener("pointerup", onUp, { once: true });
 }
 
-// Where a drag over the overlay tracks lands. The middle of a track = that track; its top / bottom edge (or the gap
-// between two tracks) = a new track there, above / below it, so the dragged thing gets its own row like in CapCut.
-// With `main`, a pointer over the main video track means "insert as a clip" there.
+// Where a drag over the tracks lands. The middle of a track = that track; its top / bottom edge (or the gap between two
+// tracks) = a new track there, above / below it, so the dragged thing gets its own row like in CapCut. The video track
+// sits among them: its edges open a new track right over / under the video (`under`); with `main` (a video layer),
+// its middle means "onto the video track as a clip" at the dropped time.
 let TL = { tracks: [], main: null };
 function trackTarget(y, x, main = false) {
-  if (main && TL.main) {
-    const r = TL.main.getBoundingClientRect();
-    if (y >= r.top && y < r.bottom) return { main: true, index: dropIndex(x), el: TL.main };
-  }
+  const z = P().main_z || 0;
   for (const L of TL.tracks) {
     const r = L.el.getBoundingClientRect();
     if (L.isNew) { if (y < r.bottom) return { track: L.track, isNew: true, el: L.el }; continue; }
@@ -3618,7 +3685,7 @@ function dragSpan(e, b, o) {
     }
     if (mode === "l" && o.maxLen) ns = Math.max(ns, ne - o.maxLen(ns, "l")); // keep inside the file
     b.style.left = `${ns * PPS}px`; b.style.width = `${Math.max(6, (ne - ns) * PPS)}px`;
-    b.title = `${fmt(ns)} – ${fmt(ne)}` + (tgt ? (tgt.main ? " · onto the main track" : tgt.isNew ? " · new track here" : ` · track T${tgt.track + 1}`) : "");
+    b.title = `${fmt(ns)} – ${fmt(ne)}` + (tgt ? (tgt.main ? " · onto the video track" : tgt.isNew ? " · new track here" : ` · track T${tgt.track + 1}`) : "");
   };
   const onUp = async () => {
     b.removeEventListener("pointermove", onMove); clear();
@@ -3633,14 +3700,20 @@ function dragSpan(e, b, o) {
 
 // media dropped on an overlay track (from the Media bin or the OS): picture-in-picture / b-roll / image on that track
 function setupTrackDrop(el, track, isNew) {
-  const ok = (e) => e.dataTransfer.types.includes("application/x-vedit-source") || e.dataTransfer.types.includes("Files");
+  const ok = (e) => e.dataTransfer.types.includes("application/x-vedit-source") || e.dataTransfer.types.includes("application/x-vedit-element") || e.dataTransfer.types.includes("Files");
   const where = (e) => trackTarget(e.clientY, e.clientX) || { track, isNew };
   el.addEventListener("dragover", (e) => { if (!ok(e)) return; e.preventDefault(); e.stopPropagation(); showTarget({ el, ...where(e) }); e.dataTransfer.dropEffect = "copy"; });
   el.addEventListener("dragleave", () => showTarget(null));
   el.addEventListener("drop", async (e) => {
     if (!ok(e)) return;
     e.preventDefault(); e.stopPropagation(); showTarget(null); $("#dropveil").style.display = "none";
-    const t0 = timeAt(e.clientX), w = where(e), start = +(t0 * PPS < 24 ? 0 : snap(t0)).toFixed(3), place = { track: w.track, ...(w.isNew ? { new_track: true } : {}) };
+    const t0 = timeAt(e.clientX), w = where(e), start = +(t0 * PPS < 24 ? 0 : snap(t0)).toFixed(3),
+      place = { track: w.track, ...(w.isNew ? { new_track: true } : {}), ...(w.under ? { under_video: true } : {}) };
+    const elt = e.dataTransfer.getData("application/x-vedit-element");
+    if (elt) { // an element from the Elements tab
+      const d = JSON.parse(elt);
+      return addAndSelect(d.op, { ...d.a, start, ...place });
+    }
     const sid = e.dataTransfer.getData("application/x-vedit-source");
     if (sid) {
       const s = P().sources[sid];
@@ -3664,8 +3737,11 @@ function dropIndex(clientX) {
   return P().clips.filter((c, i) => ST.starts[i] + clipDur(c) / 2 < t).length;
 }
 function setupDrop(vl) {
+  const isElt = (e) => e.dataTransfer.types.includes("application/x-vedit-element");
   vl.addEventListener("dragover", (e) => {
-    e.preventDefault(); e.stopPropagation(); vl.classList.add("drop");
+    e.preventDefault(); e.stopPropagation();
+    if (isElt(e)) { showTarget(trackTarget(e.clientY, e.clientX, true)); e.dataTransfer.dropEffect = "copy"; return; } // on / over / under the video
+    vl.classList.add("drop");
     if (e.dataTransfer.types.includes("application/x-vedit-fx") || e.dataTransfer.types.includes("application/x-vedit-move")) { e.dataTransfer.dropEffect = "copy"; return; }
     const i = dropIndex(e.clientX), mark = $("#insmark");
     mark.style.display = "block"; mark.style.left = `${(i < P().clips.length ? ST.starts[i] : dur()) * PPS}px`;
@@ -3673,6 +3749,13 @@ function setupDrop(vl) {
   vl.addEventListener("dragleave", () => { vl.classList.remove("drop"); $("#insmark").style.display = "none"; showTarget(null); });
   vl.addEventListener("drop", async (e) => {
     e.preventDefault(); e.stopPropagation(); vl.classList.remove("drop"); $("#insmark").style.display = "none"; $("#dropveil").style.display = "none";
+    if (isElt(e)) {
+      const w = trackTarget(e.clientY, e.clientX, true); showTarget(null);
+      const t0 = timeAt(e.clientX), d = JSON.parse(e.dataTransfer.getData("application/x-vedit-element"));
+      const start = +(t0 * PPS < 24 ? 0 : snap(t0)).toFixed(3);
+      if (w?.main) return addAndSelect(d.op, { ...d.a, start, video_track: true }); // on the video track itself
+      return addAndSelect(d.op, { ...d.a, start, track: w?.track ?? (P().main_z || 0), new_track: true, under_video: !!w?.under });
+    }
     const fxKey = e.dataTransfer.getData("application/x-vedit-fx"), mv = e.dataTransfer.getData("application/x-vedit-move");
     if (fxKey || mv) { // an effect dropped on a clip
       const t = timeAt(e.clientX), i = P().clips.findIndex((c, k) => ST.starts[k] <= t && t < ST.starts[k] + clipDur(c));
@@ -4338,11 +4421,11 @@ es.onmessage = async (m) => {
     if (d.version === lastVideoVersion && FRAME.active && !FRAME.busy && !FRAME.next && !DRAGGING) dropFrame();
   }
   updateModeBtn();
-  if (d.status === "idle" && !d.error && d.version !== lastVideoVersion && P().clips.length) { lastVideoVersion = d.version; reloadVideo(); }
+  if (d.status === "idle" && !d.error && d.version !== lastVideoVersion && hasTimeline()) { lastVideoVersion = d.version; reloadVideo(); }
 };
 es.onerror = () => { const s = $("#status"); s.className = "pill error"; s.textContent = "Disconnected"; };
 
-refresh().then(() => { if (P().clips.length) reloadVideo(); });
+refresh().then(() => { if (hasTimeline()) reloadVideo(); });
 connectChat();
 checkAI();
 </script>
