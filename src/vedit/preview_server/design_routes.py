@@ -37,7 +37,14 @@ def mount(app: FastAPI, host, bad) -> None:
             return HTTPException(503, f"No AI model is available: connect one in Settings → Providers ({e})")
         return HTTPException(502, str(e))
 
+    def gate() -> None:
+        from .. import features
+
+        if not features.design_enabled():
+            raise HTTPException(403, features.DESIGN_MSG)
+
     async def run_ai(fn, *a):
+        gate()
         try:
             return await asyncio.to_thread(fn, *a)
         except VeditError as e:
@@ -56,6 +63,7 @@ def mount(app: FastAPI, host, bad) -> None:
         from ..ops import scenes
         from ..project import Project, save
 
+        gate()
         fmt = body.get("format") or "reels"
         if fmt not in scenes.FORMATS:
             raise HTTPException(400, f"format must be one of {', '.join(scenes.FORMATS)}")
@@ -91,6 +99,7 @@ def mount(app: FastAPI, host, bad) -> None:
 
     @app.post("/api/design/storyboard/apply")
     async def design_storyboard_apply(body: dict) -> dict:
+        gate()
         try:
             return studio_ai.apply_storyboard(host.need(), list(body.get("scenes") or []), body.get("mode") or "replace")
         except VeditError as e:

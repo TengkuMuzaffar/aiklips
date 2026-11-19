@@ -5,6 +5,11 @@ description: Design projects (the Design studio) - motion-design videos made of 
 
 # Motion design (Design studio)
 
+> **The Design studio is in development and switched off** (`design new` / `design build` refuse unless
+> `AIKLIPS_DESIGN=1`). Until it's back, make motion graphics in a normal project: the style and the building blocks
+> below (style, motion, counter, chart, shapes, text, keyframes) all work there. Scene / MotionPlan sections apply
+> only when the studio is on.
+
 There is no video generator. Everything on screen is a shape, text, the user's image / clip or a piece cut from
 their sheet. The motion comes from animating those layers: presets (enter / during / exit) and keyframes.
 

@@ -2610,9 +2610,10 @@ def design_new(
     background: Optional[str] = typer.Option(None, help="Canvas colour, e.g. #101014"),
 ):
     """Start a blank design (one scene) and make it the active project. Open it in the Design studio."""
-    from . import library
+    from . import features, library
     from .ops import scenes
 
+    features.require_design()
     d = folder.expanduser().resolve()
     if (d / PROJECT_FILE).exists():
         raise VeditError(f"{d} already has a project.json")
@@ -2719,9 +2720,11 @@ def design_build(
     """Build a whole motion-graphics video from one plan, in one step per scene (undoable). Rebuilds the project's
     timeline: its layers, clips and music are replaced by the plan's. A video edit is never rebuilt by accident:
     give --new DIR for a separate design project (or --replace when the user asked to turn this one into a design)."""
+    from . import features
     from .design import builder
     from .generate.executor import create_project
 
+    features.require_design()
     plan, raw_files = builder.load_plan_file(plan_file)
     files = builder.files_from_json(raw_files)
     if new:

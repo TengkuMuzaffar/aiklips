@@ -167,7 +167,10 @@ gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|direct
 - To keep the AI improving one generated video that's below the pass mark (and not edited by hand):
   `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.
 
-**Design: motion-design videos (the Design studio):**
+**Design: motion-design videos (the Design studio) - IN DEVELOPMENT, switched off for users:** `design new` /
+`design build` and the studio refuse unless `AIKLIPS_DESIGN=1`. For any motion-graphics request, build it in a normal
+project with the motion commands below (`vedit init`, `style set`, `motion`, `counter`, `chart`, shapes, text);
+tell the user the Design studio is coming later. The notes below describe it for when it is switched on.
 - **Never turn a video edit into a design.** `design build` replaces a project's clips, layers and music, so on a
   video-edit project use `--new projects/<name>` (a separate design); it refuses otherwise. "Make it for social media"
   on a video edit is an edit task (platform, safe zone, text, captions), not a design.

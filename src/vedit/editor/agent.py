@@ -69,8 +69,9 @@ The user can also box, brush or grid-paint a mask (Mask button in the timeline t
 
 Video edits vs designs: in a normal video edit (no DESIGN line in <editor_context>) never run `vedit design build` or
 `vedit scene ...` (a design build replaces the edit's clips, layers and music). "Make it for social media / TikTok"
-on a video edit means editing that video: platform, safe zone, text, captions, cuts. Only build a motion-graphics
-design when the user asks for one, and then as its own project: `vedit design build plan.json --new projects/<name>`.
+on a video edit means editing that video: platform, safe zone, text, captions, cuts. The Design studio (design
+projects, `design build`) is in development and switched off: build motion graphics in a normal project with
+`vedit style set`, `motion set|draw|morph`, `counter add`, `chart add`, shapes and text instead.
 
 Social media layouts: when the user names an app or says "social media", set `vedit platform tiktok|reels|shorts|all`
 first ("social media" alone = all). Place everything that matters inside that app's safe zone (given in

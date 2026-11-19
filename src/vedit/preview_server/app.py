@@ -230,6 +230,18 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         return HTTPException(400, str(e))
 
     # ---- pages -----------------------------------------------------------------
+    IN_DEVELOPMENT = HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Design · in development</title><style>body{margin:0;height:100vh;display:grid;place-items:center;"
+        "background:#0b0d10;color:#e8eaed;font:15px/1.5 system-ui,sans-serif}main{max-width:440px;padding:24px;text-align:center}"
+        "b{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#c5f467;border:1px solid #2f4a1f;"
+        "border-radius:999px;padding:2px 10px;margin-bottom:14px}h1{font-size:22px;margin:0 0 8px}p{color:#9aa3ad;margin:0 0 18px}"
+        "a{color:#0b0d10;background:#c5f467;border-radius:8px;padding:8px 14px;text-decoration:none;font-weight:600;margin:0 4px}"
+        "a.g{background:none;color:#e8eaed;border:1px solid #333}</style><main><b>In development</b><h1>The Design studio "
+        "isn't available yet</h1><p>We're still working on it. Motion graphics (kinetic titles, counters, charts, lines "
+        "that draw themselves) are in the editor: Elements, then Motion.</p><a href=\"/\">Home</a>"
+        '<a class="g" href="/editor?view=timeline">Open in the editor</a></main>')
+
     def page(name: str) -> str:
         html = (STATIC / name).read_text(encoding="utf-8")
         return html.replace("</body>", DEV_SCRIPT + "</body>", 1) if dev else html
@@ -252,12 +264,20 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
     def editor(view: str | None = None):
         if host.pdir is None:
             return RedirectResponse("/")
-        if _is_design() and view != "timeline":  # designs open in the Design studio (?view=timeline: the editor anyway)
+        from .. import features
+
+        # designs open in the Design studio (?view=timeline: the editor anyway); while the studio is switched off
+        # (features.design_enabled) they open here, on the timeline
+        if features.design_enabled() and _is_design() and view != "timeline":
             return RedirectResponse("/studio")
         return page("index.html")
 
     @app.get("/studio", response_class=HTMLResponse)
     def studio():
+        from .. import features
+
+        if not features.design_enabled():
+            return IN_DEVELOPMENT
         if host.pdir is None:
             return RedirectResponse("/")
         if not _is_design():
@@ -296,10 +316,10 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
     @app.get("/api/app")
     def api_app() -> dict:
-        from .. import __version__, updater, whats_new
+        from .. import __version__, features, updater, whats_new
 
         ui = _ui()
-        return {"version": __version__, "installed": updater.enabled(), "onboarded": bool(ui.get("onboarded")),
+        return {"version": __version__, "features": {"design": features.design_enabled()}, "installed": updater.enabled(), "onboarded": bool(ui.get("onboarded")),
                 "seen_version": ui.get("seen_version"), "whats_new": whats_new.since(ui.get("seen_version")),
                 "all_notes": whats_new.NOTES, "prefs": ui.get("prefs", {}), "projects_root": str(library.projects_root())}
 

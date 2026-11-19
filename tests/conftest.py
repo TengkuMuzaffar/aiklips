@@ -21,6 +21,7 @@ def pytest_configure(config):
     root = Path(tempfile.mkdtemp(prefix="vedit-tests-"))
     os.environ["VEDIT_HOME"] = str(root / "home")
     os.environ["VEDIT_PROJECTS_DIR"] = str(root / "projects")
+    os.environ["AIKLIPS_DESIGN"] = "1"  # the Design studio is switched off for users (features.py), tested on
 
 
 @pytest.fixture(autouse=True)

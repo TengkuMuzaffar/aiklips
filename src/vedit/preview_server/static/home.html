@@ -86,6 +86,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
 .tab .n { color: var(--faint); font-weight: 500; margin-left: 4px; font-size: 12px; }
 .beta { display: inline-block; font-size: 9.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; line-height: 1; padding: 3px 5px 2px; border-radius: 5px; color: var(--accent); border: 1px solid #4a6a26; background: #1c2a1499; vertical-align: middle; margin-left: 6px; }
 .side .tab .beta { margin-left: 0; }
+.beta.dev { color: #f5b74a; border-color: #6a4f1f; background: #2a20109c; }
+.start.off { opacity: .6; }
 h1 .beta { font-size: 10px; position: relative; top: -2px; }
 .pick.styles { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
 .stylecard .pn { text-transform: capitalize; padding-top: 12px; }
@@ -529,7 +531,7 @@ body.selecting .card .thumb .hov { display: none; }
     <div class="side-sec">AI studio</div>
     <button class="tab" role="tab" data-tab="references" data-ic="film" title="Videos the AI studies for style (2)">References<span class="beta">Beta</span><span class="n" id="n-refs"></span></button>
     <button class="tab" role="tab" data-tab="generate" data-ic="wand" title="Generate videos in a reference style (3)">Generate<span class="beta">Beta</span><span class="n" id="n-gen"></span></button>
-    <button class="tab" role="tab" data-tab="design" data-ic="spark" title="Motion-design videos: shapes, text and media you animate, with AI help (4)">Design<span class="n" id="n-des"></span></button>
+    <button class="tab" role="tab" data-tab="design" data-ic="spark" title="Motion-design videos: in development (4)">Design<span class="beta dev" id="des-dev">Soon</span><span class="n" id="n-des"></span></button>
   </nav>
   <div class="spacer"></div>
   <a class="side-update" id="b-update" href="/settings#updates" hidden title="A new version of aiklips is ready"></a>
@@ -786,8 +788,10 @@ function renderStarts() {
       h("span", { class: "s-ic" }, I("upload", 19)), h("b", {}, "Import video"), h("span", { class: "sub" }, "Or drop files anywhere on this page")),
     h("button", { class: "start", onclick: () => setTab("generate"), style: { "--d": "120ms" } },
       h("span", { class: "s-ic" }, I("wand", 19)), h("b", {}, "Generate", h("span", { class: "beta" }, "Beta")), h("span", { class: "sub" }, "Several videos in a style you like")),
-    h("button", { class: "start", onclick: () => openNewDesign(), style: { "--d": "150ms" } },
-      h("span", { class: "s-ic" }, I("spark", 19)), h("b", {}, "Design"), h("span", { class: "sub" }, "Animate shapes & text, with AI")),
+    h("button", { class: "start" + (designOn() ? "" : " off"), onclick: () => openNewDesign(), style: { "--d": "150ms" },
+      title: designOn() ? "" : "The Design studio is in development" },
+      h("span", { class: "s-ic" }, I("spark", 19)), h("b", {}, "Design", designOn() ? null : h("span", { class: "beta dev" }, "In development")),
+      h("span", { class: "sub" }, designOn() ? "Animate shapes & text, with AI" : "Coming later; motion graphics are in the editor")),
     h("button", { class: "start", onclick: () => $("#b-add").click(), style: { "--d": "180ms" } },
       h("span", { class: "s-ic" }, I("folder", 19)), h("b", {}, "Open folder"), h("span", { class: "sub" }, "Add a project from disk")));
 }
@@ -1870,8 +1874,24 @@ async function loadDesigns() {
   $("#n-des").textContent = DESIGNS.length ? String(DESIGNS.length) : "";
   if (TAB === "design") renderDesigns();
 }
+// the Design studio is switched off for now (features.py; /api/app features.design)
+const designOn = () => !!(AK.app && AK.app.features && AK.app.features.design);
+function designSoon() {
+  const m = AK.modal(h("div", { style: { maxWidth: "420px" } }, h("span", { class: "beta dev" }, "In development"),
+    h("h2", { style: { margin: "10px 0 6px" } }, "The Design studio isn't available yet"),
+    h("p", { class: "muted" }, "We're still working on it. Motion graphics (kinetic titles, counters, charts, lines that draw themselves, morphing shapes) are in the editor: open a project, then Elements → Motion."),
+    h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "14px" } }, h("button", { class: "primary", onclick: () => m.close() }, "OK"))));
+}
 function renderDesigns() {
   const list = $("#des-list"); list.innerHTML = "";
+  if (!designOn()) {
+    $("#des-head").hidden = true; $("#b-des-new").style.visibility = "hidden";
+    intro($("#des-intro"), { kicker: "Design studio · In development", title: ["Motion design, ", h("em", {}, "coming later")],
+      body: "We're still building the Design studio, so it's switched off for now. Motion graphics already work in the editor: open a project, then Elements → Motion (kinetic titles, counters, charts, lines that draw themselves, morphing shapes).",
+      steps: [["grid", "Open a project", "Any edit, any format."], ["layers", "Elements → Motion", "Add a title, counter or chart."], ["spark", "Or ask the AI", "\"Make it a data-story style intro\"."]],
+      cta: "Go to projects", ctaIcon: "home", onCta: () => setTab("projects"), compact: false });
+    return;
+  }
   intro($("#des-intro"), { kicker: "Design studio", title: ["Motion design, ", h("em", {}, "made by hand or with your AI")],
     body: "Scenes of shapes, text and your media that you stretch, move and animate on a canvas. Write a storyboard and let any AI model you've connected design and animate the scenes, then fine-tune everything.",
     steps: [["grid", "Pick a format", "Reels, square, portrait or landscape."], ["edit", "Add & animate", "Shapes, text, media; drag, stretch, keyframe."], ["spark", "AI helps", "Storyboard, scenes and motion from your brief."]],
@@ -1888,6 +1908,7 @@ function renderDesigns() {
   list.append(h("div", { class: "grid" }, DESIGNS.map((p, i) => card(p, i))));
 }
 function openNewDesign() {
+  if (!designOn()) return designSoon();
   let fmt = (AK.app && AK.app.prefs && AK.app.prefs.format) || "reels";
   if (!DES_FORMATS.some((x) => x[0] === fmt)) fmt = "reels";
   const name = h("input", { placeholder: "Untitled design", style: { width: "100%", marginTop: "6px" } });
@@ -1967,6 +1988,9 @@ fetch("/api/update").then((r) => (r.ok ? r.json() : null)).then((u) => {
   const app = await AK.load();
   if (!app) return;
   $("#side-ver").textContent = `v${app.version}`;
+  $("#des-dev").hidden = designOn();
+  if (LOADED) render(); // the Design card follows the feature switch
+  if (TAB === "design") renderDesigns();
   const q = new URLSearchParams(location.search).get("do");
   if (q) history.replaceState(null, "", location.pathname + location.hash);
   if (q === "welcome") return AK.welcome({ onDone: tourDone });
