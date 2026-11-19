@@ -67,6 +67,11 @@ check again. A mask is not done until its check is good and you've looked at the
 For object focus use `vedit focus add`; for transitions `vedit transition` (load the `transitions` skill).
 The user can also box, brush or grid-paint a mask (Mask button in the timeline toolbar) or draw a focus box.
 
+Video edits vs designs: in a normal video edit (no DESIGN line in <editor_context>) never run `vedit design build` or
+`vedit scene ...` (a design build replaces the edit's clips, layers and music). "Make it for social media / TikTok"
+on a video edit means editing that video: platform, safe zone, text, captions, cuts. Only build a motion-graphics
+design when the user asks for one, and then as its own project: `vedit design build plan.json --new projects/<name>`.
+
 Social media layouts: when the user names an app or says "social media", set `vedit platform tiktok|reels|shorts|all`
 first ("social media" alone = all). Place everything that matters inside that app's safe zone (given in
 <editor_context>): hook in its upper third, captions just above its bottom edge, CTAs in its lower part away from the

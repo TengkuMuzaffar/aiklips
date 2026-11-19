@@ -249,10 +249,10 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             return False
 
     @app.get("/editor", response_class=HTMLResponse)
-    def editor():
+    def editor(view: str | None = None):
         if host.pdir is None:
             return RedirectResponse("/")
-        if _is_design():  # designs open in the Design studio
+        if _is_design() and view != "timeline":  # designs open in the Design studio (?view=timeline: the editor anyway)
             return RedirectResponse("/studio")
         return page("index.html")
 

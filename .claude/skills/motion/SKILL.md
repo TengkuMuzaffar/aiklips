@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design projects (the Design studio) - motion-design videos made of scenes of animated shapes, text and the user's media. Use when the user asks for an animated / motion-graphics / explainer / kinetic-type / promo video, wants shapes or text that move, stretch or change colour, wants a storyboard turned into scenes, or is working in a design project (`<editor_context>` says DESIGN project).
+description: Design projects (the Design studio) - motion-design videos made of scenes of animated shapes, text and the user's media. Use when the user asks for an animated / motion-graphics / explainer / kinetic-type / promo video, wants shapes or text that move, stretch or change colour, wants a storyboard turned into scenes, or is working in a design project (`<editor_context>` says DESIGN project). NOT for editing the user's existing video (a social media / TikTok version, text or captions on footage, a promo cut from their clips): that is the normal video editor, never `design build` on it.
 ---
 
 # Motion design (Design studio)

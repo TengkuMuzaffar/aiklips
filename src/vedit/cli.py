@@ -2713,9 +2713,12 @@ def design_build(
     plan_file: Path = typer.Argument(..., help="MotionPlan JSON (optionally with a \"files\": {id: path} map)"),
     new: Path | None = typer.Option(None, "--new", help="Create this new project folder for it (default: the active project)"),
     fmt: str = typer.Option("reels", "--format", help="reels|square|landscape|portrait45 (with --new)"),
+    replace: bool = typer.Option(False, "--replace", help="Rebuild a video-edit project as a design anyway (its clips, "
+                                                          "layers and music are replaced; only when the user asked)"),
 ):
     """Build a whole motion-graphics video from one plan, in one step per scene (undoable). Rebuilds the project's
-    timeline: its layers, clips and music are replaced by the plan's."""
+    timeline: its layers, clips and music are replaced by the plan's. A video edit is never rebuilt by accident:
+    give --new DIR for a separate design project (or --replace when the user asked to turn this one into a design)."""
     from .design import builder
     from .generate.executor import create_project
 
@@ -2728,6 +2731,11 @@ def design_build(
         d = new
     else:
         d = pdir()
+        cur = load(d)
+        if cur.kind != "design" and (cur.clips or cur.layers or cur.music) and not replace:
+            raise VeditError("This project is a video edit: `design build` would replace its clips, layers and music "
+                             "with a motion-graphics design. To edit this video (social media layout, text, captions) "
+                             "use the normal commands; for a separate motion-graphics video use `--new DIR`.")
     rep = builder.build(plan, d, files)
     emit({"project": str(d), **rep},
          f"built {rep['length']:g}s in {d}: {len(rep['applied'])} parts" + (f", skipped {len(rep['skipped'])}:\n  " + "\n  ".join(rep["skipped"]) if rep["skipped"] else ""))

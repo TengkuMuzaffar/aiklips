@@ -168,6 +168,9 @@ gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|direct
   `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.
 
 **Design: motion-design videos (the Design studio):**
+- **Never turn a video edit into a design.** `design build` replaces a project's clips, layers and music, so on a
+  video-edit project use `--new projects/<name>` (a separate design); it refuses otherwise. "Make it for social media"
+  on a video edit is an edit task (platform, safe zone, text, captions), not a design.
 - A design project (`vedit design new`, or the studio) is made of **scenes** played back to back (`vedit scene
   list|add|set|move|dup|remove`); each element belongs to the scene its times fall in and moves with it. Load the
   `motion` skill for any design or motion-graphics work.
