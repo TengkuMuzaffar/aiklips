@@ -28,6 +28,12 @@ afterwards in the editor (Effects tab shows the same effects, with previews).
 | Software demos, "click here" (screencast kit) | **cursor_click** | `fx apply cursor_click --at 4 --text "30%,70% > 62%,40%"` |
 | Pointing out a person / product / detail (HUD kit) | **hud_lock** | `fx apply hud_lock --at 3 --box 25,30,50,30 --text "THE SECRET"` |
 | A warm, crafted title (paper cut-out kit) | **paper_title** | `fx apply paper_title --at 0.3 --text "Grandma's recipe; since 1962"` |
+| A premium caption / stat on the footage | **liquid_glass** (frosted panel) | `fx apply liquid_glass --at 2 --text "Built in a day; no code"` |
+| A product world, "how it works", a place | **iso_world** (isometric, builds block by block) | `fx apply iso_world --at 1 --text city|island|desk|stack` |
+| Keywords about the person (traits, features) | **orbit** (words circle them, behind and in front) | `fx apply orbit --at 3 --text "fast; fun; free" [--amount 3.2 = seconds per turn]` |
+| A realisation, shock, "wait what" | **dolly_zoom** (vertigo) | `fx apply dolly_zoom --at 5 --dur 1.5 [--amount 1.4]` |
+| The person bursting out of a moment / photo | **frame_break** (alias frame_escape) | `fx apply frame_break --at 2 --dur 2.5 --text "Out of the frame"` |
+| A glow-up, going pro, a new chapter | **studio_reveal** | `fx apply studio_reveal --at 6 --dur 3` |
 | One shouted word | **keyword_pop** | `fx apply keyword_pop --at 3 --text WAIT` |
 | A fact to read, a frozen moment | **freeze_title** | `fx apply freeze_title --at 6 --text "Day 1"` |
 | Into a transformation / new place | **flash_cut** / **whip** | `fx apply flash_cut --clip c4` |
@@ -47,6 +53,9 @@ afterwards in the editor (Effects tab shows the same effects, with previews).
 - **Zoom portal**: into a shot that answers the one before (a screen -> the app, a door -> the room).
 - **Kits**: cursor moves 0.75 s then clicks; HUD box tight around the target (`vedit frame --at T` to find it, in
   % of the frame); paper titles move on twos (step_fps 12: `motion set <id> --step-fps 12` makes any layer stop-motion).
+- **Person effects** (orbit, dolly zoom, frame break, studio reveal, magazine cover) cut the person out with fast
+  background removal: they need one clear person in shot; 1.5-3 s each; the first render takes a moment longer.
+  Glass is fixed in place (it fades in and out); put the text layers on it, not the glass, in motion.
 - **Budget**: 2-4 signature effects per 30 s. Don't stack two on the same second. Every effect should serve the
   story; say in `vedit why` what it does for the viewer.
 

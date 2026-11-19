@@ -135,7 +135,7 @@ focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
-fx list | fx apply punch_in|snap_zoom|digital_zoom|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal|growth_curve|checklist|checklist_pop|headline_storm|broll_overlay|chat_takeover|phone_mockup|magazine_cover|zoom_portal|cursor_click|hud_lock|paper_title [--clip ID --at T --text W|'a; b; c' --source sN --dur S --amount X --box x,y,w,h]
+fx list | fx apply punch_in|snap_zoom|digital_zoom|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal|growth_curve|checklist|checklist_pop|headline_storm|broll_overlay|chat_takeover|phone_mockup|magazine_cover|zoom_portal|cursor_click|hud_lock|paper_title|liquid_glass|iso_world|orbit|dolly_zoom|frame_break|studio_reveal [--clip ID --at T --text W|'a; b; c' --source sN --dur S --amount X --box x,y,w,h]
 fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start S --end S --fade-in S --fade-out S]
 fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)

@@ -2165,7 +2165,8 @@ function moveApply(m, clipId) {
     const ask = { headline_storm: ["Headlines, separated by ; (e.g. AI took my job; Is editing dead?; The new way)", ""],
       chat_takeover: ["Messages, separated by ; (start each with them: or me:)", "them: did you see this?; me: no, what?; them: we went viral"],
       magazine_cover: ["Masthead; cover lines, separated by ; (e.g. VOGUE-ISH; The 30-day edit; Inside the studio)", "ICON; The comeback; Inside the studio"],
-      paper_title: ["Title; subtitle (separated by ;)", "Hello there; a little story"] }[m.name] || ["Items, separated by ; (e.g. Fast; Cheap; Easy)", ""];
+      paper_title: ["Title; subtitle (separated by ;)", "Hello there; a little story"],
+      orbit: ["Words that circle around the person, separated by ; (e.g. fast; fun; free)", "fast; fun; free"] }[m.name] || ["Items, separated by ; (e.g. Fast; Cheap; Easy)", ""];
     const t = prompt(ask[0], ask[1]);
     if (!t || !t.trim()) return;
     args.text = t.trim();
@@ -2176,6 +2177,10 @@ function moveApply(m, clipId) {
     const b = prompt("Target box x,y,w,h in % of the frame:", "30,35,40,25"); if (b === null) return; args.box = b.trim();
   }
   if (m.name === "phone_mockup" && SEL?.kind === "source") args.source = SEL.id; // else: the shot under the playhead
+  if (m.name === "liquid_glass") { const t = prompt("Text on the glass (title; subtitle):", "Liquid glass; frosted over your shot"); if (t === null) return; args.text = t.trim(); }
+  if (m.name === "iso_world") { const t = prompt("Which world: city, island, desk or stack?", "island"); if (t === null) return; args.text = t.trim() || "island"; }
+  if (m.needs.startsWith("at") && ["orbit", "dolly_zoom", "frame_break", "studio_reveal", "magazine_cover"].includes(m.name))
+    toast("This one cuts the person out of the shot (fast background removal, prepared on the first render)");
   if (m.name === "growth_curve") { const t = prompt("The number it counts to (e.g. +340%), or leave empty:", "+340%"); if (t === null) return; args.text = t.trim(); }
   if (m.needs.includes("+source")) { // the media file selected in the Media tab, or the only other video
     const p = P(), main = new Set(p.clips.map((c) => c.source));
@@ -2215,7 +2220,7 @@ function renderEffects() {
     if (!FX_CAT || FX_CAT === "Signature moves") {
       const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} ${m.category} signature move effect`));
       n += moves.length;
-      for (const cat of ["Camera", "Graphics", "Frames", "Kits", "B-roll", "Transitions", "Moves"]) {
+      for (const cat of ["Camera", "Graphics", "Subject", "Frames", "Kits", "B-roll", "Transitions", "Moves"]) {
         const ms = moves.filter((m) => (m.category || "Moves") === cat);
         if (!ms.length) continue;
         grid.append(h("div", { class: "fx-cat" }, `Signature · ${cat}`), h("div", { class: "fx-grid" }, ms.map((m) => {

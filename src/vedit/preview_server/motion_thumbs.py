@@ -137,7 +137,7 @@ def _fit_box(img: Image.Image) -> tuple[int, int, int, int]:
 
 _STILL = {"cursor_click": 1.05}  # the moment that shows the effect best (the click's ripple)
 _SAMPLE = {"chat_takeover": "them: did you see this?; me: no what; them: we went viral!", "cursor_click": "35%,70% > 62%,42%",
-           "hud_lock": "TARGET ACQUIRED", "paper_title": "Hello there; a little story",
+           "hud_lock": "TARGET ACQUIRED", "paper_title": "Hello there; a little story", "iso_world": "island",
            "growth_curve": "+340%", "checklist": "Plan; Shoot; Edit", "checklist_pop": "Fast; Cheap; Easy",
            "headline_storm": "AI took my job; Is editing dead?; Everyone is switching; The new way to edit"}
 

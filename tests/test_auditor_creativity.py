@@ -28,7 +28,7 @@ def test_every_move_applies(make_project):
             kw["text"] = "wow"
         if "+lines" in needs:
             kw["text"] = "one; two"
-        if name == "magazine_cover":
+        if name in ("magazine_cover", "orbit", "dolly_zoom", "frame_break", "studio_reveal"):
             kw["dur"] = 1.5
         if "+source" in needs:
             kw["source"] = p.clips[0].source

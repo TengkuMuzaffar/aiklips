@@ -286,6 +286,40 @@ def test_effect_layers_are_grouped(cli, test_clip):
     cli("layer", "remove", ids[1])
     assert not load(cli.project).groups, g  # an empty group goes away
 
+
+def test_signature_effects_step3(cli, test_clip):
+    """liquid glass, isometric worlds and the person effects (orbit, dolly zoom, frame break, studio reveal)."""
+    from vedit.ops.iso import block_progress, render_iso, world
+    from vedit.render.graph import glass_box
+
+    cli("import", str(test_clip))
+    cli("fx", "apply", "liquid_glass", "--at", "0.2", "--dur", "1.5", "--text", "Glass; frosted")
+    cli("fx", "apply", "iso_world", "--at", "0.5", "--text", "desk")
+    p = load(cli.project)
+    gl = next(l for l in p.layers if l.type == "glass")
+    assert gl.group and glass_box(p, gl, 0.5)[2] == pytest.approx(gl.width * 0.5, abs=2)
+    iso = next(l for l in p.layers if l.type == "iso")
+    assert iso.iso.items and "draw_in" in [x.name for x in iso.presets]
+    assert _ink(render_iso(iso, 0.4, 0.0)) == 0 < _ink(render_iso(iso, 0.4, 0.5)) and _ink(render_iso(iso, 0.4, 1.0)) > 0
+    assert block_progress(0, 4, 0.0) == 0 and block_progress(3, 4, 1.0) == 1
+    with pytest.raises(VeditError):
+        world("moon")
+    cli("fx", "apply", "orbit", "--at", "0.5", "--dur", "1.0", "--text", "a; b")
+    p = load(cli.project)
+    words = [l for l in p.layers if l.type == "text" and l.text in ("a", "b")]
+    assert len(words) == 4 and len({l.id for l in words}) == 4  # front + behind copy of each word, distinct ids
+    assert sum(1 for l in words if (l.track or 0) < p.main_z) == 2  # the behind copies sit under the person
+    assert any(e.type == "bg" and e.params["replace"] == "none" for c in p.clips for e in c.effects)
+    cli("fx", "apply", "dolly_zoom", "--at", "2.0", "--dur", "0.8")
+    cli("fx", "apply", "frame_escape", "--at", "3.0", "--dur", "0.8")  # alias of frame_break
+    cli("fx", "apply", "studio_reveal", "--at", "4.0", "--dur", "0.8")
+    p = load(cli.project)
+    dolly = next(l for l in p.layers if l.type == "video" and l.keyframes)
+    assert dolly.keyframes[-1].scale == pytest.approx(1.4) and dolly.effects
+    imgs = cli("frame", "--at", "0.6,1.0", "--width", "200")["images"]  # glass + iso render
+    assert all(Path(i).exists() for i in imgs)
+
+
 def test_iso_items_library_and_editing(cli):
     """64 iso items from 6 primitives, themes, auto-placement, item editing via the CLI, and every item renders."""
     from vedit.ops import iso_items

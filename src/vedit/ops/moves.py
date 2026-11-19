@@ -40,13 +40,23 @@ MOVES: dict[str, tuple[str, str]] = {
     "cursor_click": ("at", "Screencast cursor: an arrow glides to a spot and clicks with a ripple (--text '30%,70% > 60%,40%')"),
     "hud_lock": ("at", "HUD lock-on: corner brackets snap onto a target and a label types in (--box x,y,w,h in %, --text LABEL)"),
     "paper_title": ("at+lines", "Paper cut-out title: paper cards with shadows drop in and sway on twos ('TITLE; subtitle')"),
+    # step 3
+    "liquid_glass": ("at", "Liquid glass: a frosted glass panel over the shot (blurs what's behind), with a title on it (--text)"),
+    "iso_world": ("at", "Isometric miniature world that builds itself block by block (--text city|island|desk|stack)"),
+    "orbit": ("at+lines", "Orbit: words circle around the person, passing behind and in front of them ('fast; fun; free')"),
+    "dolly_zoom": ("at", "Dolly zoom (vertigo): the person stays the same size while the background rushes in (--amount 1.4)"),
+    "frame_break": ("at", "Frame break: the shot sits in a frame and the person steps out over its edge (--text caption)"),
+    "studio_reveal": ("at", "Studio reveal: the background wipes away to a lit studio set while the person stays"),
 }
+ALIASES = {"frame_escape": "frame_break", "vertigo": "dolly_zoom", "glass": "liquid_glass", "isometric": "iso_world"}
 # how each effect is shown in the editor: category for the Effects tab
 CATEGORY = {k: "Camera" for k in ("punch_in", "snap_zoom", "digital_zoom", "zoom_out_reveal", "speed_ramp")} | {
     k: "Graphics" for k in ("growth_curve", "checklist", "checklist_pop", "headline_storm", "keyword_pop", "freeze_title")} | {
     k: "Transitions" for k in ("flash_cut", "whip", "before_after", "zoom_portal")} | {"broll_overlay": "B-roll"} | {
     "chat_takeover": "Graphics", "phone_mockup": "Frames", "magazine_cover": "Frames",
-    "cursor_click": "Kits", "hud_lock": "Kits", "paper_title": "Kits"}
+    "cursor_click": "Kits", "hud_lock": "Kits", "paper_title": "Kits",
+    "liquid_glass": "Graphics", "iso_world": "Graphics", "orbit": "Subject", "dolly_zoom": "Subject", "frame_break": "Subject",
+    "studio_reveal": "Subject"}
 # what Generate plans / reference Style DNA may name: moves that need nothing but a clip, a moment and a text
 MOVE_NAMES = tuple(k for k, v in MOVES.items() if "+source" not in v[0])
 
@@ -69,6 +79,7 @@ def _title(p: Project, text: str, start: float, end: float, look: str, y: str = 
 
 def apply(p: Project, name: str, clip: str | None = None, at: float | None = None, text: str | None = None,
           source: str | None = None, dur: float | None = None, amount: float | None = None, box: str | None = None) -> str:
+    name = ALIASES.get(name, name)
     if name not in MOVES:
         raise VeditError(f"Unknown move '{name}'. Moves: {', '.join(MOVES)}")
     needs = MOVES[name][0]
@@ -425,25 +436,14 @@ def _magazine_cover(p: Project, at: float, text=None, dur=None, **_) -> str:
     W, H = p.canvas.width, p.canvas.height
     items = lines(text) or ["COVER"]
     d = dur or 3.0
-    i0 = _at_clip(p, at)
-    if p.clip_starts()[i0] + p.clips[i0].duration < at + d - 0.05:
-        raise VeditError(f"Not enough of {p.clips[i0].id} after {at:.2f}s for a {d:g}s cover; give a shorter --dur")
-    i = cut.split_at(p, at)
-    cut.split_at(p, at + d)
-    seg = p.clips[i]
-    seg.transition = None
-    # the person only on the video track (background keyed out), the full shot again under the masthead
-    seg.effects = [e for e in seg.effects if e.type != "bg"] + [Effect(type="bg", params={"smooth": 0.5, "mode": "fast", "replace": "none"})]
+    seg, full = _subject_split(p, at, d, "cover")
     end = _layer_end(p, at, d)
-    full = overlays.add_video(p, seg.source, at, end, x="50%", y="50%", fit="cover", src_in=seg.in_, volume=0.0)
-    full.width = W
     mast_st = TextStyle(size=round(W * 0.26), color="#FFFFFF", stroke_width=0, uppercase=True, font="abril", max_width=round(W * 0.98),
                         letter_spacing=-4)
     mast = Layer(id=p.new_id("t"), type="text", text=items[0], start=round(at, 3), end=end, x="50%", y=round(H * 0.14), style=mast_st,
                  presets=[Preset(name="wipe_in", duration=0.4)])
     p.layers.append(mast)
-    overlays.place_layer(p, full.id, 0, new_track=True, under_video=True)
-    overlays.place_layer(p, mast.id, 1, new_track=True, under_video=True)
+    _under(p, mast)
     issue = Layer(id=p.new_id("t"), type="text", text="ISSUE 01 \u00b7 SPECIAL", start=round(at, 3), end=end, x=round(W * 0.27), y=round(H * 0.035),
                   style=TextStyle(size=round(W * 0.026), stroke_width=0, font="space-mono", letter_spacing=4))
     p.layers.append(issue)
@@ -459,6 +459,36 @@ def _magazine_cover(p: Project, at: float, text=None, dur=None, **_) -> str:
                                 border_width=round(W * 0.018), border_color="#FFFFFF")
     border.presets = [Preset(name="fade_in", duration=0.2)]
     return f"magazine cover '{items[0]}' {at:.2f}-{at + d:.2f}s ({seg.id} keyed: the person stands in front of the masthead)"
+
+
+def _subject_split(p: Project, at: float, d: float, what: str) -> tuple:
+    """The person in front of anything: the shot's piece at..at+d keyed (background removed, `replace none`) on the
+    video track, and the full shot again as a video layer on a track UNDER the video. Layers put under the video
+    between the two (`_under`) appear behind the person. Returns (keyed clip, full-shot layer)."""
+    from ..project import Effect
+    from . import overlays
+
+    i0 = _at_clip(p, at)
+    c0 = p.clips[i0]
+    if p.clip_starts()[i0] + c0.duration < at + d - 0.05:
+        raise VeditError(f"Not enough of {c0.id} after {at:.2f}s for a {d:g}s {what}; give a shorter --dur")
+    i = cut.split_at(p, at)
+    cut.split_at(p, at + d)
+    seg = p.clips[i]
+    seg.transition = None
+    seg.effects = [e for e in seg.effects if e.type != "bg"] + [Effect(type="bg", params={"smooth": 0.5, "mode": "fast", "replace": "none"})]
+    full = overlays.add_video(p, seg.source, at, _layer_end(p, at, d), x="50%", y="50%", fit="cover", src_in=seg.in_, volume=0.0)
+    full.width = p.canvas.width
+    # right under the person, so this effect's tracks under the video sit together (one group row)
+    overlays.place_layer(p, full.id, max(0, p.main_z), new_track=True, under_video=True)
+    return seg, full
+
+
+def _under(p: Project, layer: Layer, top: bool = True) -> None:
+    """Put a layer on a new track under the video: right under the person (top) or at the very bottom."""
+    from . import overlays
+
+    overlays.place_layer(p, layer.id, max(0, p.main_z) if top else 0, new_track=True, under_video=True)
 
 
 def _zoom_portal(p: Project, at: float, clip=None, amount=None, **_) -> str:
@@ -585,6 +615,133 @@ def _paper_title(p: Project, at: float, text=None, dur=None, **_) -> str:
     return f"paper cut-out title '{items[0]}' at {at:.2f}s"
 
 
+def _liquid_glass(p: Project, at: float, text=None, dur=None, **_) -> str:
+    W, H = p.canvas.width, p.canvas.height
+    end = _layer_end(p, at, dur or 3.0)
+    lines_ = lines(text) or ["Liquid glass"]
+    w, h = round(W * 0.78), round(W * (0.36 if len(lines_) > 1 else 0.3))
+    gl = Layer(id=p.new_id("gl"), type="glass", start=round(at, 3), end=end, x="50%", y="50%", width=w, height=h,
+               radius=round(W * 0.06), fill="#FFFFFF1C", glass_blur=26)
+    p.layers.append(gl)
+    st = TextStyle(size=round(W * 0.075), color="#FFFFFF", stroke_width=0, shadow=True, max_width=round(w * 0.86), font="poppins-bold")
+    t = Layer(id=p.new_id("t"), type="text", text=lines_[0], start=round(at + 0.15, 3), end=end, x="50%",
+              y=round(H / 2 - (h * 0.12 if len(lines_) > 1 else 0)), style=st, presets=[Preset(name="rise_in", duration=0.45), Preset(name="fade_out", duration=0.25)])
+    p.layers.append(t)
+    if len(lines_) > 1:
+        sub = Layer(id=p.new_id("t"), type="text", text=lines_[1], start=round(at + 0.3, 3), end=end, x="50%", y=round(H / 2 + h * 0.17),
+                    style=TextStyle(size=round(W * 0.04), color="#FFFFFFD0", stroke_width=0, max_width=round(w * 0.86), font="poppins"),
+                    presets=[Preset(name="fade_in", duration=0.4), Preset(name="fade_out", duration=0.25)])
+        p.layers.append(sub)
+    return f"liquid glass panel at {at:.2f}s ({gl.id})"
+
+
+def _iso_world(p: Project, at: float, text=None, dur=None, **_) -> str:
+    from .iso import world
+
+    kind, _, theme = (text or "city").strip().lower().partition(" ")
+    theme = theme.strip() or "pastel"
+    W, H = p.canvas.width, p.canvas.height
+    l = Layer(id=p.new_id("iso"), type="iso", iso=world(kind, theme), start=round(at, 3), end=_layer_end(p, at, dur or 4.0), x="50%", y="55%",
+              width=round(W * (0.5 if kind == "stack" else 0.8)),
+              presets=[Preset(name="draw_in", duration=1.8, params={"ease": "linear"}), Preset(name="float", params={"amplitude": 10, "degrees": 0.5}),
+                       Preset(name="fade_out", duration=0.3)])
+    p.layers.append(l)
+    return f"isometric {kind} at {at:.2f}s ({l.id}): builds itself block by block"
+
+
+def _orbit(p: Project, at: float, text=None, dur=None, amount=None, **_) -> str:
+    """Words on a tilted ring around the person: each word is two layers, one under the person (shown while it is
+    behind) and one over (while in front), so it really passes behind them."""
+    import math
+
+    W, H = p.canvas.width, p.canvas.height
+    words = lines(text) or ["orbit"]
+    d = dur or 4.0
+    seg, full = _subject_split(p, at, d, "orbit")
+    end = _layer_end(p, at, d)
+    cx, cy, rx, ry = W * 0.5, H * 0.42, W * 0.42, H * 0.06
+    period = max(1.5, amount or 3.2)
+    step = 1 / 12
+    for k, word in enumerate(words):
+        st = TextStyle(size=round(W * 0.07), color="#FFFFFF", stroke_width=0, shadow=True, uppercase=True, font="anton")
+        front = Layer(id=p.new_id("t"), type="text", text=word, start=round(at, 3), end=end, x=round(cx), y=round(cy), style=st)
+        p.layers.append(front)  # before the next new_id: ids come from the layers already in the project
+        back = front.model_copy(update={"id": p.new_id("t")})
+        p.layers.append(back)
+        kf_f, kf_b = [], []
+        n = int(d / step) + 1
+        for i in range(n):
+            t = i * step
+            th = 2 * math.pi * (t / period + k / len(words))
+            depth = math.sin(th)  # > 0: in front of the person (lower half of the ring)
+            x, y = cx + rx * math.cos(th), cy + ry * depth
+            s = 0.75 + 0.3 * (depth + 1) / 2
+            kf_f.append(Keyframe(t=round(t, 3), x=round(x, 1), y=round(y, 1), scale=round(s, 3), opacity=1.0 if depth >= 0 else 0.0, ease="linear"))
+            kf_b.append(Keyframe(t=round(t, 3), x=round(x, 1), y=round(y, 1), scale=round(s, 3), opacity=0.0 if depth >= 0 else 0.7, ease="linear"))
+        front.keyframes, back.keyframes = kf_f, kf_b
+        _under(p, back)
+    return f"orbit of {len(words)} word(s) around the person {at:.2f}-{at + d:.2f}s ({seg.id} keyed)"
+
+
+def _dolly_zoom(p: Project, at: float, dur=None, amount=None, **_) -> str:
+    d = dur or 2.0
+    seg, full = _subject_split(p, at, d, "dolly zoom")
+    z = max(1.1, min(2.0, amount or 1.4))
+    full.keyframes = [Keyframe(t=0, scale=1.0, ease="ease_in_out"), Keyframe(t=round(d, 3), scale=z)]
+    from . import fx_filters
+
+    fx_filters.add(p, full, "blur", {"amount": 4})  # a little depth of field hides the edge of the cut-out
+    return f"dolly zoom {at:.2f}-{at + d:.2f}s: the background pushes to {z:g}x behind the person ({seg.id})"
+
+
+def _frame_break(p: Project, at: float, text=None, dur=None, **_) -> str:
+    from . import overlays
+
+    W, H = p.canvas.width, p.canvas.height
+    d = dur or 3.0
+    seg, full = _subject_split(p, at, d, "frame break")
+    end = _layer_end(p, at, d)
+    x0, x1, y0, y1 = W * 0.09, W * 0.91, H * 0.3, H * 0.86  # the frame; the person steps out over its top
+    paper = "#F2EFE9"
+    bands = [((W / 2, y0 / 2), (W, y0)), ((W / 2, (y1 + H) / 2), (W, H - y1)), ((x0 / 2, H / 2), (x0, H)), (((x1 + W) / 2, H / 2), (W - x1, H))]
+    parts = []
+    for (bx, by), (bw, bh) in bands:  # everything outside the frame is a plain backdrop
+        parts.append(overlays.add_shape(p, "rect", at, end, x=round(bx), y=round(by), width=max(2, round(bw)), height=max(2, round(bh)), radius=0, fill=paper))
+    edge = overlays.add_shape(p, "rect", at, end, x=round(W / 2), y=round((y0 + y1) / 2), width=round(x1 - x0), height=round(y1 - y0),
+                              radius=0, fill=None, border_width=max(6, round(W * 0.014)), border_color="#FFFFFF")
+    parts.append(edge)
+    for l in parts:
+        l.presets = [Preset(name="fade_in", duration=0.2)]
+        _under(p, l)
+    if text:
+        cap = Layer(id=p.new_id("t"), type="text", text=lines(text)[0], start=round(at + 0.3, 3), end=end, x="50%", y=round((y1 + H) / 2),
+                    style=TextStyle(size=round(W * 0.06), color="#111111", stroke_width=0, font="dm-serif"), presets=[Preset(name="rise_in", duration=0.4)])
+        p.layers.append(cap)
+    return f"frame break {at:.2f}-{at + d:.2f}s: the person steps out over the frame ({seg.id} keyed)"
+
+
+def _studio_reveal(p: Project, at: float, dur=None, **_) -> str:
+    from . import overlays
+
+    W, H = p.canvas.width, p.canvas.height
+    d = dur or 3.0
+    seg, full = _subject_split(p, at, d, "studio reveal")
+    end = _layer_end(p, at, d)
+    # the studio set, at the very bottom: backdrop, a soft key light behind the person, a floor
+    back = overlays.add_shape(p, "rect", at, end, x="50%", y="50%", width=W, height=H, radius=0, fill=None)
+    overlays.set_fields(back, {"fill_gradient": "#3A3A42,#0E0E12", "gradient_angle": 90})
+    glow = overlays.add_shape(p, "ellipse", at, end, x="50%", y=round(H * 0.38), width=round(W * 1.1), height=round(W * 1.1), fill="#FFFFFF14",
+                              border_width=0)
+    floor = overlays.add_shape(p, "rect", at, end, x="50%", y=round(H * 0.88), width=W, height=round(H * 0.24), radius=0, fill=None)
+    overlays.set_fields(floor, {"fill_gradient": "#00000000,#000000AA", "gradient_angle": 90})
+    for l in (back, glow, floor):  # under the full shot, bottom to top
+        overlays.place_layer(p, l.id, p.layer(full.id).track, new_track=True, under_video=True)
+    # the real background wipes away (the full shot only covers the first 0.7 s, then wipes off)
+    full.end = round(at + 0.7, 3)
+    full.presets = [Preset(name="wipe_out", duration=0.6)]
+    return f"studio reveal {at:.2f}-{at + d:.2f}s: the background wipes to a studio set ({seg.id} keyed)"
+
+
 EFFECTS = {
     "snap_zoom": _snap_zoom, "digital_zoom": _digital_zoom, "growth_curve": _growth_curve,
     "checklist": lambda p, at, **k: _checklist(p, at, pop=False, **k),
@@ -592,6 +749,9 @@ EFFECTS = {
     "headline_storm": _headline_storm, "broll_overlay": _broll_overlay,
     "chat_takeover": _chat_takeover, "phone_mockup": _phone_mockup, "magazine_cover": _magazine_cover, "zoom_portal": _zoom_portal,
     "cursor_click": _cursor_click, "hud_lock": _hud_lock, "paper_title": _paper_title,
+    "liquid_glass": _liquid_glass, "iso_world": _iso_world, "orbit": _orbit, "dolly_zoom": _dolly_zoom, "frame_break": _frame_break,
+    "studio_reveal": _studio_reveal,
 }
 # effects whose look is drawn without the user's footage: the Effects tab shows a rendered preview
-PREVIEWS = ("growth_curve", "checklist", "checklist_pop", "headline_storm", "chat_takeover", "cursor_click", "hud_lock", "paper_title")
+PREVIEWS = ("growth_curve", "checklist", "checklist_pop", "headline_storm", "chat_takeover", "cursor_click", "hud_lock", "paper_title",
+            "iso_world")
