@@ -346,6 +346,24 @@ def _track_visible(p: Project, a: dict) -> str:
     return tracks.set_track_visible(p, a.get("track"), bool(a.get("visible", True)))
 
 
+@op("platform_set")
+def _platform_set(p: Project, a: dict) -> str:
+    """The editor's Guides menu: the social app this video is for (its safe zone). Shared with `vedit platform`."""
+    from ..ops import safezone
+
+    return f"platform {safezone.set_platform(p, a.get('platform')) or 'none'}"
+
+
+@op("safe_fix")
+def _safe_fix(p: Project, a: dict) -> str:
+    """"Fit in safe zone" in a layer's properties (or every layer): shared with `vedit safe fix`."""
+    from ..ops import safezone
+
+    todo = [p.layer(a["layer"])] if a.get("layer") else safezone.checked_layers(p)
+    done = [l.id for l in todo if safezone.fit(p, _PDIR[0], l)]
+    return f"fit in the safe zone: {', '.join(done)}" if done else "everything is inside the safe zone"
+
+
 @op("track_video")
 def _track_video(p: Project, a: dict) -> str:
     """The video track's up / down arrows: move it among the other tracks (shared with `vedit track video`)."""

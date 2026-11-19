@@ -86,7 +86,7 @@ uv run vedit --json audit                                # fix must-fix findings
   everything at once. Every scene needs something moving (the audit flags 3 s+ with nothing animated).
 - Shapes carry the design: a growing underline (`w` keyframes), a bar that stretches in (`stretch_in` / `grow_in`), a
   badge star with `breathe`, a speech bubble behind a quote, a colour change with `fill` keyframes.
-- Text: at most about 7 words per line, 1.2 s+ on screen per 3 words, inside x 8-88% / y 12-75%, one look for all
+- Text: at most about 7 words per line, 1.2 s+ on screen per 3 words, inside the platform's safe zone (`vedit safe check`; x 8-88% / y 12-75% without one), one look for all
   titles, at most two fonts.
 - Colour: 3-4 colours for the whole video; mark a new section with a scene background change. At most one texture.
 - With music: put scene changes on the beat.

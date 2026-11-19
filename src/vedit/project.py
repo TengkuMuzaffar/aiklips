@@ -344,6 +344,9 @@ class Project(_Model):
     # < main_z show through wherever the video is transparent (gaps, letterbox bars, keyed green screen). All tracks
     # are equal otherwise: the timeline is as long as whatever ends last, and something must start at 0s
     main_z: int = 0
+    # the social app this video is for (tiktok | reels | shorts | all): its safe zone is where text, stickers and
+    # buttons go (ops/safezone.py; the editor's guides, `vedit safe`, the audit). None = "all apps" on a portrait canvas
+    platform: str | None = None
     scenes: list[Scene] = Field(default_factory=list)  # design projects only
 
     def scene_starts(self) -> list[float]:

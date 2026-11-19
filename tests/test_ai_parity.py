@@ -17,7 +17,7 @@ CLI_FOR_OP = {
     "transition_set": "transition", "bg_remove": "bg remove", "bg_set": "bg tune", "mask_add": "mask add", "mask_set": "mask set", "focus_add": "focus add", "focus_set": "focus set",
     "remove_clip": "remove-clip", "remove_effect": "fx remove",
     "fx_add": "fx add", "fx_set": "fx set", "fx_reset": "fx set", "fx_remove": "fx remove", "fx_replace": "fx replace",
-    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide", "track_video": "track video",
+    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide", "track_video": "track video", "platform_set": "platform", "safe_fix": "safe fix",
     "marker_add": "marker add", "marker_set": "marker set", "marker_remove": "marker remove",
     "keyframe_set": "animate keyframes", "keyframe_remove": "animate keyframes", "keyframes_clear": "animate clear",
     "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import",

@@ -801,9 +801,9 @@ header #status.error { color: var(--danger); }
       <span id="tc">0:00.00 / 0:00.00</span>
       <span style="width:14px"></span>
       <button class="ghost" id="t-mode" title="Live: text and images update instantly over the video. Final: the exact FFmpeg render, as it will export (slower to update).">Live</button>
-      <select id="t-guides" title="Safe-zone guides: where each app's buttons, captions and username cover the video (approximate; apps change their layout). Also what dragging snaps to." style="font-size:12px;max-width:150px">
+      <select id="t-guides" title="Safe-zone guides: where each app's buttons, captions and username cover the video (approximate; apps change their layout). Also what dragging snaps to. Picking an app saves it as this video's platform: the AI and the audit keep things inside its zone." style="font-size:12px;max-width:150px">
         <option value="off">Guides: off</option><option value="center">Centre lines</option><option value="tiktok">TikTok safe zone</option>
-        <option value="reels">Instagram Reels safe zone</option><option value="shorts">YouTube Shorts safe zone</option><option value="audit">Audit safe zone (all apps)</option>
+        <option value="reels">Instagram Reels safe zone</option><option value="shorts">YouTube Shorts safe zone</option><option value="audit">All apps safe zone</option>
       </select>
     </div>
   </section>
@@ -1349,7 +1349,17 @@ const SAFE = {
 let GUIDES = "off";
 try { GUIDES = localStorage.getItem("cc-guides") || "off"; } catch {}
 $("#t-guides").value = GUIDES;
-$("#t-guides").onchange = (e) => { GUIDES = e.target.value; try { localStorage.setItem("cc-guides", GUIDES); } catch {} GUIDE_KEY = ""; };
+// an app's zone is also the project's platform (ops/safezone.py): the AI and the audit place things inside it
+const PLATFORM_OF = { tiktok: "tiktok", reels: "reels", shorts: "shorts", audit: "all" };
+$("#t-guides").onchange = (e) => {
+  GUIDES = e.target.value; try { localStorage.setItem("cc-guides", GUIDES); } catch {} GUIDE_KEY = "";
+  const plat = PLATFORM_OF[GUIDES];
+  if (ST && plat && P().platform !== plat) op("platform_set", { platform: plat }).then((r) => r && toast(`Platform: ${$("#t-guides").selectedOptions[0].text.replace(" safe zone", "")} (the AI keeps things inside its safe zone)`));
+};
+function syncGuides() { // show the project's own platform zone when an app zone is shown
+  const want = { tiktok: "tiktok", reels: "reels", shorts: "shorts", all: "audit" }[P().platform];
+  if (want && PLATFORM_OF[GUIDES] && GUIDES !== want) { GUIDES = want; $("#t-guides").value = want; GUIDE_KEY = ""; }
+}
 let GUIDE_KEY = "";
 const PVD = { drag: null };
 
@@ -1661,6 +1671,7 @@ async function refresh() {
   if (SEL && !selExists()) SEL = null;
   $("#proj-name").textContent = P().name; $("#proj-name").title = P().name;
   $("#canvas-info").textContent = `${P().canvas.width}×${P().canvas.height} · ${P().canvas.fps}fps · ${fmt(dur())}`;
+  syncGuides();
   $("#nomedia").style.display = hasTimeline() ? "none" : "flex";
   video.style.display = hasTimeline() ? "" : "none";
   setStatus(ST.render);
@@ -2721,6 +2732,8 @@ function renderLayer(l) {
       [kfLabel("Position", ["x", "y"]), h("div", { class: "pair" },
         textIn(kv("x"), (v) => setP("x", v), { title: "x: px or %" }, (v) => !isNaN(parseFloat(v)) && liveP("x")(v)),
         textIn(kv("y"), (v) => setP("y", v), { title: "y: px or %" }, (v) => !isNaN(parseFloat(v)) && liveP("y")(v)))],
+      l.type !== "adjust" ? field("Safe zone", h("button", { class: "ghost", title: "Move it (and shrink it if it's too big) inside the platform's safe zone, away from the app's buttons and caption bar",
+        onclick: () => op("safe_fix", { layer: l.id }).then((r) => r && toast(r.message)) }, "Fit in safe zone")) : null,
       [kfLabel("Scale", ["scale"]), rangeIn(kv("scale"), 0.2, 3, 0.05, (v) => setP("scale", v), liveP("scale"))],
       [kfLabel("Rotation", ["rotation"]), rangeIn(kv("rotation"), -180, 180, 1, (v) => setP("rotation", v), liveP("rotation"))],
       [kfLabel("Opacity", ["opacity"]), rangeIn(kv("opacity"), 0, 1, 0.05, (v) => setP("opacity", v), liveP("opacity"))],

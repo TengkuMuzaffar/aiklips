@@ -83,11 +83,22 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 ## Canvas & safe zones (default 1080×1920, Reels/TikTok)
 
 - **Positions:** `x` and `y` are the layer's centre point, in px or `"NN%"`.
-- **Keep important text inside x 8–88% and y 12–75%.** TikTok and Instagram cover the right edge (buttons) and the bottom 25% (caption, music).
-- **Default text positions:**
+- **Know the platform.** When the user names an app ("for TikTok", "Reels", "Shorts") or says "social media", set it
+  first: `vedit platform tiktok|reels|shorts|all` ("social media" without an app = `all`, the strictest). Its safe
+  zone (the part its top bar, caption bar and like / comment / share buttons leave visible) is in the
+  `<editor_context>` and in `vedit platform`. Everything that matters (text, captions, stickers, buttons, CTAs,
+  picture-in-picture, logos) goes inside it; only full-frame backgrounds may cover the rest.
+- **Lay out for the app, don't centre everything.** Hook / title in the upper third of the safe zone, captions just
+  above its bottom edge, CTAs and "follow" / "subscribe" elements in its lower part (never under the right-hand
+  buttons), a logo in a corner *of the safe zone*, faces / the subject clear of the text. Size elements to the zone's
+  width (text `--max-width` about the zone width minus 60px), not the canvas width.
+- **Measure, don't guess.** `vedit safe check` gives every layer's real on-screen box and what pokes out;
+  `vedit safe fix [ids]` moves (and if needed shrinks) them back inside. Check stills with `vedit frame --at T --guides`
+  (the covered parts are red). The audit flags any layer outside the zone with the fix command.
+- **Default text positions (all apps, 9:16):**
   - Hook or title: y=`18%`–`30%`
   - Captions: y=`70%`–`75%`
-  - Logo: a corner, e.g. x=`85%` y=`8%`
+  - Logo: a corner inside the zone, e.g. x=`80%` y=`16%`
 
 ## Command cheat-sheet
 
@@ -129,6 +140,7 @@ undo [--steps N] | redo | history | checkout <step> | version save "NAME" | vers
 update status | update check | update apply | update rollback | update auto true|false   (installed app only)
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
 sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
+platform [tiktok|reels|shorts|all|none] | safe check [--platform P] | safe fix [ids...] [--margin 12] | frame --at T --guides
 adjust add [--start --end --look NAME --intensity --saturation --brightness --contrast --temperature --fx vignette ...]  (then `fx add <f> --layer adjN`)
 template save NAME --layer ID [--layer ID2 ...] | template list | template apply NAME --at T | template delete NAME
 proxy make | proxy status | proxy clean

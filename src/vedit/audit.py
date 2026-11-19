@@ -20,10 +20,6 @@ from . import media
 from .project import Layer, Project, VeditError, parse_pos
 
 SEVERITY_COST = {"must-fix": 15, "should-fix": 6, "note": 1}
-SAFE_X = (0.08, 0.88)
-SAFE_Y = (0.12, 0.75)
-CAPTION_MAX_Y = 0.82
-SLACK = 0.02  # a box may poke this far (fraction of the canvas) past a safe-zone edge
 LOUDNESS = (-18.0, -10.0)
 MAX_TRUE_PEAK = -0.5
 
@@ -109,35 +105,38 @@ def check_readability(p: Project, pdir: Path) -> list[dict]:
 
 
 def check_layout(p: Project, pdir: Path) -> list[dict]:
-    """Safe zone per text layer, and overlaps between text/captions on screen at the same time."""
+    """Safe zone of the project's platform for every visible layer (text, captions, stickers, shapes, picture-in-
+    picture; not full-frame backgrounds), measured by code (ops/safezone.py), and overlaps between text/captions on
+    screen at the same time."""
+    from .ops import safezone
+
     out = []
     total = p.duration
+    z = safezone.zone(p)
+    where = "the " + (z.name if z.key != "title" else "title-safe area") + (" safe zone" if z.key != "title" else "")
+    for l in safezone.checked_layers(p):
+        try:
+            probs, worst, b = safezone.problems(p, pdir, l, z)
+        except VeditError:
+            continue
+        if not probs:
+            continue
+        W, H = p.canvas.width, p.canvas.height
+        off = b[0] < 0 or b[1] < 0 or b[2] > W or b[3] > H
+        out.append(_finding("must-fix" if off or worst > 0.05 else "should-fix", "safe-zone",
+                            f"{l.id} ({l.type}) is outside {where}{' and cut off' if off else ''}: " + "; ".join(probs) + ".",
+                            l.start, f"box x {b[0]:.0f}-{b[2]:.0f}px, y {b[1]:.0f}-{b[3]:.0f}px; " + z.describe(W, H),
+                            f"vedit safe fix {l.id}"))
     boxes: list[tuple[Layer, tuple]] = []
     for l in p.layers:
-        if l.type not in ("text", "captions"):
+        if l.type not in ("text", "captions") or l.hidden:
             continue
         try:
             box = text_box(p, l)
         except VeditError:
             continue
-        if box is None:
-            continue
-        boxes.append((l, box))
-        x0, y0, x1, y1 = box
-        ymax = CAPTION_MAX_Y if l.type == "captions" else SAFE_Y[1]
-        problems, worst = [], 0.0
-        for over, text in ((SAFE_X[0] - x0, f"left edge at {x0:.0%}"), (x1 - SAFE_X[1], f"right edge at {x1:.0%} (under the app buttons)"),
-                           (SAFE_Y[0] - y0, f"top at {y0:.0%}"), (y1 - ymax, f"bottom at {y1:.0%} (under the caption/music bar)")):
-            if over > SLACK:
-                problems.append(text)
-                worst = max(worst, over)
-        if problems:
-            off = x0 < 0 or x1 > 1 or y0 < 0 or y1 > 1
-            out.append(_finding("must-fix" if off or worst > 0.05 else "should-fix", "safe-zone", f"{l.id} is outside the safe zone{' and cut off' if off else ''}: "
-                                + ", ".join(problems) + ".", l.start, f"box x {x0:.0%}-{x1:.0%}, y {y0:.0%}-{y1:.0%}",
-                                f"vedit text edit {l.id} --max-width 820 && vedit layer set {l.id} --x 48%"
-                                if (x1 - x0) > (SAFE_X[1] - SAFE_X[0]) * 0.9
-                                else f"vedit layer set {l.id} --x 48% --y {'72%' if l.type == 'captions' else '30%'}"))
+        if box is not None:
+            boxes.append((l, box))
     for i, (a, ba) in enumerate(boxes):
         for b, bb in boxes[i + 1:]:
             t0, t1 = max(a.start, b.start), min(_end(a, total), _end(b, total))

@@ -51,12 +51,15 @@ marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTub
 shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
                              "backgrounds, motion-design elements)")
 scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
+safe_app = typer.Typer(help="Safe zone of the project's platform (`vedit platform`): check where every layer is, fit "
+                             "the ones under the app's buttons / caption bar back inside")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
                   ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
-                  ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app)]:
+                  ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
+                  ("safe", safe_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -2247,9 +2250,57 @@ def preview(open_: bool = typer.Option(False, "--open", help="Open in the system
 
 
 @app.command()
+def platform(name: Optional[str] = typer.Argument(None, help="tiktok | reels | shorts | all | none (no argument: show it)")):
+    """The social app this video is for. Its safe zone (what its buttons, top bar and caption bar leave visible) is
+    where text, stickers and buttons go: `vedit safe check|fix`, the audit and the editor's guides use it."""
+    from .ops import safezone
+
+    if name is None:
+        p = load(pdir())
+        z = safezone.zone(p)
+        return emit({"platform": p.platform, "zone": z.key, "describe": z.describe(p.canvas.width, p.canvas.height)},
+                     f"Platform: {p.platform or 'not set'}. {z.describe(p.canvas.width, p.canvas.height)}")
+    with edit(f"platform {name}") as tx:
+        key = safezone.set_platform(tx.project, name)
+        z = safezone.zone(tx.project)
+    emit({"platform": key, "describe": z.describe(tx.project.canvas.width, tx.project.canvas.height)},
+         f"Platform: {key or 'none'}. {z.describe(tx.project.canvas.width, tx.project.canvas.height)}")
+
+
+@safe_app.command("check")
+def safe_check(platform_: Optional[str] = typer.Option(None, "--platform", help="Check for another app than the project's")):
+    """Where every visible layer is (its real on-screen box, measured) and what pokes out of the safe zone."""
+    from .ops import safezone
+
+    p = load(pdir())
+    r = safezone.check(p, pdir(), platform_)
+    bad = [x for x in r["layers"] if not x["ok"]]
+    lines = [r["describe"]] + [f"  {'OK ' if x['ok'] else 'OUT'} {x['layer']} ({x['type']}) box x {x['box'][0]}-{x['box'][2]}, "
+                               f"y {x['box'][1]}-{x['box'][3]}" + (": " + "; ".join(x["problems"]) if x["problems"] else "")
+                               for x in r["layers"]]
+    lines.append("All inside the safe zone." if not bad else f"{len(bad)} outside: `vedit safe fix {' '.join(x['layer'] for x in bad)}`")
+    emit(r, "\n".join(lines))
+
+
+@safe_app.command("fix")
+def safe_fix(layers: Optional[list[str]] = typer.Argument(None, help="Layer ids (default: every layer outside the zone)"),
+             margin: float = typer.Option(12.0, help="Distance from the zone's edges (px)")):
+    """Move layers back inside the safe zone (shrinking only those too big for it); animated paths move along."""
+    from .ops import safezone
+
+    with edit("safe fix " + (" ".join(layers) if layers else "all")) as tx:
+        p = tx.project
+        todo = [p.layer(i) for i in layers] if layers else safezone.checked_layers(p)
+        changed = {l.id: c for l in todo if (c := safezone.fit(p, pdir(), l, margin=margin))}
+    emit({"changed": changed}, "\n".join(f"  {k}: " + ", ".join(f"{a} {b}" for a, b in v.items()) for k, v in changed.items())
+         or "Nothing to fix: everything is inside the safe zone.")
+
+
+@app.command()
 def frame(at: str = typer.Option(..., help="Timeline seconds; several as a list: 2,5.5,9"),
           out: Optional[str] = typer.Option(None, help="Output image (single time only)"),
-          width: int = 480):
+          width: int = 480,
+          guides: bool = typer.Option(False, "--guides", help="Draw the platform's safe zone on the stills (covered parts in red)")):
     """Save stills of the edit (JPG). Claude looks at these to check its work."""
     from .render.runner import preview_dir, render_preview
 
@@ -2269,6 +2320,10 @@ def frame(at: str = typer.Option(..., help="Timeline seconds; several as a list:
     for t in times:
         dest = Path(out).resolve() if (out and len(times) == 1) else preview_dir(d) / f"frame-{t:.2f}.jpg"
         media.extract_frame(Path(res["output"]), min(t, max(0, p.duration - 0.05)), dest, width)
+        if guides:
+            from .ops import safezone
+
+            safezone.guides_image(dest, p)
         images.append(str(dest))
     data = {"image": images[0], "images": images} if len(images) == 1 else {"images": images}
     emit(data, "\n".join(f"Frame: {i}" for i in images))

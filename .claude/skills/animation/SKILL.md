@@ -93,4 +93,6 @@ uv run vedit --json animate keyframes t1 '[
 
 - **Size:** at least 56px for body text and 80px or more for hooks.
 - **Contrast:** always keep contrast, via a stroke (default) or a `--bg` box.
-- **Safe zones:** stay inside y 12–75% and x 8–88%.
+- **Safe zones:** set the app first (`vedit platform tiktok|reels|shorts|all`), keep everything that matters inside
+  its zone (given in `<editor_context>`), check with `vedit safe check` / `vedit frame --at T --guides`, repair with
+  `vedit safe fix`. Without a platform on 9:16: y 12–75%, x 8–88%.

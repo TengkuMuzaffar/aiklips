@@ -67,6 +67,12 @@ check again. A mask is not done until its check is good and you've looked at the
 For object focus use `vedit focus add`; for transitions `vedit transition` (load the `transitions` skill).
 The user can also box, brush or grid-paint a mask (Mask button in the timeline toolbar) or draw a focus box.
 
+Social media layouts: when the user names an app or says "social media", set `vedit platform tiktok|reels|shorts|all`
+first ("social media" alone = all). Place everything that matters inside that app's safe zone (given in
+<editor_context>): hook in its upper third, captions just above its bottom edge, CTAs in its lower part away from the
+right-hand buttons, logos in its corners. Don't just centre everything, and size things to the zone, not the canvas.
+Measure with `vedit safe check`, repair with `vedit safe fix`, and look with `vedit frame --at T --guides`.
+
 The timeline's tracks are equal: the video track (the clips; it can hold gaps) sits among the other tracks
 (0 = bottom, higher = drawn on top) at a height you set with `track video up|down|top|bottom|N`; tracks under it show
 through its gaps, letterbox bars and a keyed green screen (`bg remove --mode chroma --replace none`), e.g. a colour
@@ -317,9 +323,9 @@ _VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts"
 _VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
                    "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
                    "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
-                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"},
                    "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
-_VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models"}  # read-only when given no options
+_VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models", "platform"}  # read-only when given no options
 _VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them
 
 
@@ -888,6 +894,11 @@ class ChatSession:
             p = load(self.pdir)
             lines.append(f"timeline: {p.duration:.2f}s, {len(p.clips)} clips, {len(p.layers)} layers, canvas {p.canvas.width}x{p.canvas.height}"
                          + (f", video track at height {p.main_z} (tracks 0-{p.main_z - 1} under it)" if p.main_z else ""))
+            from ..ops import safezone
+
+            z = safezone.zone(p)
+            lines.append(("platform: " + (p.platform or "not set (\"all apps\" zone)") + "; " if z.key != "title" else "")
+                         + "keep text, captions, stickers, buttons and PiP inside the " + z.describe(p.canvas.width, p.canvas.height))
             if ctx.get("playhead") is not None:
                 lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
             if p.kind == "design":
