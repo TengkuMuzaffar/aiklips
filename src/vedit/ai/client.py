@@ -60,7 +60,7 @@ class RateLimited(AIError):
 TIERS = {"study": "vision", "footage": "vision", "classify": "vision", "planner": "planner", "editor": "editor",
          "auditor": "auditor", "concepts": "planner", "rank": "planner",
          "design_pieces": "vision", "design_plan": "planner", "design_fix": "editor",
-         "design_storyboard": "planner", "design_scene": "planner", "design_animate": "editor", "sfx": "editor"}
+         "design_storyboard": "planner", "design_scene": "planner", "design_animate": "editor", "sfx": "editor", "music": "editor"}
 QUALITY = {
     # the auditor defaults to the editor's model (set a stronger one with `vedit ai-models --auditor ...`);
     # it must see images, so economy keeps it on a vision-capable model

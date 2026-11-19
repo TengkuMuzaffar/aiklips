@@ -21,7 +21,7 @@ CLI_FOR_OP = {
     "marker_add": "marker add", "marker_set": "marker set", "marker_remove": "marker remove",
     "keyframe_set": "animate keyframes", "keyframe_remove": "animate keyframes", "keyframes_clear": "animate clear",
     "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import",
-    "add_music": "music add", "sfx_add": "sfx add", "music_set": "music set", "music_remove": "music remove",
+    "add_music": "music add", "sfx_add": "sfx add", "music_make": "music make", "music_set": "music set", "music_remove": "music remove",
     "layer_set": "layer set", "text_look": "text look apply", "layer_add_text": "text add", "layer_add_video": "overlay add",
     "layer_add_adjust": "adjust add", "layer_grade": "color set", "template_apply": "template apply",
     "layer_add_shape": "shape add", "overlay_add": "overlay add", "layer_place": "place", "layer_add_media": "overlay add",

@@ -2661,6 +2661,99 @@ def music_set(music_id: str, volume: Optional[float] = None, duck: Optional[bool
     emit({"music": m.model_dump(by_alias=True)}, f"Updated {music_id}")
 
 
+@music_app.command("styles")
+def music_styles():
+    """The loop styles, moods and every setting a loop has (for `music make --set`)."""
+    from . import musicmaker as mm
+
+    st = mm.styles()
+    fields = {k: v.get("description", "") for k, v in mm.MusicParams.model_json_schema()["properties"].items()}
+    emit({"styles": st, "moods": list(mm.MOODS), "settings": fields},
+         "\n".join(f"{x['key']:<11} {x['bpm']:>4.0f} bpm  {x['about']}" for x in st)
+         + "\n\nMoods (--mood): " + ", ".join(mm.MOODS) + "\n\nSettings (--set key=value): " + ", ".join(fields))
+
+
+@music_app.command("make")
+def music_make(style: Optional[str] = typer.Argument(None, help="A style from `music styles` (lofi, hiphop, trap, house, synthwave, chiptune, pop, ambient, cinematic); default lofi, or the --from loop's"),
+               bpm: Optional[float] = typer.Option(None, help="Tempo (50-200)"),
+               key: Optional[str] = typer.Option(None, help="Key, e.g. C, Am, F#m, 'Eb major'"),
+               scale: Optional[str] = typer.Option(None, help="major, minor, dorian, mixolydian, lydian, phrygian, harmonic_minor, pentatonic_major, pentatonic_minor"),
+               chords: Optional[str] = typer.Option(None, help="Progression as scale degrees or roman numerals: '1,5,6,4' or 'i VI III VII'"),
+               bars: Optional[int] = typer.Option(None, help="Loop length in bars (1-32)"),
+               length: Optional[float] = typer.Option(None, help="Loop length in seconds (rounded to a musical number of bars)"),
+               mood: Optional[str] = typer.Option(None, help="happy, bright, sad, dark, tense, dreamy, chill, energetic, epic, soulful"),
+               set_: list[str] = typer.Option([], "--set", help="Any setting, e.g. --set lead=none --set kick=x...x...x...x... (see `music styles`)"),
+               describe: Optional[str] = typer.Option(None, "--describe", help="Let the AI write the loop from a description (1 AI call)"),
+               vary: Optional[int] = typer.Option(None, help="Another take: a different melody and feel over the same chords (the number picks which)"),
+               from_: Optional[str] = typer.Option(None, "--from", help="Change a loop already on the timeline (mN): its track gets the new version"),
+               name: Optional[str] = typer.Option(None, help="Name for the loop file"),
+               volume: float = typer.Option(0.25, help="Track volume (0-2); background music sits at 0.15-0.3"),
+               start: float = typer.Option(0.0, help="Timeline second the music starts"),
+               for_: Optional[float] = typer.Option(None, "--for", help="Play this many seconds (default: to the end of the edit)"),
+               duck: bool = typer.Option(True, help="Lower the music automatically while someone talks")):
+    """Make an original music loop with the built-in sequencer + synth (no download, no licence issues) and put it on
+    a looping, ducking music track. With --from mN, change that loop (faster, darker, another key...) in place."""
+    from . import musicmaker as mm
+
+    d = pdir()
+    note = ""
+    try:
+        if from_:
+            from .project import load as _load
+            base = mm.track_params(_load(d), d, from_)
+            if style:
+                base = mm.style(style, seed=base.seed)
+        else:
+            base = mm.style(style or "lofi")
+        if describe:
+            from .ai import client as aic
+            try:
+                out = mm.design(describe, base if (from_ or style) else None)
+            except aic.AIError as e:
+                raise VeditError(f"AI music design failed: {e}")
+            base, note = mm.MusicParams(**out["params"]), out["note"]
+        upd: dict[str, Any] = {}
+        if key:
+            k, sc = mm.parse_key(key)
+            upd["key"] = k
+            if sc and not scale:
+                upd["scale"] = sc
+        for k_, v in (("bpm", bpm), ("scale", scale), ("bars", bars)):
+            if v is not None:
+                upd[k_] = v
+        if chords:
+            upd["chords"] = mm.parse_chords(chords)
+        for kv in set_:
+            k_, _, v = kv.partition("=")
+            k_, v = k_.strip(), v.strip()
+            if k_ not in mm.MusicParams.model_fields:
+                raise VeditError(f"Unknown music setting '{k_}'. See `vedit music styles`")
+            upd[k_] = json.loads(v) if v[:1] in "[{" else v
+        prm = mm.MusicParams(**{**base.model_dump(), **upd})
+        if mood:
+            prm = mm.apply_mood(prm, mood)
+        if length:
+            prm = mm.MusicParams(**{**prm.model_dump(), "bars": mm.bars_for(length, prm.bpm)})
+        elif bpm is not None and bars is None:
+            prm = mm.fit_length(prm)
+        if vary is not None:
+            prm = prm.model_copy(update={"seed": (prm.seed + 7919 * (vary + 1)) % 2 ** 31})
+        if name:
+            prm = prm.model_copy(update={"name": name})
+        prm = mm.MusicParams(**prm.model_dump())
+    except ValueError as e:
+        raise VeditError(str(e))
+    with edit(f"make music {prm.name}") as tx:
+        if from_:
+            m = mm.replace_on_track(tx.project, d, from_, prm)
+        else:
+            m = mm.add_to_project(tx.project, d, prm, start, volume, for_, duck)
+    secs = mm.loop_seconds(prm)
+    human = (f"{'Updated' if from_ else 'Made'} loop '{prm.name}' ({prm.style}, {prm.bpm:g} bpm, {prm.key} {prm.scale}, "
+             f"{prm.bars} bars = {secs:.1f}s, looping) on {m.id}" + (f". {note}" if note else ""))
+    emit({"music": m.id, "loop_seconds": round(secs, 3), "params": prm.model_dump(), "note": note}, human)
+
+
 @sfx_app.command("list")
 def sfx_list():
     """The sound presets and every setting a sound has."""

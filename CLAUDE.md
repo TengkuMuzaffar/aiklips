@@ -72,6 +72,15 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
   synthesised from a vowel and sound game / cartoon-like: tell the user, and don't use them where a real person
   should be heard.
   The editor's Sound tab is the same synth (plus "Make with AI" from a description).
+- **Music loops.** `vedit music make <style>` writes an original loop with aiklips' own sequencer + synth (no
+  download, no licence issues) and puts it on a looping music track that ducks under speech: lofi, hiphop, trap, house,
+  synthwave, chiptune, pop, ambient, cinematic (`music styles`). Shape it with `--bpm`, `--key Am`, `--chords '1,5,6,4'`,
+  `--mood dark`, `--length S` (rounded to whole bars), any setting with `--set` (`--set lead=none` under talking).
+  `--describe "..."` lets the AI pick the numbers (1 AI call). Change a loop in place with `music make --from mN ...`
+  ("faster", "darker", `--vary 1` = another melody over the same chords). Background level 0.15-0.3. It sounds like
+  clean synth / chip / lo-fi production, not a recorded band: say so if the user wants real instruments.
+  The editor's Music tab is the same maker by hand (styles, moods, a drum step grid, parts, "Make with AI", Edit on
+  a loop already on the timeline).
 - **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
   whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
 - **Tracks are equal.** The video track holds the clips (and gaps) and sits among the other tracks (0 = bottom,
@@ -149,6 +158,7 @@ transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--cli
 mask find --at T [--near x,y,w,h] | mask add --at T --box x,y,w,h[;x,y,w,h...] [--space source] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse --tracker auto|segment|outline|box --sam auto|on|off] | mask check <id|all> | mask fix <id> --at T --box x,y,w,h [--space source | --remove-at T | --clear] | mask list | mask set <id> [--tracker] | mask remove <id|all>
 focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|follow|both --style spotlight|colorpop|brighten|glow|outline --color --width --zoom 1.3] | focus set [--style --color --width --strength] | focus clear
 sfx list | sfx add '<preset>' --at T [--pitch ±semitones --length S --volume 0.8 --for S (loops) --set wave=voice --set vowel=a --set 'pitch_points=[[0,-5],[0.2,3],[1,-4]]' --vary N --amount 0.25]   (presets: `sfx list`: clicks & taps, whooshes, hits, rain / heavy rain / drizzle / wind / fire / water drips / bubbles / applause, scream / yell / monster growl / ghost moan / robot voice, UI & game, tones)
+music styles | music make [style] [--bpm --key Am --scale --chords '1,6,4,5' --bars N | --length S --mood M --set k=v --describe "..." --vary N --from mN --volume 0.25 --start --for S --no-duck]
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
@@ -256,6 +266,9 @@ Load the relevant one before doing that kind of edit.
     `ops/sam.py` = SAM 2.1 tiny image outlines, `mask-ai` extra; `ops/maskfind.py` (`mask find`: numbered SAM
     candidates) and `ops/maskcheck.py` (`mask check`: motion profile, flagged frames, SAM re-check, check sheet).
     Measure tracking changes with `scripts/mask_bench.py` (exact ground truth, IoU; `--only segment`) before and after)
+  - Sound: `sfx.py` (sound-effect synth), `musicmaker.py` (music loops: harmony / patterns -> additive synth +
+    drum synth, mixed circularly so tails and reverb wrap into the start; settings saved as `.json` beside the WAV
+    for `music make --from`), `sound.py` (footage sound vs music audit)
   - Licences: every dependency / model with its licence in `THIRD_PARTY_NOTICES.md`; commercial use must be allowed
   - Filters: `ops/fx_filters.py` registry (one entry = UI card + CLI + FFmpeg chain), stored as `Effect(type="fx")`,
     applied after fit + grade at canvas size in `render/graph.py`. A new filter needs only a registry entry + `STRONG` test value.

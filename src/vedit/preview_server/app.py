@@ -1083,6 +1083,66 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         except (aic.AIError, ValueError) as e:
             raise bad(e)
 
+    # ---- music loops: aiklips' own sequencer + synth (styles, live preview, moods, AI, loops on the timeline) ------
+    @app.get("/api/music/styles")
+    def api_music_styles() -> dict:
+        from .. import musicmaker as mm
+
+        schema = mm.MusicParams.model_json_schema()["properties"]
+        return {"styles": [{**s, "params": mm.style(s["key"]).model_dump()} for s in mm.styles()],
+                "moods": list(mm.MOODS), "keys": list(mm.NOTE_NAMES), "scales": list(mm.SCALES),
+                "scale_steps": {k: list(v) for k, v in mm.SCALES.items()}, "parents": mm._PARENT,
+                "help": {k: v.get("description", "") for k, v in schema.items()}, "max_seconds": mm.MAX_SECONDS}
+
+    def _music_in(body: dict):
+        from .. import musicmaker as mm
+
+        try:
+            return mm.MusicParams(**(body.get("params") or {}))
+        except (ValueError, TypeError) as e:
+            raise bad(e)
+
+    @app.post("/api/music/preview")
+    def api_music_preview(body: dict) -> Response:
+        from .. import musicmaker as mm
+
+        return Response(mm.render(_music_in(body)), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/music/mood")
+    def api_music_mood(body: dict) -> dict:
+        from .. import musicmaker as mm
+
+        try:
+            return {"params": mm.apply_mood(_music_in(body), body.get("mood", "")).model_dump()}
+        except ValueError as e:
+            raise bad(e)
+
+    @app.post("/api/music/ai")
+    def api_music_ai(body: dict) -> dict:
+        from .. import musicmaker as mm
+        from ..ai import client as aic
+
+        try:
+            cur = _music_in(body) if body.get("params") else None
+            return mm.design(body.get("prompt", ""), cur, body.get("model") or None)
+        except (aic.AIError, ValueError) as e:
+            raise bad(e)
+
+    @app.get("/api/music/loops")
+    def api_music_loops() -> dict:
+        """Music tracks on the timeline that were made here (their settings can be loaded and changed)."""
+        from .. import musicmaker as mm
+
+        d = host.need()
+        p = load(d)
+        out = []
+        for m in p.music:
+            src = p.sources.get(m.source)
+            prm = mm.params_of(d / src.path) if src else None
+            if prm:
+                out.append({"id": m.id, "start": m.start, "end": m.end, "volume": m.volume, "params": prm.model_dump()})
+        return {"loops": out}
+
     @app.get("/api/overlays")
     def overlays_catalog() -> dict:
         from ..ops import overlays

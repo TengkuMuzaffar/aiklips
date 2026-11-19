@@ -508,6 +508,19 @@ def _sfx_add(p: Project, a: dict) -> str:
     return f"add sound '{prm.name}' as {m.id} at {m.start:.2f}s"
 
 
+@op("music_make")
+def _music_make(p: Project, a: dict) -> str:
+    from .. import musicmaker as mm
+
+    prm = mm.MusicParams(**a["params"]) if a.get("params") else mm.style(a.get("style") or "lofi")
+    if a.get("replace"):
+        m = mm.replace_on_track(p, _PDIR[0], a["replace"], prm)
+        return f"update loop '{prm.name}' on {m.id}"
+    m = mm.add_to_project(p, _PDIR[0], prm, float(a.get("start") or 0), float(a.get("volume") if a.get("volume") is not None else 0.25),
+                          _num(a, "hold") or None, bool(a.get("duck", True)))
+    return f"make loop '{prm.name}' as {m.id}"
+
+
 _LAYER_FIELDS = ("start", "end", "x", "y", "scale", "rotation", "opacity", "text", "width", "words_per_group")
 
 

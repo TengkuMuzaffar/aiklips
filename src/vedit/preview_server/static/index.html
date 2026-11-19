@@ -153,6 +153,14 @@ label.scrub:hover { color: var(--accent); }
 .fx-target { font-size: 12px; color: var(--muted); }
 .fx-target b { color: var(--text); font-weight: 600; }
 .fx-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+.seq { display: grid; grid-template-columns: 74px repeat(16, minmax(0, 1fr)); gap: 3px; align-items: center; margin: 3px 0; }
+.seq > span { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seq button { height: 22px; min-width: 0; padding: 0; border-radius: 4px; border: 1px solid var(--line); background: var(--pane2); font-size: 9px; color: var(--text); }
+.seq button:nth-of-type(4n+1):not(:first-of-type) { margin-left: 3px; }
+.seq button.beat { background: var(--pane3); }
+.seq button.x { background: var(--accent); border-color: var(--accent); }
+.seq button.o { background: color-mix(in srgb, var(--accent) 45%, var(--pane2)); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.seq button.cur { outline: 2px solid var(--text); outline-offset: -1px; }
 .fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
 .fx-card { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--pane2); cursor: pointer; text-align: left; padding: 0;
   display: block; transition: border-color .12s, transform .12s; }
@@ -870,7 +878,7 @@ header #status.error { color: var(--danger); }
   <!-- 1. project / inspector -->
   <section class="pane" id="p-insp">
     <div class="pane-h">
-      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="elements" title="Elements: colour screens, light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture. Click to add at the playhead, or drag onto a track">Elements</button><button class="tab" data-tab="sound" title="Sound effects: whoosh, pop, riser, impact... made by aiklips' own synth. Describe one for the AI, tweak pitch and length, add at the playhead">Sound</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
+      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="elements" title="Elements: colour screens, light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture. Click to add at the playhead, or drag onto a track">Elements</button><button class="tab" data-tab="sound" title="Sound effects: whoosh, pop, riser, impact... made by aiklips' own synth. Describe one for the AI, tweak pitch and length, add at the playhead">Sound</button><button class="tab" data-tab="music" title="Music: make your own original looping track (lofi, trap, house, synthwave, chiptune...) with drums, chords, bass and a melody. Free to use, no downloads">Music</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
     <div class="ai-lock slim" id="insp-lock" hidden><div class="ai-card"><span class="ai-orb"></span><span>AI is editing, so properties are locked</span></div></div>
@@ -1175,6 +1183,7 @@ async function api(url, body) {
 // [title, while the op runs, while the preview re-renders]
 const OP_LABELS = {
   sfx_add: ["Adding sound", "Making the sound…", "Mixing it into the preview"],
+  music_make: ["Adding music", "Making the loop…", "Mixing it into the preview"],
   mask_add: ["Adding mask", "Finding the region…", "Tracking it and rebuilding the background"],
   mask_set: ["Updating mask", "", "Re-rendering the masked area"],
   focus_add: ["Adding focus", "Finding the object…", "Tracking the object"],
@@ -2125,7 +2134,9 @@ function renderInspector() {
   if (TAB === "media") return body.append(...renderMedia());
   if (TAB === "effects") return body.append(...renderEffects());
   if (TAB === "elements") return body.append(...renderElements());
+  if (TAB !== "music" && MUS_AUDIO && !MUS_AUDIO.paused) musStop();
   if (TAB === "sound") return body.append(...renderSound());
+  if (TAB === "music") return body.append(...renderLoops());
   if (!SEL) return body.append(...renderRoot());
   const p = P();
   body.append(propSearch());
@@ -2347,6 +2358,7 @@ function paletteItems() {
   for (const [k, n, a] of SHAPES) items.push({ k: "Shape", t: n, d: a, run: () => overlayAdd({ op: "layer_add_shape", a: { shape: k } }) });
   act("Open Elements", "", () => { TAB = "elements"; setTabs(); renderInspector(); });
   act("Open Sound effects", "", () => { TAB = "sound"; setTabs(); renderInspector(); });
+  act("Open Music maker", "", () => { TAB = "music"; setTabs(); renderInspector(); });
   if (c && P().clips.indexOf(c) > 0) for (const [v, l] of TRANSITION_OPTS) items.push({ k: "Transition", t: l, d: `into ${c.id}`, run: () => op("transition_set", { clip: c.id, type: v, duration: c.transition?.duration || 0.5 }) });
   if (SEL && TAB === "inspector") document.querySelectorAll("#insp-body .fields > label:not(.full)").forEach((lb) => {
     const t = lb.textContent.trim();
@@ -2678,8 +2690,8 @@ async function sfxPlay(params) {
 }
 function sfxSoon() { SFX_TAKES = []; SFX_TAKE = -1; clearTimeout(SFX_TIMER); SFX_TIMER = setTimeout(sfxPlay, 200); }
 function sfxLoad(params, note = "") { SFX_P = structuredClone(params); SFX_PITCH = 0; SFX_LEN = null; SFX_NOTE = note; SFX_TAKES = []; SFX_TAKE = -1; renderInspector(); sfxPlay(); }
-function sfxDrawWave(buf) { // 16-bit stereo WAV -> min/max columns on the little canvas
-  const cv = document.getElementById("sfx-wave"); if (!cv) return;
+function sfxDrawWave(buf, id = "sfx-wave") { // 16-bit stereo WAV -> min/max columns on the little canvas
+  const cv = document.getElementById(id); if (!cv) return;
   const W = cv.width = cv.clientWidth * devicePixelRatio, H = cv.height = cv.clientHeight * devicePixelRatio, g = cv.getContext("2d");
   const pcm = new Int16Array(buf, 44), n = pcm.length / 2;
   g.clearRect(0, 0, W, H); g.fillStyle = getComputedStyle(document.body).getPropertyValue("--accent") || "#7c5cff";
@@ -2839,6 +2851,242 @@ function renderSound() {
     chips, ...grid,
     h("p", { class: "hint", style: { marginTop: "10px" } }, "Made by a synth: clicks, whooshes, hits, rain, wind and fire come out convincing; voices and screams sound game- or cartoon-like, not like a real person."),
   ].filter((x) => x != null && x !== ""); // body.append() would print a missing note / takes row as the text "null"
+}
+
+// ---------- Music tab: original loops from aiklips' own sequencer + synth (musicmaker.py). A loop = MusicParams; styles
+// are starting points; every change re-renders the loop (~1 s) and keeps it playing, looping. "Add" puts it on a music
+// track that loops and ducks under speech; a loop already on the timeline can be loaded, changed and updated in place.
+let MUS = null, MUS_P = null, MUS_Q = "", MUS_NOTE = "", MUS_BUSY = false, MUS_RENDERING = false;
+let MUS_VOL = 0.25, MUS_DUCK = true, MUS_HOLD = 0, MUS_FROM = null, MUS_LOOPS = [], MUS_LOOPS_AT = 0;
+let MUS_AUDIO = null, MUS_URL = "", MUS_TIMER = 0, MUS_GEN = 0, MUS_RAF = 0, MUS_WAVE = null;
+fetch("/api/music/styles").then((r) => r.json()).then((d) => { MUS = d; MUS_P = MUS_P || structuredClone(d.styles[0].params); if (TAB === "music") renderInspector(); }).catch(() => {});
+const MUS_KITS = [["808", "808 (trap)"], ["punchy", "Punchy"], ["boombap", "Boom bap"], ["lofi", "Lo-fi"], ["chip", "8-bit"], ["soft", "Soft"]];
+const MUS_WAVES = [["sine", "Sine (pure)"], ["triangle", "Triangle (soft)"], ["square", "Square (8-bit)"], ["pulse", "Pulse (NES)"], ["saw", "Saw (buzzy)"], ["organ", "Organ"], ["epiano", "Electric piano"], ["bell", "Bell"]];
+const MUS_BASS = [["none", "Off"], ["root", "Held roots"], ["eighths", "Driving eighths"], ["offbeat", "Offbeat (house)"], ["kick", "808 (follows the kick)"], ["walk", "Walking line"]];
+const MUS_CHORD = [["none", "Off"], ["pad", "Pad (held)"], ["stab", "Stabs"], ["pluck", "Plucks"], ["keys", "Keys"], ["arp", "Arpeggio"]];
+const MUS_LEAD = [["none", "Off"], ["melody", "Melody"], ["arp", "Arpeggio"], ["bells", "Bells (sparse)"]];
+const MUS_PROGS = [["1 5 6 4", "uplifting"], ["1 6 3 7", "epic"], ["2 5 1 6", "jazzy"], ["1 6 4 5", "warm"], ["6 4 1 5", "emotional"], ["1 1 6 7", "hypnotic"]];
+const MUS_DRUMS = [["kick", "Kick"], ["snare", "Snare"], ["clap", "Clap"], ["hat", "Hi-hat"], ["open_hat", "Open hat"], ["perc", "Shaker"]];
+const musSecs = (p = MUS_P, bars = p.bars) => bars * 240 / p.bpm;
+function musChordNames(p = MUS_P) { // "Am F C G" for the progression in its key
+  if (!MUS) return "";
+  const sc = MUS.scale_steps[MUS.parents[p.scale] || p.scale], k = MUS.keys.indexOf(p.key), n = sc.length;
+  const at = (i) => k + 12 * Math.floor(i / n) + sc[((i % n) + n) % n];
+  return p.chords.map((d) => {
+    const r = at(d - 1), third = (at(d + 1) - r) % 12, fifth = (at(d + 3) - r) % 12;
+    return MUS.keys[r % 12] + (third === 3 ? (fifth === 6 ? "dim" : "m") : "") + (p.sevenths ? "7" : "");
+  }).join("  ");
+}
+function musStatus() {
+  const s = document.getElementById("mus-status"); if (s) s.textContent = MUS_RENDERING ? "Making the loop…" : MUS_AUDIO && !MUS_AUDIO.paused ? "Playing (loops)" : "";
+  const b = document.getElementById("mus-play"); if (b) { b.innerHTML = ""; b.append(icon(MUS_AUDIO && !MUS_AUDIO.paused ? "pause" : "play")); }
+}
+function musStop() { MUS_AUDIO?.pause(); cancelAnimationFrame(MUS_RAF); document.querySelectorAll(".seq button.cur").forEach((b) => b.classList.remove("cur")); musStatus(); }
+function musTick() { // light the step that is playing in the drum grid
+  cancelAnimationFrame(MUS_RAF);
+  if (!MUS_AUDIO || MUS_AUDIO.paused) return;
+  const step = Math.floor(MUS_AUDIO.currentTime / (60 / MUS_P.bpm / 4)) % 16;
+  document.querySelectorAll(".seq button").forEach((b) => b.classList.toggle("cur", +b.dataset.step === step));
+  MUS_RAF = requestAnimationFrame(musTick);
+}
+async function musPlay(play = true) {
+  clearTimeout(MUS_TIMER);
+  const gen = ++MUS_GEN; MUS_RENDERING = true; musStatus();
+  let r = null;
+  try { r = await sfxPost("/api/music/preview", { params: MUS_P }); } catch (e) { toast(String(e), true); }
+  if (gen !== MUS_GEN) return; // a newer change is already being made
+  MUS_RENDERING = false;
+  if (!r) return musStatus();
+  if (!r.ok) { let d = "Could not make the loop"; try { d = (await r.json()).detail; } catch {} toast(d, true); return musStatus(); }
+  const blob = await r.blob();
+  const pos = MUS_AUDIO && !MUS_AUDIO.paused ? MUS_AUDIO.currentTime : 0; // keep the groove where it was
+  MUS_AUDIO?.pause();
+  if (MUS_URL) URL.revokeObjectURL(MUS_URL);
+  MUS_URL = URL.createObjectURL(blob);
+  const a = MUS_AUDIO = new Audio(MUS_URL); a.loop = true; a.volume = 0.8;
+  a.onloadedmetadata = () => { if (pos && a.duration) a.currentTime = pos % a.duration; };
+  a.onplay = a.onpause = () => { musStatus(); if (!a.paused) musTick(); };
+  if (TAB === "music" && (play || pos)) a.play().catch(() => {});
+  MUS_WAVE = await blob.arrayBuffer(); sfxDrawWave(MUS_WAVE, "mus-wave");
+  musStatus();
+}
+function musSoon() { clearTimeout(MUS_TIMER); MUS_TIMER = setTimeout(musPlay, 300); }
+function musLoad(params, note = "") { MUS_P = structuredClone(params); MUS_NOTE = note; renderInspector(); musPlay(); }
+function musLoops() {
+  MUS_LOOPS_AT = Date.now();
+  fetch("/api/music/loops").then((r) => r.ok ? r.json() : { loops: [] }).then((d) => {
+    const was = JSON.stringify(MUS_LOOPS); MUS_LOOPS = d.loops || [];
+    if (MUS_FROM && !MUS_LOOPS.some((l) => l.id === MUS_FROM)) MUS_FROM = null; // removed / undone
+    if (TAB === "music" && was !== JSON.stringify(MUS_LOOPS)) renderInspector();
+  }).catch(() => {});
+}
+async function musMood(mood) {
+  const r = await sfxPost("/api/music/mood", { params: MUS_P, mood }), d = await r.json();
+  if (!r.ok) return toast(d.detail || "Could not change the mood", true);
+  musLoad(d.params, `Made it ${mood}`);
+}
+async function musAI() {
+  if (!MUS_Q.trim() || MUS_BUSY) return;
+  MUS_BUSY = true; MUS_NOTE = ""; renderInspector();
+  try {
+    const r = await sfxPost("/api/music/ai", { prompt: MUS_Q, params: MUS_P }), d = await r.json();
+    if (!r.ok) { toast(d.detail || "The AI could not write that loop", true); return; }
+    MUS_BUSY = false; musLoad(d.params, d.note || "");
+  } catch (e) { toast(String(e), true); }
+  finally { MUS_BUSY = false; if (TAB === "music") renderInspector(); }
+}
+async function musAdd() {
+  const name = MUS_P.name;
+  if (MUS_FROM) {
+    const r = await op("music_make", { params: MUS_P, replace: MUS_FROM });
+    if (r) toast(`Updated ${MUS_FROM} with “${name}”`);
+  } else {
+    const start = +video.currentTime.toFixed(3);
+    const r = await op("music_make", { params: MUS_P, start, volume: MUS_VOL, hold: MUS_HOLD || null, duck: MUS_DUCK });
+    if (r) toast(`Added “${name}” at ${fmt(start)}, ${MUS_HOLD ? `looping for ${MUS_HOLD}s` : "looping to the end"}${MUS_DUCK ? ", ducking under voice" : ""}`);
+  }
+  musLoops();
+}
+function musEdit(id) {
+  const l = MUS_LOOPS.find((x) => x.id === id); if (!l) return;
+  MUS_FROM = id; TAB = "music"; setTabs(); musLoad(l.params, `Editing ${id}: press “Update ${id}” to put your changes on the timeline`);
+}
+function renderLoops() {
+  if (!MUS || !MUS_P) return [h("div", { class: "empty" }, "Loading music…")];
+  if (Date.now() - MUS_LOOPS_AT > 3000) musLoops();
+  if (!MUS_AUDIO && !MUS_RENDERING) setTimeout(() => musPlay(false)); // draw the waveform; play waits for the user
+  if (MUS_WAVE) requestAnimationFrame(() => sfxDrawWave(MUS_WAVE, "mus-wave")); // the canvas is new after every re-render
+  const pct = (v) => `${Math.round(v * 100)}%`, sec = (v) => `${(+v).toFixed(1)} s`;
+  const slide = (label, key, min, max, step, show, opts = {}) => {
+    const get = opts.get || (() => MUS_P[key]), set = opts.set || ((v) => { MUS_P[key] = v; });
+    const out = h("span", { class: "hint", style: { minWidth: "58px", textAlign: "right" } }, show(get()));
+    const r = h("input", { type: "range", min, max, step, value: get(),
+      oninput: (ev) => { set(+ev.target.value); out.textContent = show(get()); }, onchange: () => (opts.after ? opts.after() : musSoon()) });
+    return field(label, h("div", { class: "pair", title: opts.title || MUS.help[key] || "" }, r, out));
+  };
+  const pick = (label, key, opts, after) => field(label, h("div", { title: MUS.help[key] || "" },
+    selectIn(String(MUS_P[key]), opts, (v) => { MUS_P[key] = typeof MUS_P[key] === "number" ? +v : v; after ? after() : musSoon(); renderInspector(); })));
+  const check = (label, key) => field(label, h("input", { type: "checkbox", checked: !!MUS_P[key], title: MUS.help[key] || "",
+    onchange: (ev) => { MUS_P[key] = ev.target.checked; musSoon(); renderInspector(); } }));
+  const sub = (t) => h("div", { class: "fx-cat", style: { marginTop: "14px" } }, t);
+  // drum step grid: one bar of 16 steps per drum; click cycles off → accent → soft
+  const row = (key, label) => {
+    let pat = MUS_P[key] || "";
+    const more = pat.length > 16 ? ` +${Math.ceil(pat.length / 16) - 1} bar${pat.length > 32 ? "s" : ""}` : "";
+    const cells = Array.from({ length: 16 }, (_, i) => {
+      const ch = pat.length ? pat[i % pat.length] : ".";
+      const cls = ch === "x" ? "x" : ch === "o" ? "o" : "234".includes(ch) ? "o roll" : i % 4 === 0 ? "beat" : "";
+      return h("button", { class: cls, "data-step": i, title: `Step ${i + 1}${"234".includes(ch) ? ` · roll of ${ch}` : ""}`,
+        onclick: () => {
+          let p = pat || ".".repeat(16);
+          while (p.length < 16) p += p; // a short pattern becomes one full bar before editing
+          const nxt = { ".": "x", "-": "x", x: "o", o: "." }[p[i]] ?? ".";
+          MUS_P[key] = p.slice(0, i) + nxt + p.slice(i + 1);
+          if (/^[.-]*$/.test(MUS_P[key])) MUS_P[key] = "";
+          renderInspector(); musSoon();
+        } }, "234".includes(ch) ? ch : "");
+    });
+    return h("div", { class: "seq" }, h("span", { title: more ? `This pattern is longer than one bar (${pat.length / 16} bars); the grid edits its first bar` : "" }, label + more), ...cells);
+  };
+  const bars = [1, 2, 4, 8, 12, 16, 24, 32].filter((b) => musSecs(MUS_P, b) <= MUS.max_seconds + 1e-6);
+  const loops = MUS_LOOPS.length ? h("div", { style: { margin: "10px 0 4px" } },
+    h("div", { class: "fx-cat", style: { marginTop: 0 } }, "On your timeline"),
+    ...MUS_LOOPS.map((l) => h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "3px 0" } },
+      h("span", { class: "hint" }, h("b", { style: { color: "var(--text)" } }, l.id), ` · ${l.params.name} · ${Math.round(l.params.bpm)} bpm · from ${fmt(l.start)}`),
+      MUS_FROM === l.id ? h("span", { class: "hint" }, "editing") : h("button", { class: "ghost", style: { padding: "2px 9px" }, onclick: () => musEdit(l.id) }, icon("pencil"), "Edit")))) : null;
+  const card = (s) => h("button", { class: "fx-card" + (MUS_P.style === s.key ? " on" : ""), title: `${s.about}\nClick to load and hear it`,
+    onclick: () => musLoad({ ...s.params, seed: MUS_P.seed }) },
+    h("div", { class: "fx-th", style: { background: "linear-gradient(135deg, var(--pane3), var(--pane2))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" } }, icon("music")),
+    h("div", { class: "fx-nm" }, `${s.key} · ${Math.round(s.bpm)}`), h("div", { class: "fx-ab" }, s.about));
+  const ask = h("input", { type: "search", value: MUS_Q, placeholder: "Describe the music…  (calm lofi for a study vlog, hype trap intro, faster, darker)",
+    oninput: (ev) => { MUS_Q = ev.target.value; }, onkeydown: (ev) => { if (ev.key === "Enter") musAI(); } });
+  const playing = MUS_AUDIO && !MUS_AUDIO.paused;
+  return [
+    h("div", { class: "sec-h" }, h("h3", {}, "Music"), h("span", { class: "hint" }, "original loops made on your computer, free to use")),
+    h("div", { class: "fx-search", style: { display: "flex", gap: "6px" } }, ask,
+      h("button", { onclick: musAI, disabled: MUS_BUSY, title: "The AI writes the loop's settings from your description (one small AI call)" }, icon("sparkle"), MUS_BUSY ? "Writing…" : "Make with AI")),
+    MUS_NOTE ? h("p", { class: "hint", style: { margin: "6px 0 0" } }, MUS_NOTE) : null,
+    loops,
+    h("div", { style: { margin: "12px 0 4px", display: "flex", alignItems: "center", gap: "8px" } },
+      h("button", { id: "mus-play", class: "icon", title: "Play / stop the loop", onclick: () => (MUS_AUDIO && !MUS_AUDIO.paused ? musStop() : MUS_AUDIO ? MUS_AUDIO.play() : musPlay()) }, icon(playing ? "pause" : "play")),
+      h("canvas", { id: "mus-wave", style: { flex: 1, height: "44px", width: "100%", background: "var(--pane2)", borderRadius: "8px" } })),
+    h("div", { style: { display: "flex", justifyContent: "space-between", gap: "10px", marginBottom: "6px" } },
+      h("span", { id: "mus-status", class: "hint" }, MUS_RENDERING ? "Making the loop…" : playing ? "Playing (loops)" : ""),
+      h("span", { class: "hint" }, `${MUS_P.bars} bars · ${musSecs().toFixed(1)} s loop`)),
+    h("div", { class: "pair", style: { flexWrap: "wrap", gap: "6px", marginBottom: "8px" } },
+      MUS_FROM
+        ? [h("button", { class: "primary", onclick: musAdd, title: `Replace ${MUS_FROM}'s loop with this one (its start, volume and length stay)` }, icon("check"), `Update ${MUS_FROM}`),
+           h("button", { class: "ghost", onclick: () => { MUS_FROM = null; MUS_NOTE = ""; renderInspector(); } }, "Stop editing")]
+        : h("button", { class: "primary", onclick: musAdd, title: "Render this loop and put it on a music track at the playhead; it loops to the end of the edit" }, icon("plus"), `Add at ${fmt(video.currentTime)}`),
+      h("button", { class: "ghost", title: "Same chords and sound, another melody and feel", onclick: () => { MUS_P.seed = Math.floor(Math.random() * 1e9); musSoon(); } }, "New melody")),
+    h("div", { class: "fx-cat" }, "Mood"),
+    h("div", { class: "pair", style: { flexWrap: "wrap", gap: "4px" } }, MUS.moods.map((m) =>
+      h("button", { class: "ghost", style: { padding: "3px 9px", fontSize: "12px" }, onclick: () => musMood(m) }, m))),
+    sub("Song"),
+    h("div", { class: "fields" },
+      field("Name", h("input", { value: MUS_P.name, oninput: (ev) => { MUS_P.name = ev.target.value || "loop"; } })),
+      slide("Tempo", "bpm", 50, 200, 1, (v) => `${Math.round(v)} bpm`, { after: () => {
+        while (MUS_P.bars > 1 && musSecs() > MUS.max_seconds) MUS_P.bars = bars.filter((b) => b < MUS_P.bars).pop() || 1;
+        renderInspector(); musSoon(); } }),
+      pick("Key", "key", MUS.keys.map((k) => [k, k])),
+      pick("Scale", "scale", MUS.scales.map((s) => [s, s.replace("_", " ")])),
+      field("Chords", h("div", { title: "Scale degrees 1-7; the progression repeats. 1 = home, 4 and 5 = lift, 6 = sad / relative minor" },
+        h("input", { value: MUS_P.chords.join(" "), onchange: (ev) => {
+          const v = ev.target.value.split(/[\s,\-]+/).filter(Boolean).map(Number);
+          if (!v.length || v.some((d) => !(d >= 1 && d <= 7 && Number.isInteger(d)))) { toast("Chords are numbers 1-7, e.g. 1 5 6 4", true); return renderInspector(); }
+          MUS_P.chords = v; renderInspector(); musSoon(); } }),
+        h("div", { class: "hint", style: { marginTop: "3px" } }, musChordNames()))),
+      field("", h("div", { class: "pair", style: { flexWrap: "wrap", gap: "4px" } }, MUS_PROGS.map(([c, l]) =>
+        h("button", { class: MUS_P.chords.join(" ") === c ? "" : "ghost", style: { padding: "2px 7px", fontSize: "11px" }, title: c,
+          onclick: () => { MUS_P.chords = c.split(" ").map(Number); renderInspector(); musSoon(); } }, l)))),
+      pick("Chord length", "chord_bars", [["0.5", "½ bar"], ["1", "1 bar"], ["2", "2 bars"], ["4", "4 bars"]]),
+      check("7th chords", "sevenths"),
+      field("Length", selectIn(String(MUS_P.bars), bars.map((b) => [String(b), `${b} bar${b > 1 ? "s" : ""} · ${musSecs(MUS_P, b).toFixed(1)} s`]),
+        (v) => { MUS_P.bars = +v; renderInspector(); musSoon(); }))),
+    sub("Drums"),
+    h("div", { class: "fields" },
+      pick("Kit", "kit", MUS_KITS),
+      slide("Level", "drums_level", 0, 1.5, 0.05, pct)),
+    h("div", { style: { margin: "6px 0" } }, ...MUS_DRUMS.map(([k, l]) => row(k, l))),
+    h("p", { class: "hint", style: { margin: "2px 0 6px" } }, "One bar, 16 steps. Click: off → accent → soft."),
+    h("div", { class: "fields" },
+      slide("Swing", "swing", 0, 0.6, 0.01, pct),
+      slide("Loose", "humanize", 0, 1, 0.01, pct, { title: "Human timing and velocity (0 = machine-tight)" }),
+      check("Fills", "fill")),
+    sub("Bass"),
+    h("div", { class: "fields" },
+      pick("Plays", "bass", MUS_BASS),
+      MUS_P.bass !== "none" ? [pick("Sound", "bass_wave", MUS_WAVES), pick("Octave", "bass_octave", [["1", "1 · sub"], ["2", "2 · normal"], ["3", "3 · high"]]),
+        slide("Level", "bass_level", 0, 1.5, 0.05, pct)] : []),
+    sub("Chords"),
+    h("div", { class: "fields" },
+      pick("Plays", "chord_style", MUS_CHORD),
+      MUS_P.chord_style !== "none" ? [pick("Sound", "chord_wave", MUS_WAVES), pick("Octave", "chord_octave", [["2", "2"], ["3", "3"], ["4", "4 · middle"], ["5", "5 · high"]]),
+        slide("Level", "chords_level", 0, 1.5, 0.05, pct)] : []),
+    sub("Lead"),
+    h("div", { class: "fields" },
+      pick("Plays", "lead", MUS_LEAD),
+      MUS_P.lead !== "none" ? [pick("Sound", "lead_wave", MUS_WAVES), pick("Octave", "lead_octave", [["3", "3"], ["4", "4"], ["5", "5 · normal"], ["6", "6 · high"]]),
+        slide("Busy", "lead_density", 0.05, 1, 0.01, pct, { title: "Sparse under talking (20-40%), busier for music-only edits" }),
+        slide("Level", "lead_level", 0, 1.5, 0.05, pct)] : []),
+    sub("Vibe"),
+    h("div", { class: "fields" },
+      slide("Brightness", "brightness", 0, 1, 0.01, pct),
+      slide("Width", "detune", 0, 1, 0.01, pct),
+      slide("Pump", "pump", 0, 1, 0.01, pct),
+      slide("Lo-fi", "lofi", 0, 1, 0.01, pct),
+      slide("Vinyl", "vinyl", 0, 1, 0.01, pct),
+      slide("Reverb", "room", 0, 1, 0.01, pct),
+      slide("Reverb size", "room_size", 0.2, 4, 0.05, sec)),
+    MUS_FROM ? null : [sub("On the timeline"),
+      h("div", { class: "fields" },
+        slide("Volume", "", 0, 1, 0.01, pct, { get: () => MUS_VOL, set: (v) => { MUS_VOL = v; }, after: () => {}, title: "Track volume; background music sits at 15-30%" }),
+        slide("Plays for", "", 0, 300, 1, (v) => v ? `${Math.round(v)} s` : "to the end", { get: () => MUS_HOLD, set: (v) => { MUS_HOLD = Math.round(v); }, after: () => {} }),
+        field("Duck voice", h("input", { type: "checkbox", checked: MUS_DUCK, title: "Lower the music automatically while someone talks", onchange: (ev) => { MUS_DUCK = ev.target.checked; } })))],
+    sub("Styles"),
+    h("div", { class: "fx-grid" }, MUS.styles.map(card)),
+    h("p", { class: "hint", style: { marginTop: "10px" } }, "Made by a synth: lo-fi, chiptune, synthwave, house and trap come out convincing; it won't sound like a recorded band or a singer."),
+  ].flat().filter((x) => x != null && x !== "");
 }
 
 function renderMedia() {
@@ -3410,7 +3658,11 @@ function renderMusic(m) {
       field("Starts at", numIn(m.start.toFixed(2), (v) => set({ start: v }), 0.1, { min: 0 })),
       field("Duck voice", h("input", { type: "checkbox", checked: m.duck, onchange: (e) => set({ duck: e.target.checked }) })),
       field("Loop", h("input", { type: "checkbox", checked: m.loop, onchange: (e) => set({ loop: e.target.checked }) }))),
-    h("div", { class: "btnrow" }, h("button", { class: "danger", onclick: () => op("music_remove", { music: m.id }) }, "Remove music")),
+    h("div", { class: "btnrow" },
+      /(^|[\\/])loop-[^\\/]+\.wav$/.test(P().sources[m.source]?.path || "") ? h("button", { onclick: async () => {
+        try { MUS_LOOPS = (await (await fetch("/api/music/loops")).json()).loops || []; MUS_LOOPS_AT = Date.now(); } catch {}
+        musEdit(m.id); } }, icon("music"), "Edit in Music") : null,
+      h("button", { class: "danger", onclick: () => op("music_remove", { music: m.id }) }, "Remove music")),
   ];
 }
 
