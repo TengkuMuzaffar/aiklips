@@ -196,6 +196,15 @@ class _SpriteSource:
             return self.image, 1.0
         if L.type == "video":
             return self.video.next(), 1.0  # type: ignore[union-attr]
+        if L.type == "iso":
+            from ..ops.iso import render_iso
+
+            key = ("iso", round((pr or {}).get("draw", 1.0), 4))
+            if key not in self.cache:
+                if len(self.cache) > 256:
+                    self.cache.clear()
+                self.cache[key] = render_iso(L, self.scale, key[1])
+            return self.cache[key], 1.0
         if L.type == "chart":
             from ..ops.chart import render_chart
 
@@ -238,6 +247,8 @@ class _SpriteSource:
 
 def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0) -> Path | None:
     """Render (or reuse) the overlay video for one layer. Returns None if it is not visible."""
+    if layer.type == "glass":  # drawn from the picture under it in the graph (render/graph.py _glass_layer)
+        return None
     start, dur = layer_span(layer, project.duration)
     if dur <= 0.01:
         return None

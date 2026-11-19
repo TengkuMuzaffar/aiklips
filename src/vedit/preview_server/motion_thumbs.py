@@ -14,7 +14,7 @@ from ..project import Canvas, Chart, ChartItem, Counter, Layer, Preset, Project,
 W, H = 640, 400  # the card's 16:10 thumbnail, drawn at 2x
 CV = Canvas(width=W, height=H, fps=15)
 
-_BG = {"kinetic": "#151515", "words": "#1E1B4B", "counter": "#0B1020", "bar": "#0B1A14", "line": "#1A0B1C", "donut": "#1A140B",
+_BG = {"iso": "#F4F2F8", "kinetic": "#151515", "words": "#1E1B4B", "counter": "#0B1020", "bar": "#0B1A14", "line": "#1A0B1C", "donut": "#1A140B",
        "draw": "#2A1020", "morph": "#1D1440"}
 
 
@@ -39,6 +39,10 @@ def _card(key: str) -> tuple[Layer, float]:
         return Layer(id="s", type="shape", shape="path", width=520, height=200, border_width=14, border_color="#F472B6",
                      path=[[0.0, 0.8], [0.25, 0.2], [0.5, 0.7], [0.75, 0.15], [1.0, 0.5]],
                      presets=[Preset(name="draw_in", duration=1.2)]), 1.6
+    if key == "iso":
+        from ..ops.iso import world
+
+        return Layer(id="w", type="iso", width=380, iso=world("cafe"), presets=[Preset(name="draw_in", duration=1.6, params={"ease": "linear"})]), 2.0
     if key == "morph":
         return Layer(id="s", type="shape", shape="ellipse", width=260, height=260, fill="#A78BFA", morph_to="star",
                      presets=[Preset(name="morph_loop", params={"period": 2.4})]), 2.4

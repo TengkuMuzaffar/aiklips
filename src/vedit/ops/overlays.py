@@ -122,6 +122,7 @@ FRAME_FIELDS: dict[str, Callable[[Any], Any]] = {
     "flip_v": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"),
     "fill_gradient": lambda v: _gradient_list(v),
     "gradient_angle": lambda v: float(v) % 360,
+    "glass_blur": lambda v: min(80.0, max(0.0, float(v))),
     "sides": lambda v: min(24, max(3, int(float(v)))),
     "points": lambda v: min(24, max(3, int(float(v)))),
     "inner": lambda v: min(0.95, max(0.05, float(v))),

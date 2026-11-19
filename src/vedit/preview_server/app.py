@@ -13,6 +13,7 @@ every change, whether it came from the GUI, the AI or the CLI.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import tempfile
@@ -217,6 +218,13 @@ def _thumb(pdir: Path, sid: str) -> Path:
     if not out.exists():
         media.extract_frame(path, min(1.0, src.duration / 3), out, 360)
     return out
+
+
+@functools.lru_cache(maxsize=512)
+def _iso_thumb(kind: str, theme: str) -> bytes:
+    from ..ops import iso_items
+
+    return iso_items.thumb(kind, theme)
 
 
 def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, dev: bool = False) -> FastAPI:
@@ -1144,6 +1152,24 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
             headers["X-Kinetic-End"] = f"{kinetic_end(lay, float(body.get('scale', 0.5))):.3f}"  # when it stops moving
         return Response(png, media_type="image/png", headers=headers)
+
+    @app.get("/api/iso-items")
+    def iso_items_catalog() -> dict:
+        """The iso item library, themes and ready-made worlds (the editor's item picker)."""
+        from ..ops import iso_items
+
+        return {"items": iso_items.catalog(), "themes": list(iso_items.THEMES), "worlds": list(iso_items.WORLDS)}
+
+    @app.get("/api/iso-item/{name}")
+    async def iso_item_thumb(name: str, theme: str = "pastel"):
+        """One iso item drawn on its own (PNG), for the item picker."""
+        from ..ops import iso_items
+
+        kind = name.removesuffix(".png")
+        if kind not in iso_items.ITEMS or theme not in iso_items.THEMES:
+            raise HTTPException(404, "No such item")
+        data = await asyncio.to_thread(_iso_thumb, kind, theme)
+        return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
     @app.get("/api/move-thumb/{name}")
     async def move_thumb(name: str):

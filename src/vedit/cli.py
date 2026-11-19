@@ -51,6 +51,9 @@ marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTub
 shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
                              "backgrounds, motion-design elements)")
 scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
+iso_app = typer.Typer(help="Isometric worlds: ready-made scenes or your own, from a library of 60+ items (`iso items`)")
+iso_item_app = typer.Typer(help="The items of an iso world: add / set (move, turn, recolour, label, settings) / remove")
+iso_app.add_typer(iso_item_app, name="item")
 group_app = typer.Typer(help="Layer groups: an effect's layers as one row on the timeline (move / rename / ungroup / delete together)")
 style_app = typer.Typer(help="Motion styles: a look as numbers (easing, timing, palette, fonts) the AI follows and the audit checks")
 motion_app = typer.Typer(help="Motion graphics on the tracks: kinetic text (by word / letter / line), draw-on, morph, paths")
@@ -65,7 +68,7 @@ for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app)
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
                   ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
                   ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
-                  ("style", style_app), ("group", group_app)]:
+                  ("style", style_app), ("group", group_app), ("iso", iso_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -894,6 +897,136 @@ def shape_add(
             overlays.place_layer(p, layer.id, track if track is not None else 1 + max((o.track or 0 for o in p.layers if o is not layer), default=-1),
                                  new_track=new_track)
     emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
+
+
+def _iso(p: Project, lid: str):
+    l = p.layer(lid)
+    if l.type != "iso" or l.iso is None:
+        raise VeditError(f"{lid} is not an isometric world (`vedit iso add`)")
+    return l
+
+
+@iso_app.command("items")
+def iso_items_list(category: Optional[str] = typer.Option(None, help="Only this category")):
+    """The item library: name, category, size on the grid, its settings."""
+    from .ops import iso_items
+
+    rows = [r for r in iso_items.catalog() if not category or r["category"].lower().startswith(category.lower())]
+    emit({"items": rows, "themes": list(iso_items.THEMES), "worlds": list(iso_items.WORLDS)},
+         "\n".join(f"  {r['kind']:<14} {r['category']:<15} {r['footprint'][0]:g}x{r['footprint'][1]:g}"
+                   + (f"  settings: {', '.join(f'{k}={v!r}' for k, v in r['params'].items())}" if r["params"] else "") for r in rows)
+         + f"\nThemes: {', '.join(iso_items.THEMES)}   Worlds: {', '.join(iso_items.WORLDS)}, empty")
+
+
+@iso_app.command("add")
+def iso_add(world_name: str = typer.Argument("city", metavar="WORLD", help="city | island | desk | cafe | office | farm | data | stack | empty"),
+            theme: str = typer.Option("pastel", help="pastel | bright | corporate | night"),
+            start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "55%",
+            width: Optional[int] = typer.Option(None, help="Width on the canvas (px)"),
+            scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in")):
+    """Add an isometric world that builds itself block by block (edit it with `iso item ...`)."""
+    from .editor import actions
+
+    with edit(f"iso add {world_name}") as tx:
+        msg = actions._iso_add(tx.project, {"world": world_name, "theme": theme, "start": start, "end": end, "x": x, "y": y,
+                                            "width": width, "scene": scene})
+        lid = tx.project.layers[-1].id if tx.project.layers[-1].type == "iso" else next(l.id for l in reversed(tx.project.layers) if l.type == "iso")
+    emit({"layer": lid}, msg)
+
+
+@iso_app.command("list")
+def iso_list(layer: str):
+    """An iso world's items with their index (for `iso item set|remove`)."""
+    p = load(pdir())
+    l = _iso(p, layer)
+    rows = [{"index": i, **it.model_dump(exclude_defaults=True)} for i, it in enumerate(l.iso.items)]
+    emit({"layer": layer, "theme": l.iso.theme, "build": l.iso.build, "items": rows},
+         f"{layer}: theme {l.iso.theme}, build {l.iso.build}\n" + "\n".join(
+             f"  #{r['index']:<3} {r['kind']:<14} at {r.get('x', 0):g},{r.get('y', 0):g}" + (f" z{r['z']:g}" if r.get("z") else "")
+             + (f" rot{r['rot']}" if r.get("rot") else "") + (f" x{r['size']:g}" if r.get("size") else "")
+             + (f" '{r['label']}'" if r.get("label") else "") + (f" {r['params']}" if r.get("params") else "") for r in rows))
+
+
+def _xy(at: Optional[str]) -> tuple[Optional[float], Optional[float]]:
+    if not at:
+        return None, None
+    try:
+        a, b = (float(v) for v in at.split(","))
+        return a, b
+    except ValueError:
+        raise VeditError("--at is x,y on the grid, e.g. 2,1.5") from None
+
+
+@iso_item_app.command("add")
+def iso_item_add(layer: str, kind: str = typer.Argument(..., help="An item from `vedit iso items`"),
+                 at: Optional[str] = typer.Option(None, help="x,y on the grid (default: a free spot on the floor)"),
+                 z: Optional[float] = typer.Option(None, help="Height it stands at (on a desk: 0.78)"),
+                 rot: Optional[int] = typer.Option(None, help="Quarter turns 0-3"), size: Optional[float] = None,
+                 color: Optional[str] = None, color2: Optional[str] = None,
+                 label: Optional[str] = typer.Option(None, help="A floating label above it"),
+                 param: Optional[list[str]] = typer.Option(None, "--param", help="Its own settings: floors=6, text=OPEN, value=3 ...")):
+    """Add an item to an iso world."""
+    from .ops import iso_items
+
+    x, y = _xy(at)
+    with edit(f"iso item add {layer} {kind}") as tx:
+        i = iso_items.add_item(_iso(tx.project, layer).iso, kind, x, y, z=z, rot=rot, size=size, color=color, color2=color2,
+                               label=label, params=iso_items.parse_params(param))
+        it = _iso(tx.project, layer).iso.items[i]
+    emit({"layer": layer, "index": i, "x": it.x, "y": it.y}, f"{layer}: #{i} {kind} at {it.x:g},{it.y:g}")
+
+
+@iso_item_app.command("set")
+def iso_item_set(layer: str, index: int, kind: Optional[str] = None, at: Optional[str] = None, z: Optional[float] = None,
+                 rot: Optional[int] = None, size: Optional[float] = None, color: Optional[str] = None, color2: Optional[str] = None,
+                 label: Optional[str] = None, param: Optional[list[str]] = typer.Option(None, "--param")):
+    """Move / turn / resize / recolour / relabel one item, or change its settings."""
+    from .ops import iso_items
+
+    x, y = _xy(at)
+    with edit(f"iso item set {layer} #{index}") as tx:
+        it = iso_items.set_item(_iso(tx.project, layer).iso, index, iso_items.parse_params(param) or None, kind=kind, x=x, y=y, z=z,
+                                rot=rot, size=size, color=color, color2=color2, label=label)
+    emit({"layer": layer, "index": index, "item": it.model_dump(exclude_defaults=True)}, f"{layer}: #{index} {it.kind}")
+
+
+@iso_item_app.command("remove")
+def iso_item_remove(layer: str, index: int):
+    """Delete one item from an iso world."""
+    from .ops import iso_items
+
+    with edit(f"iso item remove {layer} #{index}") as tx:
+        it = iso_items.remove_item(_iso(tx.project, layer).iso, index)
+    emit({"layer": layer, "removed": it.kind}, f"{layer}: removed #{index} {it.kind}")
+
+
+@iso_app.command("set")
+def iso_set(layer: str, theme: Optional[str] = None, world_name: Optional[str] = typer.Option(None, "--world", help="Swap in a ready-made world"),
+            light: Optional[float] = typer.Option(None, help="0-0.6: how strongly the faces are lit"),
+            outline: Optional[bool] = typer.Option(None, "--outline/--no-outline"),
+            build: Optional[str] = typer.Option(None, help="drop | grow | pop: how each item arrives")):
+    """An iso world's theme, light, outlines and build style (or swap the whole world)."""
+    from .editor import actions
+
+    with edit(f"iso set {layer}") as tx:
+        actions._iso_scene_set(tx.project, {"layer": layer, "theme": theme, "world": world_name, "light": light, "outline": outline, "build": build})
+    emit({"layer": layer}, f"{layer}: updated")
+
+
+@iso_app.command("scene")
+def iso_scene(layer: str, scene_file: Path = typer.Argument(..., help="JSON: {theme, build, items: [{kind, x, y, z, rot, size, color, label, params}]}")):
+    """Replace an iso world's whole scene from a JSON file (build a custom world in one step)."""
+    import json as _json
+
+    from .ops import iso_items
+    from .project import IsoScene
+
+    sc = IsoScene.model_validate(_json.loads(scene_file.read_text()))
+    for it in sc.items:
+        iso_items._check(it)
+    with edit(f"iso scene {layer}") as tx:
+        _iso(tx.project, layer).iso = sc
+    emit({"layer": layer, "items": len(sc.items)}, f"{layer}: {len(sc.items)} items")
 
 
 @group_app.command("list")

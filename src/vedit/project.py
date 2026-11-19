@@ -242,6 +242,43 @@ class Chart(_Model):
     stagger: float = 0.5  # how much each item waits for the previous one (0 = all together, 1 = one after another)
 
 
+class IsoBlock(_Model):
+    """A box in an isometric scene, in grid units: x / y on the floor, z up."""
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    w: float = 1.0  # along x
+    d: float = 1.0  # along y
+    h: float = 1.0  # up
+    color: str = "#7C9CFF"
+
+
+class IsoItem(_Model):
+    """A placed object from the iso item library (ops/iso_items.py: trees, buildings, cars, desks, people, signs ...),
+    in grid units. `color` / `color2` override its theme colours; `params` are its own settings (floors, text ...)."""
+    kind: str
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    rot: int = 0  # quarter turns (0-3)
+    size: float = 1.0  # scale
+    color: str | None = None
+    color2: str | None = None
+    label: str | None = None  # floating label above it
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class IsoScene(_Model):
+    """An isometric miniature world (ops/iso.py): its items (and raw blocks) build up one after another as `draw`
+    goes 0 -> 1."""
+    items: list[IsoItem] = Field(default_factory=list)
+    blocks: list[IsoBlock] = Field(default_factory=list)
+    theme: str = "pastel"  # colour palette for every item (ops/iso_items.py THEMES)
+    light: float = 0.25  # how much brighter the tops / darker the sides are (0..0.6)
+    outline: str | None = "#00000030"  # thin edge lines (None = none)
+    build: Literal["drop", "grow", "pop"] = "drop"  # how each item arrives
+
+
 class Preset(_Model):
     name: str
     duration: float | None = None
@@ -293,7 +330,7 @@ class Layer(_Model):
     order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart", "glass", "iso"]
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
@@ -329,6 +366,8 @@ class Layer(_Model):
     group: str | None = None  # the LayerGroup it belongs to (Project.groups)
     step_fps: int | None = None  # motion in steps ("on twos": 12) like stop motion / paper cut-out; None = smooth
     chart: Chart | None = None  # chart layers
+    glass_blur: float = 22.0  # glass layers: how frosted the picture behind is (px; `fill` = its tint, `radius` = corners)
+    iso: IsoScene | None = None  # iso layers: blocks of a little isometric world (ops/iso.py)
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
     # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
     blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"

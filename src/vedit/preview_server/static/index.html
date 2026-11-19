@@ -335,6 +335,22 @@ body.ai-busy #tl-body .lane:not(.ruler) { cursor: not-allowed; }
 .blk.group .bl { position: relative; }
 .head.grp-h { box-shadow: inset 3px 0 0 var(--ai); }
 .head.in-grp { box-shadow: inset 3px 0 0 #5b4a8a; }
+.iso-list { display: flex; flex-direction: column; gap: 3px; max-height: 260px; overflow: auto; }
+.iso-row { display: flex; align-items: center; gap: 8px; justify-content: flex-start; text-align: left; padding: 3px 8px; height: auto; min-height: 34px; background: var(--pane2); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.iso-row img { width: 28px; height: 28px; object-fit: contain; flex: none; }
+.iso-row small { color: var(--faint); margin-left: auto; }
+.iso-row.on { border-color: var(--accent); background: #1c2a14; }
+.iso-row.add { color: var(--accent); justify-content: center; }
+.iso-pad { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.iso-pad button { min-width: 30px; padding: 0 6px; height: 26px; }
+.iso-dlg { width: min(760px, calc(100vw - 48px)); padding: 16px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }
+.iso-dlg h3 { margin: 0; }
+.iso-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; max-height: 60vh; overflow: auto; }
+.iso-cat { grid-column: 1 / -1; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-top: 6px; }
+.iso-card { display: flex; flex-direction: column; align-items: center; gap: 4px; height: auto; padding: 6px; background: #F4F2F8; color: #222; border-radius: 10px; border: 1px solid transparent; font-size: 11px; }
+.iso-card:hover { border-color: var(--accent); }
+.iso-card img { width: 72px; height: 72px; object-fit: contain; }
+.glass-l { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px solid #ffffff55; box-shadow: inset 0 1px 0 #ffffff66, 0 10px 30px #0004; }
 .blk.just { border-color: var(--ai) !important; animation: justpulse 1.1s ease-out 3; }
 @keyframes justpulse { 0% { box-shadow: 0 0 0 0 #c7a6ffdd; } 100% { box-shadow: 0 0 0 9px #c7a6ff00; } }
 .mk.just { filter: drop-shadow(0 0 4px var(--ai)); }
@@ -1246,7 +1262,7 @@ function contentKey(l) {
       shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner,
       // motion (ops/motion.py, ops/chart.py)
       path: l.path, closed: l.closed, morph_to: l.morph_to, split: l.split, sa: l.split_anim, stg: l.stagger, sd: l.split_dur, se: l.split_ease,
-      counter: l.counter, chart: l.chart });
+      counter: l.counter, chart: l.chart, iso: l.iso });
     CONTENT.set(l, k);
   }
   return k;
@@ -1289,7 +1305,7 @@ function spriteFor(l, T, pr) {
     if (l.morph_to && pr.morph > 0.0005) m.morph = q2(pr.morph);
     return [spriteFetch(l, Object.keys(m).length ? { motion: m } : {}), 1];
   }
-  if (l.type === "chart") return [spriteFetch(l, pr.draw < 0.9995 ? { motion: { draw: q2(pr.draw) } } : {}), 1];
+  if (l.type === "chart" || l.type === "iso") return [spriteFetch(l, pr.draw < 0.9995 ? { motion: { draw: q2(pr.draw) } } : {}), 1];
   if (l.type === "text" && l.split && l.split !== "none" && !l.counter) { // kinetic text: one sprite per 1/30 s while it moves
     const t = T - l.start, end = KEND.get(contentKey(l)) ?? 10;
     if (t >= end) return [spriteFetch(l, { motion: { kt: 600 } }), 1];
@@ -1324,6 +1340,7 @@ function spriteFor(l, T, pr) {
 const BLEND_CSS = { normal: "normal", screen: "screen", multiply: "multiply", overlay: "overlay", add: "plus-lighter", lighten: "lighten", darken: "darken" };
 function stopLayerVideos() { for (const v of LV.values()) if (v.vid && !v.vid.paused) v.vid.pause(); }
 function makeLayerEl(l) {
+  if (l.type === "glass") return { el: h("div", { class: "glass-l" }), type: "glass" }; // liquid glass: CSS backdrop-filter
   if (l.type !== "video") return { el: h("img", { alt: "" }), type: l.type, shown: null };
   // video layers play in the browser: a <video> (or, with green screen, a keyed <canvas>) in a frame div
   const vid = h("video", { playsinline: true, preload: "auto", muted: true });
@@ -1419,7 +1436,7 @@ function drawOverlays() {
   P().layers.filter((l) => !underVideo(l)).forEach((l, z) => {
     seen.add(l.id);
     let v = LV.get(l.id);
-    if (v && v.type !== l.type && (v.type === "video" || l.type === "video")) { v.el.remove(); v = null; }
+    if (v && v.type !== l.type && [v.type, l.type].some((x) => x === "video" || x === "glass")) { v.el.remove(); v = null; }
     if (!v) { v = makeLayerEl(l); LV.set(l.id, v); }
     if (v.el.parentNode !== stage || stage.children[z] !== v.el) stage.insertBefore(v.el, stage.children[z] || null); // list order = stacking order
     v.el.style.mixBlendMode = BLEND_CSS[l.blend] || "normal";
@@ -1435,6 +1452,17 @@ function drawOverlays() {
       if (d.rot != null) pr.rotation = d.rot;
     }
     if (l.type === "video") return drawVideoLayer(v, l, pr, box, cv, T);
+    if (l.type === "glass") { // same panel as render/graph.py _glass_layer: frosted backdrop, tint, rim, 0.25 s fades
+      const w = (l.width || 600) * l.scale * l.sx * box.sc, hh = (l.height || 300) * l.scale * l.sy * box.sc;
+      const fade = Math.max(0, Math.min(1, t / 0.25, (ldur - t) / 0.25)), st = v.el.style;
+      Object.assign(st, { display: "block", width: `${w}px`, height: `${hh}px`, opacity: fade,
+        borderRadius: `${(l.radius || 0) * box.sc}px`, background: `linear-gradient(135deg, ${hexA(l.fill || "#FFFFFF1C", 1.6)}, ${hexA(l.fill || "#FFFFFF1C", 0.6)})`,
+        backdropFilter: `blur(${(l.glass_blur ?? 22) * box.sc * 0.5}px) saturate(1.35) brightness(1.05)`,
+        transform: `translate(${pr.x * box.sc - w / 2}px, ${pr.y * box.sc - hh / 2}px)` });
+      st.webkitBackdropFilter = st.backdropFilter;
+      v.g = { x: pr.x, y: pr.y, w, h: hh, rot: 0 };
+      return;
+    }
     const [key, extra] = spriteFor(l, T, pr);
     if (key && SPRITES.has(key)) v.shown = key; // otherwise keep the last sprite until the new one arrives
     const sp = v.shown && SPRITES.get(v.shown), s = pr.scale * extra;
@@ -1762,11 +1790,17 @@ async function addAndSelect(name, args) {
 function hasTimeline() { return !!(ST && (P().clips.length || P().layers.length)); }
 function underVideo(l) { return (l.track ?? 0) < (P().main_z || 0); }
 async function op(name, args) { const r = await api("/api/op", { op: name, args }); if (r) await refresh(); return r; }
+function hexA(c, k) { // a #RRGGBBAA colour with its alpha scaled by k (glass tint shading)
+  const s = String(c).replace("#", ""), a = s.length === 8 ? parseInt(s.slice(6), 16) : 255;
+  return `#${s.slice(0, 6)}${Math.max(0, Math.min(255, Math.round(a * k))).toString(16).padStart(2, "0")}`;
+}
 function layerLabel(l) {
   if (l.type === "text") return l.text || "";
   if (l.type === "image") return (l.image || "").split(/[\\/]/).pop();
   if (l.type === "video") { const s = ST && P().sources[l.source]; return s ? sourceName(s) : l.source || ""; }
   if (l.type === "shape") return l.morph_to ? `${l.shape} → ${l.morph_to}` : l.shape;
+  if (l.type === "glass") return "liquid glass";
+  if (l.type === "iso") return `iso world (${(l.iso?.blocks || []).length} blocks)`;
   if (l.type === "chart") return `${l.chart?.kind || "bar"} chart: ${(l.chart?.items || []).map((i) => i.label || i.value).slice(0, 4).join(", ")}`;
   if (l.type === "adjust") return [l.grade?.look, ...(l.effects || []).filter((e) => e.type === "fx").map((e) => e.params.key), l.grade && !l.grade.look ? "colour" : null].filter(Boolean).join(" + ") || "adjustment";
   return l.words.slice(0, 6).map((w) => w.text).join(" ");
@@ -2305,7 +2339,7 @@ const EASES = ["ease_out", "ease_in_out", "snap", "smooth", "expo_out", "circ_ou
 const SHAPE_KIND_LABELS = { rect: "Box", ellipse: "Circle", triangle: "Triangle", diamond: "Diamond", polygon: "Hexagon", star: "Star", ring: "Ring",
   heart: "Heart", bubble: "Speech bubble", blob: "Blob", line: "Line", arrow: "Arrow", path: "Path" };
 const MORPH_KINDS = Object.entries(SHAPE_KIND_LABELS).filter(([k]) => k !== "path");
-const MOTION_BG = { kinetic: "#151515", words: "#1E1B4B", counter: "#0B1020", bar: "#0B1A14", line: "#1A0B1C", donut: "#1A140B", draw: "#2A1020", morph: "#1D1440" };
+const MOTION_BG = { iso: "#F4F2F8", kinetic: "#151515", words: "#1E1B4B", counter: "#0B1020", bar: "#0B1A14", line: "#1A0B1C", donut: "#1A140B", draw: "#2A1020", morph: "#1D1440" };
 const MOTION_CARDS = [
   { k: "kinetic", n: "Kinetic title", a: "Letters rise out of a mask one by one", icon: "type", bg: "linear-gradient(135deg,#111,#2b2b2b)",
     op: "layer_add_text", args: { text: "BIG IDEA", split: "letter", split_anim: "mask_up", stagger: 0.03, split_ease: "snap", style: { size: 140, stroke_width: 0 } } },
@@ -2321,6 +2355,8 @@ const MOTION_CARDS = [
     op: "chart_add", args: { kind: "donut", data: "Ads=45, Organic=35, Referral=20" } },
   { k: "draw", n: "Draw-on line", a: "A line that draws itself (underline, journey, scribble)", icon: "squiggle", bg: "linear-gradient(135deg,#2a1020,#4a1d3a)",
     op: "layer_add_shape", args: { shape: "path", draw: true, border_width: 12, border_color: "#F472B6", width: 700, height: 220 } },
+  { k: "iso", n: "Iso world", a: "A little isometric world that builds itself (edit its items after)", icon: "shape", bg: "#ECE8F2",
+    op: "iso_add", args: { world: "cafe" } },
   { k: "morph", n: "Morphing shape", a: "A circle that turns into a star and back", icon: "morph", bg: "linear-gradient(135deg,#1d1440,#3b2a6b)",
     op: "layer_add_shape", args: { shape: "ellipse", morph_to: "star", morph_loop: true, fill: "#A78BFA", width: 320, height: 320 } },
 ];
@@ -2842,7 +2878,7 @@ function renderLayer(l) {
   const lst = (k) => (v) => { l.style[k] = v; markDirty(l); };
   const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "rise_in", "wipe_in", "grow_in", "stretch_in", "punch", "spin_in", "drop_in", "typewriter",
     "fade_out", "pop_out", "slide_out", "wipe_out", "shake", "bob", "pulse", "wiggle", "spin", "float", "breathe",
-    ...(l.type === "shape" || l.type === "chart" ? ["draw_in", "draw_out"] : []), ...(l.counter ? ["count_up"] : []), ...(l.morph_to ? ["morph_loop"] : [])];
+    ...(["shape", "chart", "iso"].includes(l.type) ? ["draw_in", "draw_out"] : []), ...(l.counter ? ["count_up"] : []), ...(l.morph_to ? ["morph_loop"] : [])];
   const mset = (args) => op("motion_set", { layer: l.id, ...args });
   const hasPreset = (n) => l.presets.some((x) => x.name === n);
   const togglePreset = (n) => (hasPreset(n) ? op("preset_remove", { layer: l.id, name: n }) : op("preset_add", { layer: l.id, name: n }));
@@ -2895,11 +2931,11 @@ function renderLayer(l) {
     field("Grow in", h("button", { class: "ghost" + (hasPreset("draw_in") ? " on" : ""), onclick: () => togglePreset("draw_in") }, hasPreset("draw_in") ? "Growing in ✓" : "Grow it in")),
   ] : [];
   const frameFields = [
-    h("label", { class: "full sec" }, isText || l.type === "chart" ? "Blend" : "Frame & blend"),
+    h("label", { class: "full sec" }, isText || ["chart", "iso", "glass"].includes(l.type) ? "Blend" : "Frame & blend"),
     field("Blend", selectIn(l.blend || "normal", [["normal", "Normal"], ["screen", "Screen (lighten: leaks, dust, glow)"], ["add", "Add (brighter)"],
       ["overlay", "Overlay (texture, contrast)"], ["multiply", "Multiply (darken: paper, shadows)"], ["lighten", "Lighten"], ["darken", "Darken"]], (v) => set({ blend: v }))),
-    !isText && l.type !== "chart" && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
-    !isText && l.type !== "chart" ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
+    !isText && !["chart", "iso"].includes(l.type) && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
+    !isText && !["chart", "iso", "glass"].includes(l.type) ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
       numIn(l.border_width || 0, (v) => set({ border_width: v }), 1, { min: 0, max: 60, title: "Border width px (inside the edge)" }))) : null,
     l.type === "image" || l.type === "video" ? field("Circle", h("input", { type: "checkbox", checked: l.mask === "circle", title: "Cut it out as a circle (face cam)",
       onchange: (e) => set({ mask: e.target.checked ? "circle" : "rect" }) })) : null,
@@ -2926,7 +2962,12 @@ function renderLayer(l) {
     field("Volume", rangeIn(l.volume || 0, 0, 2, 0.05, (v) => set({ volume: v }), lv("volume"))),
     field("Loop", h("input", { type: "checkbox", checked: l.loop, title: "Repeat the video when the layer is longer", onchange: (e) => set({ loop: e.target.checked }) })),
     ...fxStack(l),
-  ] : l.type === "chart" ? chartFields : l.type === "shape" ? [
+  ] : l.type === "glass" ? [
+    field("Size", h("div", { class: "pair" }, numIn(l.width ?? 600, (v) => set({ width: v }), 10, { title: "Width px" }), numIn(l.height ?? 300, (v) => set({ height: v }), 10, { title: "Height px" }))),
+    field("Frost", rangeIn(l.glass_blur ?? 22, 0, 80, 1, (v) => set({ glass_blur: v }), lf("glass_blur"))),
+    field("Tint", colorIn(l.fill || "#FFFFFF1C", (v) => set({ fill: v }), lf("fill"))),
+    field("Note", h("span", { class: "hint" }, "Glass blurs whatever is under it. It fades in and out; position, size and corners are fixed (no motion presets).")),
+  ] : l.type === "iso" ? isoFields(l, set, hasPreset, togglePreset) : l.type === "chart" ? chartFields : l.type === "shape" ? [
     field("Shape", selectIn(l.shape, [["rect", "Box"], ["ellipse", "Ellipse / ring"], ["line", "Line"], ["arrow", "Arrow"],
       ...(SHAPE_KIND_LABELS[l.shape] && !["rect", "ellipse", "line", "arrow"].includes(l.shape) ? [[l.shape, SHAPE_KIND_LABELS[l.shape]]] : [])], (v) => set({ shape: v }))),
     field("Size", h("div", { class: "pair" }, numIn(l.width ?? 400, (v) => set({ width: v }), 10, { title: "Width px" }),
@@ -2993,6 +3034,71 @@ function renderLayer(l) {
       l.type !== "captions" ? h("button", { title: "Reuse this layer (Shift+click more layers first to include them) in any project", onclick: () => saveTemplate(l) }, "Save as template…") : null,
       h("button", { onclick: () => askAbout(`layer ${l.id}`) }, "Ask AI to animate…")),
   ];
+}
+
+// ---- isometric worlds: scene settings + the item list (ops/iso_items.py) ----
+let ISO = null, ISO_I = null; // the item library (GET /api/iso-items); the selected item index of the shown world
+fetch("/api/iso-items").then((r) => r.json()).then((d) => { ISO = d; }).catch(() => {});
+const isoThumb = (kind, theme) => `/api/iso-item/${kind}.png?theme=${theme || "pastel"}`;
+function isoFields(l, set, hasPreset, togglePreset) {
+  const sc = l.iso || { items: [] }, iop = (name, args) => op(name, { layer: l.id, ...args });
+  if (ISO_I != null && !sc.items[ISO_I]) ISO_I = null;
+  const lib = (k) => (ISO?.items || []).find((x) => x.kind === k);
+  const rows = sc.items.map((it, i) => h("button", { class: "iso-row" + (i === ISO_I ? " on" : ""), onclick: () => { ISO_I = i === ISO_I ? null : i; renderInspector(); } },
+    h("img", { src: isoThumb(it.kind, sc.theme), alt: "" }), h("span", {}, `#${i} ${lib(it.kind)?.label || it.kind}`), it.label ? h("small", {}, `“${it.label}”`) : ""));
+  const it = ISO_I != null ? sc.items[ISO_I] : null;
+  const nudge = (k, d) => iop("iso_item_set", { index: ISO_I, [k]: +((it[k] || 0) + d).toFixed(2) });
+  const itemEd = it ? [
+    h("label", { class: "full sec" }, `Item #${ISO_I}: ${lib(it.kind)?.label || it.kind}`),
+    field("Move", h("div", { class: "iso-pad" },
+      ...[["x", -0.5, "←", "Back-left along x"], ["x", 0.5, "→", "Forward-right along x"], ["y", -0.5, "↑", "Back-right along y"], ["y", 0.5, "↓", "Forward-left along y"],
+        ["z", 0.25, "▲", "Up"], ["z", -0.25, "▼", "Down"]].map(([k, d, t, tip]) => h("button", { class: "ghost", title: tip, onclick: () => nudge(k, d) }, t)),
+      h("span", { class: "hint" }, `${(+it.x).toFixed(1)}, ${(+it.y).toFixed(1)}${it.z ? ` ↑${(+it.z).toFixed(2)}` : ""}`))),
+    field("Turn · size", h("div", { class: "pair" }, h("button", { class: "ghost", onclick: () => iop("iso_item_set", { index: ISO_I, rot: ((it.rot || 0) + 1) % 4 }) }, "⟳ Turn"),
+      numIn(it.size ?? 1, (v) => iop("iso_item_set", { index: ISO_I, size: v }), 0.1, { min: 0.1, max: 6, title: "Size" }))),
+    field("Colours", h("div", { class: "pair" }, colorIn(it.color || "#8FB8FF", (v) => iop("iso_item_set", { index: ISO_I, color: v })),
+      colorIn(it.color2 || "#FFD27A", (v) => iop("iso_item_set", { index: ISO_I, color2: v })),
+      h("button", { class: "ghost", title: "Back to the theme's colours", onclick: () => iop("iso_item_set", { index: ISO_I, color: "none", color2: "none" }) }, "Theme"))),
+    field("Label", textIn(it.label || "", (v) => iop("iso_item_set", { index: ISO_I, label: v || "none" }), { placeholder: "floats above it" })),
+    ...Object.entries(lib(it.kind)?.params || {}).map(([k, d]) => field(k[0].toUpperCase() + k.slice(1), typeof d === "boolean"
+      ? h("input", { type: "checkbox", checked: !!(it.params?.[k] ?? d), onchange: (e) => iop("iso_item_set", { index: ISO_I, params: { [k]: e.target.checked } }) })
+      : textIn(String(it.params?.[k] ?? d), (v) => iop("iso_item_set", { index: ISO_I, params: { [k]: typeof d === "number" ? +v : v } }),
+        { placeholder: k === "image" ? "path to a PNG / JPG" : "" }))),
+    h("div", { class: "btnrow full" },
+      h("button", { onclick: () => iop("iso_item_add", { kind: it.kind, z: it.z, rot: it.rot, size: it.size, color: it.color, color2: it.color2, params: it.params }).then(() => { ISO_I = (P().layers.find((x) => x.id === l.id)?.iso.items.length || 1) - 1; renderInspector(); }) }, "Duplicate"),
+      h("button", { class: "danger", onclick: () => iop("iso_item_remove", { index: ISO_I }).then(() => { ISO_I = null; renderInspector(); }) }, "Delete item")),
+  ] : [];
+  return [
+    field("World", h("div", { class: "pair" }, selectIn("", [["", "Swap for…"], ...(ISO?.worlds || []).map((w) => [w, w[0].toUpperCase() + w.slice(1)])],
+      (v) => v && iop("iso_scene_set", { world: v })), selectIn(sc.theme || "pastel", (ISO?.themes || ["pastel"]).map((t) => [t, `Theme: ${t}`]), (v) => iop("iso_scene_set", { theme: v })))),
+    field("Build", h("div", { class: "pair" }, selectIn(sc.build || "drop", [["drop", "Items drop in"], ["grow", "Items grow up"], ["pop", "Items pop in"]], (v) => iop("iso_scene_set", { build: v })),
+      h("button", { class: "ghost" + (hasPreset("draw_in") ? " on" : ""), onclick: () => togglePreset("draw_in") }, hasPreset("draw_in") ? "Builds ✓" : "Build it"))),
+    field("Light · lines", h("div", { class: "pair" }, rangeIn(sc.light ?? 0.25, 0, 0.6, 0.05, (v) => iop("iso_scene_set", { light: v })),
+      h("input", { type: "checkbox", title: "Outlines", checked: !!sc.outline, onchange: (e) => iop("iso_scene_set", { outline: e.target.checked }) }))),
+    field("Width", numIn(l.width ?? 700, (v) => set({ width: v }), 10)),
+    h("label", { class: "full sec" }, `Items (${sc.items.length})`),
+    h("div", { class: "iso-list full" }, ...rows, h("button", { class: "iso-row add", onclick: () => isoPicker(l) }, icon("plus"), h("span", {}, "Add item…"))),
+    ...itemEd,
+  ];
+}
+function isoPicker(l) { // the item library: pick one, it lands on a free spot of the floor
+  if (!ISO) return toast("Loading the item library…");
+  const theme = l.iso?.theme || "pastel", cats = [...new Set(ISO.items.map((x) => x.category))];
+  let q = "";
+  const grid = h("div", { class: "iso-pick" });
+  const draw = () => {
+    grid.innerHTML = "";
+    for (const c of cats) {
+      const its = ISO.items.filter((x) => x.category === c && `${x.kind} ${x.label} ${c}`.toLowerCase().includes(q));
+      if (!its.length) continue;
+      grid.append(h("div", { class: "iso-cat" }, c), ...its.map((x) => h("button", { class: "iso-card", title: x.label,
+        onclick: () => { m.close(); op("iso_item_add", { layer: l.id, kind: x.kind }).then((r) => { if (r) { ISO_I = (P().layers.find((y) => y.id === l.id)?.iso.items.length || 1) - 1; renderInspector(); } }); } },
+        h("img", { src: isoThumb(x.kind, theme), alt: "" }), h("span", {}, x.label))));
+    }
+  };
+  const search = h("input", { type: "search", placeholder: `Search ${ISO.items.length} items… (tree, car, desk, person, sign…)`, oninput: (e) => { q = e.target.value.toLowerCase(); draw(); } });
+  const m = AK.modal(h("div", { class: "iso-dlg" }, h("h3", {}, "Add an item"), search, grid));
+  draw(); setTimeout(() => search.focus(), 50);
 }
 
 function renderGroup(gid) {
@@ -3984,7 +4090,7 @@ function renderTimeline() {
   // times don't overlap; drag a block up / down to put it above or below others, or onto "New track"
   const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
     video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"],
-    chart: ["chart", "Chart", "var(--shp-b)"] };
+    chart: ["chart", "Chart", "var(--shp-b)"], glass: ["panels", "Glass", "var(--adj-b)"], iso: ["shape", "Iso world", "var(--shp-b)"] };
   const rowLayers = p.layers.filter((l) => !l.on_video); // the video track's own elements are drawn in its lane
   const nTracks = rowLayers.length ? Math.max(...rowLayers.map((l) => l.track ?? 0)) + 1 : 0;
   const trackLanes = [], MZ = Math.min(p.main_z || 0, nTracks);

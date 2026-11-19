@@ -212,6 +212,13 @@ def set_fields(layer: Layer, a: dict) -> list[str]:
     if a.get("closed") is not None:
         layer.closed = bool(a["closed"])
         changed.append("closed")
+    if a.get("iso_world"):
+        if layer.type != "iso":
+            raise VeditError("Only iso layers have a world")
+        from .iso import world
+
+        layer.iso = world(str(a["iso_world"]), a.get("iso_theme") or (layer.iso.theme if layer.iso else "pastel"))
+        changed.append("iso")
     if "chart" in a and a["chart"] is not None:
         if layer.type != "chart":
             raise VeditError("Only chart layers have chart data")

@@ -285,3 +285,37 @@ def test_effect_layers_are_grouped(cli, test_clip):
     cli("layer", "remove", ids[0])
     cli("layer", "remove", ids[1])
     assert not load(cli.project).groups, g  # an empty group goes away
+
+def test_iso_items_library_and_editing(cli):
+    """64 iso items from 6 primitives, themes, auto-placement, item editing via the CLI, and every item renders."""
+    from vedit.ops import iso_items
+    from vedit.ops.iso import render_iso, world
+    from vedit.project import IsoItem, IsoScene
+
+    assert len(iso_items.ITEMS) >= 50
+    for theme in iso_items.THEMES:
+        assert set(iso_items.THEMES["pastel"]) == set(iso_items.THEMES[theme]), theme
+    for kind in iso_items.ITEMS:  # every item draws something, and turned it still does
+        for rot in (0, 1):
+            img = render_iso(Layer(id="i", type="iso", width=120, iso=IsoScene(items=[IsoItem(kind=kind, rot=rot)])), 1.0)
+            assert _ink(img) > 20, (kind, rot)
+    for w in iso_items.WORLDS:
+        assert world(w, "night").items
+    cli("iso", "add", "empty", "--theme", "bright")
+    a = cli("iso", "item", "add", "iso1", "tree")
+    b = cli("iso", "item", "add", "iso1", "tree")
+    assert (a["x"], a["y"]) != (b["x"], b["y"])  # auto-placed on different free spots
+    cli("iso", "item", "add", "iso1", "shop", "--at", "2,2", "--param", "text=OPEN", "--label", "Store")
+    cli("iso", "item", "set", "iso1", "3", "--rot", "1", "--color", "#FF0000", "--param", "text=CLOSED")
+    lst = cli("iso", "list", "iso1")["items"]
+    assert lst[3]["kind"] == "shop" and lst[3]["rot"] == 1 and lst[3]["params"]["text"] == "CLOSED" and lst[3]["label"] == "Store"
+    cli("iso", "item", "remove", "iso1", "1")
+    cli("iso", "set", "iso1", "--build", "pop", "--theme", "night", "--no-outline")
+    p = load(cli.project)
+    sc = p.layer("iso1").iso
+    assert len(sc.items) == 3 and sc.build == "pop" and sc.theme == "night" and sc.outline is None
+    with pytest.raises(Exception):
+        cli("iso", "item", "add", "iso1", "dragon")
+    assert any(r["kind"] == "rocket" for r in cli("iso", "items")["items"])
+    imgs = cli("frame", "--at", "0.4,3", "--width", "200")["images"]
+    assert all(Path(i).exists() for i in imgs)

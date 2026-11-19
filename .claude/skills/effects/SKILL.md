@@ -50,6 +50,16 @@ afterwards in the editor (Effects tab shows the same effects, with previews).
 - **Budget**: 2-4 signature effects per 30 s. Don't stack two on the same second. Every effect should serve the
   story; say in `vedit why` what it does for the viewer.
 
+## Isometric worlds (build your own)
+
+`vedit iso add empty --theme pastel` (or a ready-made world: city, island, desk, cafe, office, farm, data, stack),
+then add items from the library of 64 (`vedit iso items`: trees, buildings, shops with your text, cars, desks,
+laptops / monitors / billboards with your text or image, people that wave, bar towers from values, coins, rockets ...):
+`vedit iso item add iso1 shop --param text=OPEN --label "Our store"`, `vedit iso item add iso1 bar --at 1,1 --param value=3.5`.
+Items land on a free spot unless `--at x,y` (grid units; a desk top is z 0.78). Turn with `--rot`, recolour with
+`--color`, change with `iso item set iso1 <n>` (`iso list iso1` shows the numbers). For a whole custom world at once:
+`vedit iso scene iso1 scene.json`. Check it with `vedit frame --at T` and read the image.
+
 ## Groups
 
 An effect with several layers becomes one group (`[g2]` next to its layers in `vedit info`, one row on the timeline).

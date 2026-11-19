@@ -88,7 +88,7 @@ def apply(p: Project, pdir: Path, key: str, at: float = 0.0) -> list[str]:
             d["source"] = add_source(p, pdir, Path(media))
         if d.get("type") == "image" and d.get("image") and not Path(d["image"]).exists():
             raise VeditError(f"The template's image is missing: {d['image']}")
-        prefix = {"text": "t", "image": "img", "video": "v", "shape": "sh", "adjust": "adj", "chart": "ch"}.get(d["type"], "l")
+        prefix = {"text": "t", "image": "img", "video": "v", "shape": "sh", "adjust": "adj", "chart": "ch", "glass": "gl", "iso": "iso"}.get(d["type"], "l")
         d["id"] = p.new_id(prefix)
         d["start"] = round(at + d["start"], 3)
         d["end"] = None if d.get("end") is None else round(at + d["end"], 3)

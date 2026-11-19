@@ -70,8 +70,12 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
         from ..ops.chart import render_chart
 
         img = render_chart(layer, scale, mo.get("draw", 1.0))
-    elif layer.type == "video":
-        raise VeditError("Video layers are played by the browser, not drawn as sprites")
+    elif layer.type == "iso":
+        from ..ops.iso import render_iso
+
+        img = render_iso(layer, scale, mo.get("draw", 1.0))
+    elif layer.type in ("video", "glass"):
+        raise VeditError("Video and glass layers are drawn by the browser, not as sprites")
     elif layer.type == "text" and layer.split != "none" and not layer.counter:
         from ..ops.motion import Kinetic
 

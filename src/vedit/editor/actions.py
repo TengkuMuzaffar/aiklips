@@ -646,6 +646,77 @@ def _layer_add_shape(p: Project, a: dict) -> str:
     return f"add {l.shape} {l.id}"
 
 
+def _iso_layer(p: Project, lid: str):
+    l = p.layer(lid)
+    if l.type != "iso" or l.iso is None:
+        raise VeditError(f"{lid} is not an isometric world")
+    return l
+
+
+@op("iso_add")
+def _iso_add(p: Project, a: dict) -> str:
+    """Elements: an isometric world (a ready-made one or an empty plate) that builds itself (`vedit iso add`)."""
+    from ..ops import iso_items, scenes
+    from ..ops.iso import world
+    from ..project import IsoScene, Preset
+
+    theme = a.get("theme") or "pastel"
+    w = a.get("world") or "city"
+    sc = IsoScene(items=[iso_items.I("plate", 0, 0, params={"w": 5, "d": 5})], theme=theme) if w == "empty" else world(w, theme)
+    start = float(a.get("start") or 0)
+    l = Layer(id=p.new_id("iso"), type="iso", iso=sc, start=start, end=_num(a, "end") or round(start + 4, 3), x=a.get("x") or "50%",
+              y=a.get("y") or "55%", width=int(a.get("width") or round(p.canvas.width * 0.8)),
+              presets=[Preset(name="draw_in", duration=1.8, params={"ease": "linear"})])
+    p.layers.append(l)
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add iso world {l.id} ({w})"
+
+
+@op("iso_item_add")
+def _iso_item_add(p: Project, a: dict) -> str:
+    """The iso item picker (`vedit iso item add`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    i = iso_items.add_item(l.iso, a["kind"], _num(a, "x"), _num(a, "y"), **{k: a.get(k) for k in ("z", "rot", "size", "color", "color2", "label", "params")})
+    return f"{l.id}: add {a['kind']} #{i}"
+
+
+@op("iso_item_set")
+def _iso_item_set(p: Project, a: dict) -> str:
+    """Change / move / turn one item of an iso world (`vedit iso item set`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    it = iso_items.set_item(l.iso, int(a["index"]), a.get("params") if isinstance(a.get("params"), dict) else None,
+                            **{k: a.get(k) for k in (*iso_items.ITEM_FIELDS, "kind")})
+    return f"{l.id}: item #{a['index']} {it.kind}"
+
+
+@op("iso_item_remove")
+def _iso_item_remove(p: Project, a: dict) -> str:
+    """Delete one item of an iso world (`vedit iso item remove`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    it = iso_items.remove_item(l.iso, int(a["index"]))
+    return f"{l.id}: remove {it.kind} #{a['index']}"
+
+
+@op("iso_scene_set")
+def _iso_scene_set(p: Project, a: dict) -> str:
+    """An iso world's theme / light / outlines / build style, or swap it for a ready-made world (`vedit iso set`)."""
+    from ..ops import iso_items
+    from ..ops.iso import world
+
+    l = _iso_layer(p, a["layer"])
+    if a.get("world"):
+        l.iso = world(a["world"], a.get("theme") or l.iso.theme)
+    iso_items.set_scene(l.iso, a.get("theme"), _num(a, "light"), a.get("outline"), a.get("build"))
+    return f"{l.id}: world settings"
+
+
 @op("group_make")
 def _group_make(p: Project, a: dict) -> str:
     """Group the selected layers (`vedit group make`)."""

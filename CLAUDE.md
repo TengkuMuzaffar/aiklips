@@ -144,6 +144,8 @@ update status | update check | update apply | update rollback | update auto true
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
 sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
 style list | style show <key> | style set <key|none>
+iso items [--category] | iso add <world|empty> [--theme pastel|bright|corporate|night --start --end --x --y --width] | iso list <id> | iso set <id> [--theme --world --light --outline/--no-outline --build drop|grow|pop] | iso scene <id> scene.json
+iso item add <id> <kind> [--at x,y --z --rot 0-3 --size --color --color2 --label --param k=v] | iso item set <id> <n> [...] | iso item remove <id> <n>
 group list | group make <ids...> [--name] | group set <g> [--name --collapsed/--expanded] | group move <g> --to T|--by S | group ungroup <g> | group remove <g>
 motion set <id> [--split word|letter|line --anim --stagger --dur --ease --morph-to KIND --path 'x,y ...' --closed] | motion draw <id> [--dur --ease --out] | motion morph <id> --to KIND [--at --dur --ease | --loop --period]
 counter add <to> [--from --decimals --prefix --suffix --sep --dur --ease --x --y --size --color --font] | counter set <id> [... | --off]

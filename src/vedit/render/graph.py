@@ -364,6 +364,88 @@ def _adjust_layer(g: Graph, project: Project, pdir: Path, layer, base: str, star
     return out
 
 
+def glass_box(project: Project, layer, scale: float) -> tuple[int, int, int, int]:
+    """A glass layer's panel on the rendered canvas: x, y, w, h (even px, inside the frame)."""
+    from ..project import parse_pos
+
+    W, H = even(project.canvas.width * scale), even(project.canvas.height * scale)
+    w = min(W, even((layer.width or 600) * layer.scale * layer.sx * scale))
+    h = min(H, even((layer.height or 300) * layer.scale * layer.sy * scale))
+    x = round(parse_pos(layer.x, project.canvas.width) * scale - w / 2)
+    y = round(parse_pos(layer.y, project.canvas.height) * scale - h / 2)
+    return max(0, min(W - w, x)), max(0, min(H - h, y)), w, h
+
+
+def glass_sprites(project: Project, pdir: Path, layer, scale: float) -> tuple[Path, Path]:
+    """The panel's rounded alpha mask and its rim light / sheen (cached PNGs)."""
+    import hashlib
+
+    from PIL import Image, ImageDraw
+
+    from ..ops.text import rgba
+
+    _, _, w, h = glass_box(project, layer, scale)
+    r = min(round(layer.radius * scale), w // 2, h // 2)
+    key = hashlib.sha1(f"{w}x{h}r{r}{layer.fill}".encode()).hexdigest()[:12]
+    cdir = state_dir(pdir) / "cache" / "glass"
+    cdir.mkdir(parents=True, exist_ok=True)
+    mask_p, rim_p = cdir / f"mask-{key}.png", cdir / f"rim-{key}.png"
+    if not rim_p.exists():
+        S = 3
+        m = Image.new("L", (w * S, h * S), 0)
+        ImageDraw.Draw(m).rounded_rectangle((0, 0, w * S - 1, h * S - 1), radius=r * S, fill=255)
+        m = m.resize((w, h), Image.LANCZOS)
+        m.save(mask_p)
+        rim = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        tint = rgba(layer.fill) if layer.fill else (255, 255, 255, 26)
+        sheen = Image.new("RGBA", (w, h))
+        px = sheen.load()
+        for yy in range(h):  # a soft diagonal sheen: brighter top-left, the tint everywhere
+            for xx in range(0, w, 2):
+                k = max(0.0, 1 - (xx / w + yy / h) / 1.2)
+                a = min(255, round(tint[3] + 40 * k))
+                px[xx, yy] = tint[:3] + (a,)
+                if xx + 1 < w:
+                    px[xx + 1, yy] = tint[:3] + (a,)
+        rim.paste(sheen, (0, 0), m)
+        edge = Image.new("L", (w * S, h * S), 0)
+        bw = max(2, round(1.6 * scale)) * S
+        ImageDraw.Draw(edge).rounded_rectangle((0, 0, w * S - 1, h * S - 1), radius=r * S, outline=255, width=bw)
+        edge = edge.resize((w, h), Image.LANCZOS)
+        hl = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        grad = Image.linear_gradient("L").resize((w, h)).transpose(Image.FLIP_TOP_BOTTOM)  # rim brighter at the top
+        hl.putalpha(Image.fromarray((__import__("numpy").asarray(edge, "uint16") * (90 + __import__("numpy").asarray(grad, "uint16") * 120 // 255) // 255).astype("uint8")))
+        rim = Image.alpha_composite(rim, hl)
+        rim.save(rim_p)
+    return mask_p, rim_p
+
+
+def _glass_layer(g: Graph, project: Project, pdir: Path, layer, base: str, start: float, ldur: float,
+                 W: int, H: int, scale: float) -> str:
+    """Liquid glass: the picture under the panel, frosted (blurred, a little brighter and more saturated), cut to the
+    panel's rounded shape, with a rim light and sheen on top; it fades in / out over 0.25 s. The live preview draws
+    the same with CSS backdrop-filter."""
+    if ldur <= 0.01:
+        return base
+    x, y, w, h = glass_box(project, layer, scale)
+    mask_p, rim_p = glass_sprites(project, pdir, layer, scale)
+    blur = max(1, round(layer.glass_blur * scale / 2))
+    a, b, gb, gm, gr, out, out2 = (g.label(n) for n in ("ga", "gb", "gbl", "gm", "gr", "gV", "gV"))
+    fps = project.canvas.fps
+    loop = ["-loop", "1", "-framerate", _f(fps), "-t", _f(start + ldur + 0.5)]
+    mi, ri = g.add_input([*loop, "-i", str(mask_p)]), g.add_input([*loop, "-i", str(rim_p)])
+    fade = (f"fade=t=in:st={_f(start)}:d=0.25:alpha=1,fade=t=out:st={_f(max(start, start + ldur - 0.25))}:d=0.25:alpha=1")
+    g.add(f"[{base}]split=2[{a}][{b}]")
+    g.add(f"[{b}]crop={w}:{h}:{x}:{y},boxblur={blur}:2,eq=brightness=0.05:saturation=1.35,format=rgba[{gb}]")
+    g.add(f"[{mi}:v]format=gray,setpts=PTS-STARTPTS[{gm}m]")
+    g.add(f"[{gb}][{gm}m]alphamerge,{fade}[{gm}]")
+    g.add(f"[{ri}:v]format=rgba,setpts=PTS-STARTPTS,{fade}[{gr}]")
+    en = f"enable='between(t,{_f(start)},{_f(start + ldur - 1e-3)})'"
+    g.add(f"[{a}][{gm}]overlay={x}:{y}:eof_action=pass:format=auto:{en}[{out}]")
+    g.add(f"[{out}][{gr}]overlay={x}:{y}:shortest=0:eof_action=pass:format=auto:{en}[{out2}]")
+    return out2
+
+
 def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None,
           encode: list[str] | None = None, audio: bool = True, layers: bool = True) -> tuple[list[str], float]:
     """`encode` replaces the default H.264 encoder arguments (codec, quality, pixel format, container flags) for exports
@@ -505,6 +587,8 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         start, ldur = layer_span(layer, total)
         if layer.type == "adjust":
             return _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
+        if layer.type == "glass":
+            return _glass_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale)
         f = ensure_layer(project, pdir, layer, scale)
         if f is None:
             return vcur
