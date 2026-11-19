@@ -172,3 +172,116 @@ def test_motion_plan_builds_the_new_elements(tmp_path):
     assert kt.split_ease == "ease_out"  # an unknown easing falls back instead of failing the build
     morph = next(l for l in p.layers if l.morph_to == "star")
     assert morph.keyframes[0].ease == "snap" and morph.keyframes[1].morph == 1
+
+
+def test_signature_effects_step1(cli, test_clip):
+    """snap / digital zoom, growth curve, checklists, headline storm, b-roll overlay: one undoable step each."""
+    from vedit.ops import moves
+    from vedit.project import ZOOM_EASES, zoom_at
+
+    cli("import", str(test_clip))
+    cli("import", str(test_clip), "--at", "99")
+    cli("remove-clip", "c2")  # keep the second source for b-roll
+    assert cli("fx", "apply", "snap_zoom", "--at", "0.5", "--dur", "0.6")["done"].startswith("snap zoom")
+    p = load(cli.project)
+    ramp = next(c for c in p.clips if c.zoom_to)
+    assert ramp.zoom_ease == "snap" and ramp.zoom_to == pytest.approx(1.35) and ramp.duration == pytest.approx(0.2, abs=0.02)
+    assert zoom_at(ramp, 0.5) > 1 + 0.35 * 0.9  # snap: nearly there half way through the ramp
+    assert [round(c.zoom, 2) for c in p.clips][-1] == 1.0  # cut back after the hold
+    cli("fx", "apply", "digital_zoom", "--at", "2.0")
+    assert sorted({round(c.zoom, 2) for c in load(cli.project).clips}) == [1.0, 1.12, 1.26, 1.35, 1.42]
+    cli("fx", "apply", "growth_curve", "--at", "1", "--text", "+340%")
+    cli("fx", "apply", "checklist_pop", "--at", "0.2", "--text", "Fast; Cheap; Easy")
+    cli("fx", "apply", "headline_storm", "--at", "1.5", "--text", "One; Two; Three")
+    src = next(s for s in load(cli.project).sources if s != load(cli.project).clips[0].source)
+    cli("fx", "apply", "broll_overlay", "--at", "1", "--source", src, "--dur", "1")
+    p = load(cli.project)
+    counter = next(l for l in p.layers if l.counter)
+    assert counter.text == "+340%" and any(l.type == "chart" for l in p.layers)
+    ticks = [l for l in p.layers if l.shape == "path"]
+    assert len(ticks) == 3 and all(x.presets[0].name == "draw_in" for x in ticks)
+    assert {l.text for l in p.layers if l.type == "text"} >= {"Fast", "Cheap", "Easy", "One", "Two", "Three"}
+    assert any(l.type == "video" and l.fit == "cover" for l in p.layers)
+    with pytest.raises(Exception):
+        cli("fx", "apply", "checklist", "--at", "1")  # needs the items
+    assert "broll_overlay" not in moves.MOVE_NAMES and "snap_zoom" in moves.MOVE_NAMES
+    assert set(ZOOM_EASES) >= {"linear", "snap", "ease_out"}
+    imgs = cli("frame", "--at", "0.6,2.5", "--width", "200")["images"]  # the eased zoom renders
+    assert all(Path(i).exists() for i in imgs)
+
+
+def test_effect_previews_render():
+    from vedit.ops.moves import PREVIEWS
+    from vedit.preview_server.motion_thumbs import move_thumb
+
+    for k in PREVIEWS:
+        assert move_thumb(k).startswith(b"\x89PNG")
+    assert move_thumb("checklist", True)[:4] == b"RIFF"
+
+
+def test_signature_effects_step2(cli, test_clip):
+    """chat takeover, phone mockup, magazine cover, zoom portal and the screencast / HUD / paper kits."""
+    cli("import", str(test_clip))
+    cli("split", "--at", "5")
+    cli("fx", "apply", "chat_takeover", "--at", "0.2", "--text", "them: hi; me: hey; them: look at this")
+    p = load(cli.project)
+    bubbles = [l for l in p.layers if l.type == "text" and l.style.bg_color]
+    assert {l.text for l in bubbles} >= {"hi", "hey", "look at this"} and any("•" in l.text for l in bubbles)  # typing dots
+    first = next(l for l in bubbles if l.text == "hi")
+    assert first.keyframes and first.keyframes[-1].y < first.y  # pushed up by the later messages
+    assert next(l for l in bubbles if l.text == "hey").style.bg_color == "#2F7BF6"  # mine: right, blue
+    cli("fx", "apply", "phone_mockup", "--at", "1", "--dur", "1.5")
+    phone = next(l for l in load(cli.project).layers if l.type == "video")
+    assert phone.border_width > 0 and phone.radius > 0 and phone.src_in == pytest.approx(1.0, abs=0.05)
+    cli("fx", "apply", "hud_lock", "--at", "2", "--box", "20,20,60,40", "--text", "target")
+    cli("fx", "apply", "cursor_click", "--at", "3", "--text", "10%,80% > 50%,50%")
+    cli("fx", "apply", "paper_title", "--at", "6", "--text", "Hi; there")
+    p = load(cli.project)
+    assert sum(1 for l in p.layers if l.shape == "path") >= 5  # 4 brackets + the cursor
+    assert any(l.text == "TARGET" and l.split == "letter" for l in p.layers)
+    assert all(l.step_fps == 12 for l in p.layers if l.start == pytest.approx(6.0) or l.start == pytest.approx(6.25))
+    cli("fx", "apply", "zoom_portal", "--clip", "c2")
+    p = load(cli.project)
+    dive = next(c for c in p.clips if c.zoom_to)
+    assert dive.zoom_ease == "ease_in" and p.clips[[c.id for c in p.clips].index(dive.id) + 1].transition.type == "zoomin"
+    cli("fx", "apply", "magazine_cover", "--at", "1.0", "--dur", "1.5", "--text", "ICON; The comeback")
+    p = load(cli.project)
+    keyed = next(c for c in p.clips if any(e.type == "bg" for e in c.effects))
+    assert next(e for e in keyed.effects if e.type == "bg").params["replace"] == "none" and p.main_z >= 2
+    under = [l for l in p.layers if (l.track or 0) < p.main_z and not l.on_video]
+    assert {l.type for l in under} == {"video", "text"}  # the full shot and the masthead sit under the person
+
+
+def test_effect_layers_are_grouped(cli, test_clip):
+    """An effect's layers form one group on tracks of their own; groups move / rename / ungroup / delete together."""
+    cli("import", str(test_clip))
+    cli("text", "add", "Plain", "--end", "2")
+    cli("fx", "apply", "chat_takeover", "--at", "0.5", "--text", "them: hi; me: hey")
+    cli("fx", "apply", "checklist", "--at", "1", "--text", "A; B")
+    p = load(cli.project)
+    assert [g.name for g in p.groups] == ["Chat takeover", "Checklist"] and [g.id for g in p.groups] == ["g1", "g2"]
+    for g in p.groups:  # a group's tracks hold only its own layers
+        tracks = {l.track for l in p.layers if l.group == g.id}
+        assert all(l.group == g.id for l in p.layers if l.track in tracks)
+    cli("text", "add", "Later", "--start", "1", "--end", "2")
+    p = load(cli.project)
+    later = next(l for l in p.layers if l.text == "Later")
+    assert later.group is None and not any(l.group for l in p.layers if l.track == later.track and l is not later)
+    s0 = min(l.start for l in p.layers if l.group == "g2")
+    cli("group", "move", "g2", "--by", "0.5")
+    assert min(l.start for l in load(cli.project).layers if l.group == "g2") == pytest.approx(s0 + 0.5)
+    cli("group", "set", "g2", "--name", "Steps", "--expanded")
+    g2 = next(g for g in load(cli.project).groups if g.id == "g2")
+    assert g2.name == "Steps" and not g2.collapsed
+    assert {r["id"] for r in cli("group", "list")["groups"]} == {"g1", "g2"}
+    n = len(load(cli.project).layers)
+    gone = cli("group", "remove", "g1")["removed"]
+    assert len(load(cli.project).layers) == n - len(gone) and [g.id for g in load(cli.project).groups] == ["g2"]
+    cli("group", "ungroup", "g2")
+    p = load(cli.project)
+    assert not p.groups and not any(l.group for l in p.layers)
+    ids = [l.id for l in p.layers][:2]
+    g = cli("group", "make", *ids, "--name", "Mine")["group"]
+    cli("layer", "remove", ids[0])
+    cli("layer", "remove", ids[1])
+    assert not load(cli.project).groups, g  # an empty group goes away

@@ -83,3 +83,83 @@ def thumb(key: str, animated: bool = False) -> bytes:
     hold = [frames[-1]] * (fps // 2 if key != "morph" else 0)  # rest on the result before it loops
     frames[0].save(buf, "WEBP", save_all=True, append_images=frames[1:] + hold, duration=round(1000 / fps), loop=0, quality=80)
     return buf.getvalue()
+
+
+# ---- signature effect previews (Effects tab): the effect applied to an empty 16:10 canvas ----------------------
+
+MW, MH = 1280, 800
+
+
+def _compose(p: Project, sources: dict, t: float) -> Image.Image:
+    """Every layer of `p` at time t over a dark card (same transform steps as render/layers.py)."""
+    img = Image.new("RGBA", (MW, MH), "#101418")
+    for l in p.layers:
+        end = l.end if l.end is not None else p.duration
+        if not (l.start <= t < end):
+            continue
+        pr = props_at(l, t - l.start, end - l.start, p.canvas)
+        sprite, extra = sources[l.id].get(t, pr["reveal"], pr)
+        s = pr["scale"] * extra
+        sx, sy = s * pr["sx"], s * pr["sy"]
+        if sprite is None or pr["opacity"] <= 0.001 or sx <= 0.001 or sy <= 0.001:
+            continue
+        if abs(sx - 1) > 1e-3 or abs(sy - 1) > 1e-3:
+            sprite = sprite.resize((max(1, round(sprite.width * sx)), max(1, round(sprite.height * sy))), Image.BICUBIC)
+        if abs(pr["rotation"]) > 0.01:
+            sprite = sprite.rotate(-pr["rotation"], resample=Image.BICUBIC, expand=True)
+        if pr["opacity"] < 0.999:
+            sprite = sprite.copy()
+            sprite.putalpha(sprite.getchannel("A").point(lambda v, o=pr["opacity"]: int(v * o)))
+        img.alpha_composite(sprite, (round(pr["x"] - sprite.width / 2), round(pr["y"] - sprite.height / 2)))
+    return img
+
+
+def _fit_box(img: Image.Image) -> tuple[int, int, int, int]:
+    """The 16:10 part of the card around what was drawn (with a margin), so small graphics fill the preview."""
+    import numpy as np
+
+    a = np.asarray(img.convert("RGB"), np.int16)
+    ys, xs = np.nonzero(np.abs(a - a[0, 0]).sum(axis=2) > 24)
+    if not len(xs):
+        return 0, 0, MW, MH
+    x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+    w = max(x1 - x0, (y1 - y0) * MW / MH) * 1.25
+    w = min(MW, max(w, MW * 0.45))
+    h = w * MH / MW
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    left, top = min(max(0, cx - w / 2), MW - w), min(max(0, cy - h / 2), MH - h)
+    return round(left), round(top), round(left + w), round(top + h)
+
+
+_STILL = {"cursor_click": 1.05}  # the moment that shows the effect best (the click's ripple)
+_SAMPLE = {"chat_takeover": "them: did you see this?; me: no what; them: we went viral!", "cursor_click": "35%,70% > 62%,42%",
+           "hud_lock": "TARGET ACQUIRED", "paper_title": "Hello there; a little story",
+           "growth_curve": "+340%", "checklist": "Plan; Shoot; Edit", "checklist_pop": "Fast; Cheap; Easy",
+           "headline_storm": "AI took my job; Is editing dead?; Everyone is switching; The new way to edit"}
+
+
+@lru_cache(maxsize=16)
+def move_thumb(name: str, animated: bool = False) -> bytes:
+    from pathlib import Path
+
+    from ..ops import moves
+    from ..render.layers import _SpriteSource
+
+    if name not in moves.PREVIEWS:
+        raise KeyError(name)
+    p = Project(canvas=Canvas(width=MW, height=MH, fps=15))
+    moves.apply(p, name, at=0.0, text=_SAMPLE[name], dur=4.0, box="30,30,40,40" if name == "hud_lock" else None)
+    sources = {l.id: _SpriteSource(p, Path("."), l, 1.0) for l in p.layers}
+    end = min(3.3, max(l.start for l in p.layers) + 1.2)
+    still = _STILL.get(name, min(end + 0.6, min(l.end or 4.0 for l in p.layers) - 0.3))  # before anything fades out
+    last = _compose(p, sources, still)
+    box = _fit_box(last)
+    buf = io.BytesIO()
+    if not animated:
+        last.crop(box).convert("RGB").resize((MW // 2, MH // 2), Image.LANCZOS).save(buf, "PNG", optimize=True)
+        return buf.getvalue()
+    fps = 15
+    frames = [_compose(p, sources, i / fps).crop(box).convert("RGB").resize((MW // 4, MH // 4), Image.LANCZOS)
+              for i in range(round(min(end + 0.8, 3.9) * fps))]
+    frames[0].save(buf, "WEBP", save_all=True, append_images=frames[1:] + [frames[-1]] * 8, duration=round(1000 / fps), loop=0, quality=80)
+    return buf.getvalue()

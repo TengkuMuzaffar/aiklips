@@ -397,8 +397,10 @@ def _move_apply(p: Project, a: dict) -> str:
     from ..ops import moves
 
     at = a.get("at")
+    num = lambda k: None if a.get(k) in (None, "") else float(a[k])  # noqa: E731
     return moves.apply(p, a["name"], clip=a.get("clip") or None, at=None if at in (None, "") else float(at),
-                       text=a.get("text") or None)
+                       text=a.get("text") or None, source=a.get("source") or None, dur=num("dur"), amount=num("amount"),
+                       box=a.get("box") or None)
 
 
 # ---- markers, keyframes, trims, paste attributes (ops/editing.py) ------------------------------------------------
@@ -642,6 +644,49 @@ def _layer_add_shape(p: Project, a: dict) -> str:
     scenes.place_in_scene(p, l, a.get("scene"))
     _drop_on_track(p, l, a)
     return f"add {l.shape} {l.id}"
+
+
+@op("group_make")
+def _group_make(p: Project, a: dict) -> str:
+    """Group the selected layers (`vedit group make`)."""
+    from ..ops import groups
+
+    g = groups.make(p, list(a["layers"]), a.get("name") or "Group")
+    return f"group {g.id} ({g.name})"
+
+
+@op("group_set")
+def _group_set(p: Project, a: dict) -> str:
+    """Rename / collapse / expand a group (`vedit group set`)."""
+    from ..ops import groups
+
+    g = groups.set_group(p, a["group"], a.get("name"), a.get("collapsed"))
+    return f"group {g.id}: {g.name}" + ("" if a.get("collapsed") is None else (" collapsed" if g.collapsed else " expanded"))
+
+
+@op("group_move")
+def _group_move(p: Project, a: dict) -> str:
+    """Drag a collapsed group's block on the timeline (`vedit group move`)."""
+    from ..ops import groups
+
+    d = groups.move(p, a["group"], _num(a, "delta"), _num(a, "to"))
+    return f"move group {a['group']} by {d:+.2f}s"
+
+
+@op("group_remove")
+def _group_remove(p: Project, a: dict) -> str:
+    """Delete a group and its layers (`vedit group remove`)."""
+    from ..ops import groups
+
+    return f"remove group {a['group']} ({len(groups.remove(p, a['group']))} layers)"
+
+
+@op("group_ungroup")
+def _group_ungroup(p: Project, a: dict) -> str:
+    """Ungroup: keep the layers (`vedit group ungroup`)."""
+    from ..ops import groups
+
+    return f"ungroup {a['group']}: {', '.join(groups.ungroup(p, a['group']))}"
 
 
 @op("motion_set")

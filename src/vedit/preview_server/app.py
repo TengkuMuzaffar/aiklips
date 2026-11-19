@@ -1145,6 +1145,18 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             headers["X-Kinetic-End"] = f"{kinetic_end(lay, float(body.get('scale', 0.5))):.3f}"  # when it stops moving
         return Response(png, media_type="image/png", headers=headers)
 
+    @app.get("/api/move-thumb/{name}")
+    async def move_thumb(name: str):
+        """Effects tab previews of the graphic signature effects: {name}.png or {name}.webp (animated)."""
+        from ..ops import moves
+        from .motion_thumbs import move_thumb as thumb
+
+        key, _, ext = name.rpartition(".")
+        if key not in moves.PREVIEWS or ext not in ("png", "webp"):
+            raise HTTPException(404, "No such preview")
+        data = await asyncio.to_thread(thumb, key, ext == "webp")
+        return Response(data, media_type=f"image/{ext}", headers={"Cache-Control": "max-age=86400"})
+
     @app.get("/api/motion-thumb/{name}")
     async def motion_thumb(name: str):
         """Elements > Motion card previews: {key}.png (the finished element) or {key}.webp (it animating in)."""

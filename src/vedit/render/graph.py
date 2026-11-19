@@ -51,6 +51,13 @@ class Graph:
         self.filters.append(f)
 
 
+def _zoom_expr(clip: Clip, frames: int) -> str:
+    from ..project import ZOOM_EASES
+
+    expr = ZOOM_EASES.get(clip.zoom_ease, ZOOM_EASES["linear"])[1]
+    return expr.replace("P", f"min(on/{frames},1)") if expr != "P" else f"on/{frames}"
+
+
 def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float, bg: str, dur: float,
                 hold_head: float = 0.0, hold_tail: float = 0.0, alpha: bool = False) -> str:
     """Scale/crop/pad a clip onto the W x H canvas. Returns the output label.
@@ -70,7 +77,7 @@ def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float
         frames = max(1, round(dur * fps))
         g.add(
             f"[{src_label}]scale={2 * W}:{2 * H}:force_original_aspect_ratio=increase,crop={2 * W}:{2 * H}:(iw-{2 * W})*{_f(fx)}:(ih-{2 * H})*{_f(fy)},"
-            f"zoompan=z='{_f(z)}+({_f(z1)}-{_f(z)})*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={_f(fps)},{tail}[{out}]"
+            f"zoompan=z='{_f(z)}+({_f(z1)}-{_f(z)})*{_zoom_expr(clip, frames)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={_f(fps)},{tail}[{out}]"
         )
         return out
     zw, zh = even(W * z), even(H * z)

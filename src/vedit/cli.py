@@ -51,6 +51,7 @@ marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTub
 shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
                              "backgrounds, motion-design elements)")
 scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
+group_app = typer.Typer(help="Layer groups: an effect's layers as one row on the timeline (move / rename / ungroup / delete together)")
 style_app = typer.Typer(help="Motion styles: a look as numbers (easing, timing, palette, fonts) the AI follows and the audit checks")
 motion_app = typer.Typer(help="Motion graphics on the tracks: kinetic text (by word / letter / line), draw-on, morph, paths")
 chart_app = typer.Typer(help="Charts that grow in: bar, hbar, line, donut (values roll up with the bars)")
@@ -64,7 +65,7 @@ for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app)
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
                   ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
                   ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
-                  ("style", style_app)]:
+                  ("style", style_app), ("group", group_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -207,6 +208,8 @@ def info():
             row["hidden"] = True
         if l.on_video:
             row["on_video_track"] = True
+        if l.group:
+            row["group"] = l.group
         if l.type == "video":
             row.update(source=l.source, src_in=l.src_in, fit=l.fit, flip_h=l.flip_h, flip_v=l.flip_v)
         if l.type in ("video", "adjust"):
@@ -217,6 +220,7 @@ def info():
             **({"main_hidden": True} if p.main_hidden else {}),
             **({"video_track_height": p.main_z} if p.main_z else {}),
             "sources": {k: v.model_dump() for k, v in p.sources.items()}, "clips": clips, "layers": layers,
+            **({"groups": __import__("vedit.ops.groups", fromlist=["summary"]).summary(p)} if p.groups else {}),
             "music": [m.model_dump(by_alias=True) for m in p.music], "history_step": history.head(d)}
     if STATE["json"]:
         return emit(data)
@@ -229,7 +233,10 @@ def info():
             f"{'  <- ' + c['transition_in']['type'] + ' ' + str(c['transition_in']['duration']) + 's' if c.get('transition_in') else ''}" for c in clips] or ["  (empty)"]
     out += ["", "Layers:"]
     out += [f"  {l['id']:>5}  T{l['track']} {l['type']:<8}{' (hidden)' if l.get('hidden') else ''} {l['start']:.2f}-{(l['end'] if l['end'] is not None else p.duration):.2f}s  {str(l['text'] if l['text'] is not None else l.get('source') or '')[:40]!r}"
-            f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}" for l in layers] or ["  (none)"]
+            f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}{'  [' + l['group'] + ']' if l.get('group') else ''}" for l in layers] or ["  (none)"]
+    if data.get("groups"):
+        out += ["", "Groups (one row each on the timeline; `vedit group move|set|ungroup|remove`):"]
+        out += [f"  {g['id']}: {g['name']} {g['start']:.2f}-{g['end']:.2f}s, {len(g['layers'])} layers" for g in data["groups"]]
     if p.music:
         out += ["", "Music:"] + [f"  {m.id}: {m.source} vol {m.volume}{' duck' if m.duck else ''}" for m in p.music]
     print("\n".join(out))
@@ -887,6 +894,70 @@ def shape_add(
             overlays.place_layer(p, layer.id, track if track is not None else 1 + max((o.track or 0 for o in p.layers if o is not layer), default=-1),
                                  new_track=new_track)
     emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
+
+
+@group_app.command("list")
+def group_list():
+    """Groups and their layers (every signature effect with several layers is one group)."""
+    from .ops import groups
+
+    rows = groups.summary(load(pdir()))
+    emit({"groups": rows}, "\n".join(f"  {g['id']}: {g['name']} {g['start']:.2f}-{g['end']:.2f}s ({', '.join(g['layers'])})"
+                                      + ("" if g["collapsed"] else "  [expanded]") for g in rows) or "No groups.")
+
+
+@group_app.command("make")
+def group_make(layers: list[str] = typer.Argument(..., help="Layer ids (2+)"), name: str = typer.Option("Group", help="Its name on the timeline")):
+    """Group layers so they show as one row and move together."""
+    from .ops import groups
+
+    with edit(f"group {' '.join(layers)}") as tx:
+        g = groups.make(tx.project, layers, name)
+    emit({"group": g.id}, f"Group {g.id} ({g.name}): {', '.join(layers)}")
+
+
+@group_app.command("set")
+def group_set(group: str, name: Optional[str] = None,
+              collapsed: Optional[bool] = typer.Option(None, "--collapsed/--expanded", help="One row (collapsed) or every track")):
+    """Rename a group, or collapse / expand it on the timeline."""
+    from .ops import groups
+
+    with edit(f"group set {group}") as tx:
+        g = groups.set_group(tx.project, group, name, collapsed)
+    emit({"group": g.id, "name": g.name, "collapsed": g.collapsed}, f"{g.id}: {g.name}{'' if g.collapsed else ' (expanded)'}")
+
+
+@group_app.command("move")
+def group_move(group: str, to: Optional[float] = typer.Option(None, help="Timeline seconds where the group starts"),
+               by: Optional[float] = typer.Option(None, help="Shift by this many seconds (negative = earlier)")):
+    """Move every layer of a group in time together."""
+    from .ops import groups
+
+    if to is None and by is None:
+        raise VeditError("Give --to T or --by S")
+    with edit(f"group move {group}") as tx:
+        d = groups.move(tx.project, group, by, to)
+    emit({"group": group, "shift": round(d, 3)}, f"{group} moved {d:+.2f}s")
+
+
+@group_app.command("remove")
+def group_remove(group: str):
+    """Delete a group and all its layers."""
+    from .ops import groups
+
+    with edit(f"group remove {group}") as tx:
+        gone = groups.remove(tx.project, group)
+    emit({"group": group, "removed": gone}, f"Removed {group}: {', '.join(gone)}")
+
+
+@group_app.command("ungroup")
+def group_ungroup(group: str):
+    """Keep the layers but drop the group."""
+    from .ops import groups
+
+    with edit(f"ungroup {group}") as tx:
+        ids = groups.ungroup(tx.project, group)
+    emit({"group": group, "layers": ids}, f"Ungrouped {group}: {', '.join(ids)}")
 
 
 @style_app.command("list")
@@ -1827,12 +1898,17 @@ def fx_list():
 @fx_app.command("apply")
 def fx_apply(name: str, clip: Optional[str] = typer.Option(None, help="Clip the move applies to (clip moves)"),
              at: Optional[float] = typer.Option(None, help="Timeline seconds (moment moves)"),
-             text: Optional[str] = typer.Option(None, help="Word / line for freeze_title and keyword_pop")):
-    """Apply one signature move as one undoable step."""
+             text: Optional[str] = typer.Option(None, help="Word / line (freeze_title, keyword_pop, growth_curve label "
+                                                           "'+340%'); items separated by ';' (checklist, headline_storm)"),
+             source: Optional[str] = typer.Option(None, help="broll_overlay: the imported video to show (s2)"),
+             dur: Optional[float] = typer.Option(None, help="How long it lasts (zooms: hold, then cut back)"),
+             amount: Optional[float] = typer.Option(None, help="Zooms: how close (1.35); growth_curve: how steep (4); zoom_portal: dive (2.6)"),
+             box: Optional[str] = typer.Option(None, help="hud_lock: the target as x,y,w,h in % of the frame, e.g. 30,35,40,25")):
+    """Apply one signature move / effect as one undoable step (`vedit fx list` shows them)."""
     from .ops import moves
 
     with edit(f"move {name}") as tx:
-        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text)
+        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text, source=source, dur=dur, amount=amount, box=box)
     emit({"move": name, "done": msg}, msg)
 
 

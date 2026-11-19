@@ -189,6 +189,20 @@ label.scrub:hover { color: var(--accent); }
 @keyframes fxpulse { 0%, 100% { transform: scale(1.05); } 50% { transform: scale(1.18); } }
 .fxp-move .fx-th { background: linear-gradient(135deg, #1c2a14, #1f4a43); display: flex; align-items: center; justify-content: center; color: var(--accent); }
 .fxp-move .fx-th .ic { width: 26px; height: 26px; }
+.fxp-gfx .fx-th .ic { display: none; }
+/* camera moves: the shot does the move while the pointer is on the card */
+.fxp-mv-snap_zoom:hover i { animation: mv-snap 1.6s cubic-bezier(.7, 0, .2, 1) infinite; }
+@keyframes mv-snap { 0%, 20% { transform: scale(1); } 32%, 85% { transform: scale(1.4); } 100% { transform: scale(1); } }
+.fxp-mv-digital_zoom:hover i { animation: mv-digital 1.6s steps(1, end) infinite; }
+@keyframes mv-digital { 0% { transform: scale(1); } 20% { transform: scale(1.12); } 32% { transform: scale(1.26); } 44% { transform: scale(1.42); } 90% { transform: scale(1.42); } 100% { transform: scale(1); } }
+.fxp-mv-punch_in:hover i { animation: mv-punch 1.4s steps(1, end) infinite; }
+@keyframes mv-punch { 0% { transform: scale(1); } 45% { transform: scale(1.18); } 100% { transform: scale(1.18); } }
+.fxp-mv-zoom_out_reveal:hover i { animation: mv-out 1.8s ease-out infinite; }
+@keyframes mv-out { 0% { transform: scale(1.4); } 80%, 100% { transform: scale(1); } }
+.fxp-mv-whip:hover i { animation: mv-whip 1.2s ease-in-out infinite; }
+@keyframes mv-whip { 0%, 30% { transform: none; filter: none; } 45% { transform: translateX(-30%); filter: blur(6px); } 60%, 100% { transform: none; filter: none; } }
+.fxp-mv-flash_cut:hover b { animation: mv-flash 1.2s ease-out infinite; }
+@keyframes mv-flash { 0%, 35% { background: transparent; } 40% { background: #fff; } 70%, 100% { background: transparent; } }
 /* applied filter stack in clip properties */
 .fxs { grid-column: 1 / 3; display: grid; gap: 6px; }
 .fxs-item { border: 1px solid var(--line2); border-radius: 9px; background: var(--pane2); }
@@ -314,6 +328,13 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 body.ai-busy .tl-tools > :not(#b-zout):not(#zoom):not(#b-zin):not(#b-fit) { opacity: .3; pointer-events: none; }
 body.ai-busy #tl-body .lane:not(.ruler) { cursor: not-allowed; }
 /* what the AI just changed: blocks pulse, the span is tinted across every track, and a chip says what and where */
+/* layer groups: one row per collapsed effect */
+.blk.group { background: linear-gradient(180deg, #2a2145, #221b38); border: 1px solid #5b4a8a; color: #e4dafe; overflow: hidden; }
+.blk.group.sel { border-color: var(--ai); box-shadow: 0 0 0 1px var(--ai) inset; }
+.blk.group .gtick { position: absolute; top: 3px; bottom: 3px; width: 2px; border-radius: 1px; background: #c7a6ff55; pointer-events: none; }
+.blk.group .bl { position: relative; }
+.head.grp-h { box-shadow: inset 3px 0 0 var(--ai); }
+.head.in-grp { box-shadow: inset 3px 0 0 #5b4a8a; }
 .blk.just { border-color: var(--ai) !important; animation: justpulse 1.1s ease-out 3; }
 @keyframes justpulse { 0% { box-shadow: 0 0 0 0 #c7a6ffdd; } 100% { box-shadow: 0 0 0 9px #c7a6ff00; } }
 .mk.just { filter: drop-shadow(0 0 4px var(--ai)); }
@@ -2015,6 +2036,7 @@ function renderInspector() {
   else if (SEL.kind === "source") body.append(...renderSource(SEL.id, p.sources[SEL.id]));
   else if (SEL.kind === "marker") body.append(...renderMarker(p.markers.find((m) => m.id === SEL.id)));
   else if (SEL.kind === "fx") body.append(...renderFx(SEL.id));
+  else if (SEL.kind === "group") body.append(...renderGroup(SEL.id));
   applyPropSearch();
 }
 
@@ -2100,6 +2122,29 @@ function moveApply(m, clipId) {
     if (!t || !t.trim()) return;
     args.text = t.trim();
   }
+  if (m.needs.includes("+lines")) {
+    const ask = { headline_storm: ["Headlines, separated by ; (e.g. AI took my job; Is editing dead?; The new way)", ""],
+      chat_takeover: ["Messages, separated by ; (start each with them: or me:)", "them: did you see this?; me: no, what?; them: we went viral"],
+      magazine_cover: ["Masthead; cover lines, separated by ; (e.g. VOGUE-ISH; The 30-day edit; Inside the studio)", "ICON; The comeback; Inside the studio"],
+      paper_title: ["Title; subtitle (separated by ;)", "Hello there; a little story"] }[m.name] || ["Items, separated by ; (e.g. Fast; Cheap; Easy)", ""];
+    const t = prompt(ask[0], ask[1]);
+    if (!t || !t.trim()) return;
+    args.text = t.trim();
+  }
+  if (m.name === "cursor_click") { const t = prompt("Cursor from > to (x,y in % of the frame):", "30%,70% > 60%,40%"); if (t === null) return; args.text = t.trim(); }
+  if (m.name === "hud_lock") {
+    const t = prompt("Label:", "TARGET ACQUIRED"); if (t === null) return; args.text = t.trim();
+    const b = prompt("Target box x,y,w,h in % of the frame:", "30,35,40,25"); if (b === null) return; args.box = b.trim();
+  }
+  if (m.name === "phone_mockup" && SEL?.kind === "source") args.source = SEL.id; // else: the shot under the playhead
+  if (m.name === "growth_curve") { const t = prompt("The number it counts to (e.g. +340%), or leave empty:", "+340%"); if (t === null) return; args.text = t.trim(); }
+  if (m.needs.includes("+source")) { // the media file selected in the Media tab, or the only other video
+    const p = P(), main = new Set(p.clips.map((c) => c.source));
+    const vids = Object.entries(p.sources).filter(([, s]) => s.has_video && !/\.gap-/.test(s.path) && !/[\\/]overlays[\\/]/.test(s.path));
+    const pick = SEL?.kind === "source" ? SEL.id : (vids.find(([id]) => !main.has(id)) || [])[0];
+    if (!pick) { toast("Import the b-roll video first (Media tab), select it there, then click B-roll overlay", true); return; }
+    args.source = pick;
+  }
   op("move_apply", args).then((r) => r && toast(r.message));
 }
 function renderEffects() {
@@ -2129,11 +2174,22 @@ function renderEffects() {
         card(`fxp-${f.key}`, f.label, f.about, (e) => fxToggle(f.key, e.shiftKey), ["application/x-vedit-fx", f.key], applied.get(f.key) ? `✓${applied.get(f.key) > 1 ? applied.get(f.key) : ""}` : null))));
     }
     if (!FX_CAT || FX_CAT === "Signature moves") {
-      const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} signature move`));
-      if (moves.length) {
-        n += moves.length;
-        grid.append(h("div", { class: "fx-cat" }, "Signature moves"), h("div", { class: "fx-grid" }, moves.map((m) =>
-          card("fxp-move", m.name.replace(/_/g, " "), m.about, () => moveApply(m), ["application/x-vedit-move", m.name]))));
+      const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} ${m.category} signature move effect`));
+      n += moves.length;
+      for (const cat of ["Camera", "Graphics", "Frames", "Kits", "B-roll", "Transitions", "Moves"]) {
+        const ms = moves.filter((m) => (m.category || "Moves") === cat);
+        if (!ms.length) continue;
+        grid.append(h("div", { class: "fx-cat" }, `Signature · ${cat}`), h("div", { class: "fx-grid" }, ms.map((m) => {
+          // graphics: drawn by the export's renderer (still + animated on hover); camera moves: your shot, moving
+          const c = card(`fxp-move fxp-mv-${m.name}` + (m.preview ? " fxp-gfx" : ""), m.name.replace(/_/g, " "), m.about, () => moveApply(m), ["application/x-vedit-move", m.name]);
+          if (m.preview) {
+            const i = c.querySelector(".fx-th i"), still = `url(/api/move-thumb/${m.name}.png) center / cover no-repeat`;
+            i.style.background = still;
+            c.addEventListener("mouseenter", () => { i.style.background = `url(/api/move-thumb/${m.name}.webp?${Date.now()}) center / cover no-repeat`; });
+            c.addEventListener("mouseleave", () => { i.style.background = still; });
+          }
+          return c;
+        })));
       }
     }
     if (!n) grid.append(h("div", { class: "empty" }, `No effect matches “${FX_Q}”.`));
@@ -2934,6 +2990,28 @@ function renderLayer(l) {
   ];
 }
 
+function renderGroup(gid) {
+  const p = P(), g = (p.groups || []).find((x) => x.id === gid);
+  if (!g) return [h("div", { class: "empty" }, "This group is gone.")];
+  const ls = p.layers.filter((l) => l.group === gid);
+  const s = Math.min(...ls.map((l) => l.start)), e = Math.max(...ls.map((l) => layerEnd(l)));
+  return [
+    crumb("Groups", g.name),
+    h("div", { class: "fields" },
+      field("Name", textIn(g.name, (v) => v.trim() && op("group_set", { group: gid, name: v.trim() }))),
+      field("Starts at", h("div", { class: "pair" }, numIn(s.toFixed(2), (v) => op("group_move", { group: gid, to: +v }), 0.05, { min: 0, title: "Moves every part together" }),
+        h("span", { class: "hint" }, `to ${fmt(e)} · ${ls.length} parts`))),
+      [h("label", { class: "full" }, "Parts (click one to edit it)"), h("div", { class: "chips full" }, ls.map((l) => h("button", { class: "ghost", style: { fontSize: "12px" },
+        onclick: async () => { if (g.collapsed) await op("group_set", { group: gid, collapsed: false }); select({ kind: "layer", id: l.id }); } },
+        `${l.id} · ${(layerLabel(l) || l.type).slice(0, 20)}`)))]),
+    h("div", { class: "btnrow" },
+      h("button", { onclick: () => seek(s) }, "Go to group"),
+      h("button", { onclick: () => op("group_set", { group: gid, collapsed: !g.collapsed }) }, g.collapsed ? "Show its tracks" : "Collapse to one row"),
+      h("button", { title: "Keep the parts as ordinary layers", onclick: () => op("group_ungroup", { group: gid }).then(() => select(null)) }, "Ungroup"),
+      h("button", { class: "danger", onclick: () => op("group_remove", { group: gid }).then(() => select(null)) }, "Delete group")),
+  ];
+}
+
 function renderMarker(m) {
   const set = (args) => op("marker_set", { id: m.id, ...args });
   const colours = ["#FBBF24", "#F87171", "#4ADE80", "#60A5FA", "#C084FC", "#F472B6"];
@@ -3083,6 +3161,7 @@ function selLabel() {
   if (SEL.kind === "layer") { const l = P().layers.find((x) => x.id === SEL.id); return `${l?.type || "layer"} ${SEL.id}`; }
   if (SEL.kind === "music") return `music ${SEL.id}`;
   if (SEL.kind === "source") return `media ${SEL.id}`;
+  if (SEL.kind === "group") { const g = (P().groups || []).find((x) => x.id === SEL.id); return `group ${SEL.id}${g ? ` (${g.name}: ${P().layers.filter((l) => l.group === SEL.id).map((l) => l.id).join(", ")})` : ""}`; }
   if (SEL.kind === "fx") { const o = fxOwner(SEL.id); return o ? `effect ${SEL.id} (${fxLabel(o.e)}) on ${o.holder.id}` : `effect ${SEL.id}`; }
 }
 function updateCtx() {
@@ -3943,6 +4022,42 @@ function renderTimeline() {
         } }));
       return b;
   };
+  // layer groups (one per signature effect, ops/groups.py): a collapsed group's tracks show as ONE row with one
+  // block (drag it = move the whole effect); expanded, its tracks show normally with a marker on their heads
+  const GROUPS = new Map((p.groups || []).map((g) => [g.id, g]));
+  const trackGroup = (t) => { const ls = rowLayers.filter((l) => (l.track ?? 0) === t); const g = ls[0]?.group; return g && ls.every((l) => l.group === g) ? g : null; };
+  const headBtn = (head, icn, tip, fn) => {
+    let box = head.querySelector(".hbtns"); if (!box) { box = h("span", { class: "hbtns" }); head.append(box); }
+    const b = h("span", { class: "hbtn", title: tip }, icon(icn));
+    b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); box.prepend(b);
+  };
+  const groupRow = (gid, tracks) => {
+    const g = GROUPS.get(gid), ls = rowLayers.filter((l) => l.group === gid && tracks.includes(l.track ?? 0));
+    const s = Math.min(...ls.map((l) => l.start)), e = Math.max(...ls.map((l) => layerEnd(l)));
+    const el = lane("track grp" + sq(false), LANES.layer + 6, "layers", g.name, `${ls.length}`, "var(--ai)");
+    const head = heads.lastElementChild;
+    head.title = `${g.name}: ${ls.length} layers on ${tracks.length} track${tracks.length > 1 ? "s" : ""}, kept together. Click the block to edit it; the arrow shows its tracks.`;
+    head.classList.add("grp-h");
+    headBtn(head, "chevron-down", "Show this group's tracks (edit its parts one by one)", () => op("group_set", { group: gid, collapsed: false }));
+    const selIn = (SEL?.kind === "group" && SEL.id === gid) || (SEL?.kind === "layer" && ls.some((l) => l.id === SEL.id));
+    const b = h("div", { class: "blk group" + (selIn ? " sel" : ""), "data-id": gid,
+      title: `${g.name} · ${fmt(s)}–${fmt(e)} · ${ls.length} layers\nDrag to move the whole effect · click for its settings`,
+      style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px` } },
+      ...ls.map((l) => h("span", { class: "gtick", style: { left: `${(l.start - s) * PPS}px` } })),
+      h("div", { class: "bl" }, icon("layers"), h("span", { class: "nm" }, g.name), h("span", { class: "badge" }, `${ls.length} parts`)));
+    b.addEventListener("pointerdown", (ev) => dragSpan(ev, b, { s0: s, e0: e, id: gid, lanes: false,
+      onClick: () => select({ kind: "group", id: gid }),
+      commit: (ns) => op("group_move", { group: gid, delta: +(ns - s).toFixed(3) }) }));
+    el.append(b);
+    el.addEventListener("pointerdown", (ev) => { if (ev.target === el) { seek(timeAt(ev.clientX)); select(null); } });
+  };
+  const rowsDown = (hi, lo) => {
+    for (let t = hi; t >= lo;) {
+      const g = trackGroup(t);
+      if (g && GROUPS.get(g)?.collapsed) { const tr = []; while (t >= lo && trackGroup(t) === g) tr.push(t--); groupRow(g, tr); }
+      else trackRow(t--);
+    }
+  };
   const trackRow = (t) => {
     const ls = rowLayers.filter((l) => (l.track ?? 0) === t);
     const types = [...new Set(ls.map((l) => l.type))];
@@ -3957,6 +4072,12 @@ function renderTimeline() {
         fx: nfx ? { count: nfx, open: vids.some((l) => FX_OPEN.has(l.id)), toggle: () => toggleFxOpen(vids) } : null,
         eye: { visible, toggle: () => op("track_visible", { track: t, visible: !visible }) } });
       if (!visible) el.classList.add("hidden-t");
+    }
+    const tg = trackGroup(t);
+    if (tg && GROUPS.get(tg)) { // a track of an expanded group: marked, and its top track can collapse it again
+      const head = heads.lastElementChild;
+      head.classList.add("in-grp"); head.title = `${GROUPS.get(tg).name} (group) · ` + head.title;
+      if (trackGroup(t + 1) !== tg) headBtn(head, "chevron-up", `Collapse “${GROUPS.get(tg).name}” to one row`, () => op("group_set", { group: tg, collapsed: true }));
     }
     for (const l of ls) el.append(layerBlock(l, t));
     el.addEventListener("pointerdown", (ev) => { if (ev.target === el) { seek(timeAt(ev.clientX)); select(null); } });
@@ -4014,9 +4135,9 @@ function renderTimeline() {
   if (!p.clips.length) vl.append(h("div", { id: "tl-empty" }, p.layers.length ? "Video track: drop video here" : "Drop video here or drag from Media",
     h("button", { class: "ghost", onclick: () => $("#file").click() }, icon("upload"), "Import")));
   };
-  for (let t = nTracks - 1; t >= MZ; t--) trackRow(t);
+  rowsDown(nTracks - 1, MZ);
   videoRow();
-  for (let t = MZ - 1; t >= 0; t--) trackRow(t);
+  rowsDown(MZ - 1, 0);
 
   // audio waveform
   const wl = lane("wave" + sq(false), LANES.wave, "wave", "Audio", "", "var(--muted)");
@@ -4324,6 +4445,7 @@ async function deleteSelected() {
     return;
   }
   if (SEL.kind === "marker") op("marker_remove", { id: SEL.id });
+  else if (SEL.kind === "group") op("group_remove", { group: SEL.id }).then(() => select(null));
   else if (SEL.kind === "clip") op("remove_clip", { clip: SEL.id });
   else if (SEL.kind === "layer") op("layer_remove", { layer: SEL.id });
   else if (SEL.kind === "music") op("music_remove", { music: SEL.id });

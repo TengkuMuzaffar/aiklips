@@ -146,6 +146,7 @@ class Clip(_Model):
     focus_y: float = 0.5
     zoom: float = 1.0
     zoom_to: float | None = None  # animated zoom (Ken Burns) from `zoom` to `zoom_to`
+    zoom_ease: str = "linear"  # how zoom -> zoom_to moves: linear | ease_out | ease_in | ease_in_out | snap (ZOOM_EASES)
     effects: list[Effect] = Field(default_factory=list)
     transition: Transition | None = None  # transition *into* this clip from the previous one
     grade: Grade | None = None  # colour correction + look (`vedit color ...`)
@@ -160,6 +161,26 @@ class Clip(_Model):
     @property
     def duration(self) -> float:
         return (self.out - self.in_) / self.speed
+
+
+# easing of a clip's animated zoom: (python fn of p 0..1, the same as an FFmpeg expression of P)
+ZOOM_EASES: dict[str, tuple[Callable[[float], float], str]] = {
+    "linear": (lambda p: p, "P"),
+    "ease_out": (lambda p: 1 - (1 - p) ** 3, "(1-pow(1-P,3))"),
+    "ease_in": (lambda p: p**3, "pow(P,3)"),
+    "ease_in_out": (lambda p: 4 * p**3 if p < 0.5 else 1 - (-2 * p + 2) ** 3 / 2,
+                    "if(lt(P,0.5),4*pow(P,3),1-pow(-2*P+2,3)/2)"),
+    "snap": (lambda p: 1 - (1 - p) ** 5, "(1-pow(1-P,5))"),  # gets there almost at once, then settles
+}
+
+
+def zoom_at(clip: "Clip", u: float) -> float:
+    """A clip's zoom at fraction u (0..1) through it."""
+    z = max(1.0, clip.zoom)
+    if clip.zoom_to:
+        fn = ZOOM_EASES.get(clip.zoom_ease, ZOOM_EASES["linear"])[0]
+        z = z + (max(1.0, clip.zoom_to) - z) * fn(min(max(u, 0.0), 1.0))
+    return z
 
 
 class Keyframe(_Model):
@@ -305,6 +326,7 @@ class Layer(_Model):
     split_dur: float = 0.45
     split_ease: str = "ease_out"
     counter: Counter | None = None  # a counting number (text layers)
+    group: str | None = None  # the LayerGroup it belongs to (Project.groups)
     step_fps: int | None = None  # motion in steps ("on twos": 12) like stop motion / paper cut-out; None = smooth
     chart: Chart | None = None  # chart layers
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
@@ -346,6 +368,14 @@ class Layer(_Model):
     # adjustment layers: filters and a colour grade applied to everything under them (clips and the layers below)
     effects: list[Effect] = Field(default_factory=list)
     grade: Grade | None = None
+
+
+class LayerGroup(_Model):
+    """Layers that belong together (a signature effect's parts). The timeline shows them as one row with one block
+    while `collapsed`; moving the block moves them all (ops/groups.py)."""
+    id: str
+    name: str = "Group"
+    collapsed: bool = True
 
 
 class MusicTrack(_Model):
@@ -405,6 +435,8 @@ class Project(_Model):
     # the social app this video is for (tiktok | reels | shorts | all): its safe zone is where text, stickers and
     # buttons go (ops/safezone.py; the editor's guides, `vedit safe`, the audit). None = "all apps" on a portrait canvas
     platform: str | None = None
+    # layer groups (one per effect: a chat, a checklist ...): shown as one collapsible row on the timeline
+    groups: list[LayerGroup] = Field(default_factory=list)
     # motion style (design/styles.py): a look as numbers (easing, timing, palette, fonts) the AI follows and the
     # audit checks; None = no style rules
     motion_style: str | None = None
@@ -564,13 +596,21 @@ def normalize_tracks(project: Project) -> None:
     - tracks are numbered 0..n-1 with no gaps, and project.layers is sorted by track (stable), so the list order the
       renderers use (later = on top) always matches the timeline rows.
     """
+    gids = {g.id for g in project.groups}
+    for l in project.layers:
+        if l.group and l.group not in gids:
+            l.group = None
+    used = {l.group for l in project.layers if l.group}
+    project.groups = [g for g in project.groups if g.id in used]  # a group whose layers are all gone goes too
     vids = [l for l in project.layers if l.on_video]  # on the video track: not in the rows
     layers = [l for l in project.layers if not l.on_video]
     top = max((l.track for l in layers if l.track is not None), default=-1)
     for l in layers:
         if l.track is None:
             # (drawn on top of everything: never onto a track under the video track)
-            if top >= max(0, project.main_z) and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
+            # a grouped layer only shares a track with its own group (so the group's tracks can collapse into one row)
+            if top >= max(0, project.main_z) and not any(o.track == top and (spans_overlap(_span(l), _span(o)) or o.group != l.group)
+                                                         for o in layers if o is not l):
                 l.track = top
             else:
                 top += 1

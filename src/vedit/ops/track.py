@@ -65,10 +65,9 @@ def focus_params(params: dict, mode: str = "spotlight", style: str = "spotlight"
 
 def _clip_zoom_at(clip: Clip, u: float) -> float:
     """Zoom at fraction u (0..1) through the clip."""
-    z = max(1.0, clip.zoom)
-    if clip.zoom_to:
-        z = z + (max(1.0, clip.zoom_to) - z) * min(max(u, 0.0), 1.0)
-    return z
+    from ..project import zoom_at
+
+    return zoom_at(clip, u)
 
 
 def canvas_to_source(project: Project, clip: Clip, x: float, y: float, u: float = 0.0) -> tuple[float, float]:

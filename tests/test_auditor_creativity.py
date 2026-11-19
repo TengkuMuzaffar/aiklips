@@ -23,9 +23,15 @@ def test_every_move_applies(make_project):
     for name, (needs, _about) in moves.MOVES.items():
         p = make_project(3)  # 3 clips of 3.33 s
         before = p.duration
-        kw = {"clip": "c2"} if needs == "clip" else {"at": 4.0}
+        kw = {"clip": "c2"} if needs == "clip" else {"at": 1.0 if name == "magazine_cover" else 4.0}
         if "+text" in needs:
             kw["text"] = "wow"
+        if "+lines" in needs:
+            kw["text"] = "one; two"
+        if name == "magazine_cover":
+            kw["dur"] = 1.5
+        if "+source" in needs:
+            kw["source"] = p.clips[0].source
         msg = moves.apply(p, name, **kw)
         assert msg, name
         if name == "freeze_title":

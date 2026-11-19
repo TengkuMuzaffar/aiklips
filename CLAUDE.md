@@ -46,7 +46,10 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Sound.** Speech clips keep their sound and the music ducks under them; b-roll noise (wind, traffic, hum) is
   muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
   those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
-- **Signature moves.** One memorable move beats five generic ones: `vedit fx apply <move>` (at most 2 per video).
+- **Signature moves / effects.** One memorable move beats five generic ones: `vedit fx apply <move>` (2-4 per 30 s;
+  load the `effects` skill for which effect fits which moment). An effect's layers form one **group** (one row on the
+  timeline, `[gN]` in `info`): move / retime it with `group move gN --to T`, delete it with `group remove gN`; edit a
+  part with the normal layer commands.
 - **Green screen footage:** `bg remove --mode chroma` (instant, keyed in the render); the AI modes are for footage without a screen.
 - **Overlays.** Picture-in-picture: `overlay add <video> --circle --border 10` (face cam), green screen: `--chroma #00FF00`.
   Textures and light leaks from `overlay library` use `screen` / `overlay` blend; keep them subtle (opacity 0.5-0.85)
@@ -132,7 +135,7 @@ focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
-fx list | fx apply punch_in|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal [--clip ID --at T --text W]
+fx list | fx apply punch_in|snap_zoom|digital_zoom|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal|growth_curve|checklist|checklist_pop|headline_storm|broll_overlay|chat_takeover|phone_mockup|magazine_cover|zoom_portal|cursor_click|hud_lock|paper_title [--clip ID --at T --text W|'a; b; c' --source sN --dur S --amount X --box x,y,w,h]
 fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start S --end S --fade-in S --fade-out S]
 fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
@@ -141,6 +144,7 @@ update status | update check | update apply | update rollback | update auto true
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
 sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
 style list | style show <key> | style set <key|none>
+group list | group make <ids...> [--name] | group set <g> [--name --collapsed/--expanded] | group move <g> --to T|--by S | group ungroup <g> | group remove <g>
 motion set <id> [--split word|letter|line --anim --stagger --dur --ease --morph-to KIND --path 'x,y ...' --closed] | motion draw <id> [--dur --ease --out] | motion morph <id> --to KIND [--at --dur --ease | --loop --period]
 counter add <to> [--from --decimals --prefix --suffix --sep --dur --ease --x --y --size --color --font] | counter set <id> [... | --off]
 chart add bar|hbar|line|donut --data 'A=3, B=7' [--dur --colors --prefix --suffix --decimals --max --no-values --no-labels --stagger --width --height] | chart set <id> [...]
@@ -215,6 +219,7 @@ Detailed recipes live in `.claude/skills/`:
 - `face-ar`
 - `masking-focus`: remove / hide / censor regions with tracking (box, multi-box or painted shape), and spotlight or follow an object
 - `transitions`
+- `effects`: signature effects (snap / digital zoom, growth curve, checklists, headline storm, b-roll overlay ...): which one for which moment, and their numbers
 - `color`: match clips to each other or a reference, grade with looks, LUTs
 - `motion`: design projects (Design studio): scenes, shapes, stretch / size / colour motion, and whole videos in one MotionPlan
 
