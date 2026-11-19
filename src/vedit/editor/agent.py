@@ -553,6 +553,39 @@ def _result_text(content: Any) -> str:
     return ""
 
 
+def _attachment(p, n: int, a: dict) -> str:
+    """One line of <editor_context> for something the user attached to their message (chat composer chips)."""
+    kind, aid = a.get("kind"), a.get("id")
+    try:
+        if kind == "clip":
+            starts = dict(zip([c.id for c in p.clips], p.clip_starts()))
+            c = p.clip(aid)
+            return (f"{n}. clip {c.id} at timeline {starts[c.id]:.2f}-{starts[c.id] + c.duration:.2f}s "
+                    f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s{', gap' if c.gap else ''})")
+        if kind == "layer":
+            l = p.layer(aid)
+            label = l.text or l.image or " ".join(w.text for w in l.words[:8]) or (l.shape if l.type == "shape" else "")
+            end = l.end if l.end is not None else p.duration
+            return f"{n}. {l.type} layer {l.id} {l.start:.2f}-{end:.2f}s, track {l.track} \"{str(label)[:50]}\""
+        if kind == "range":
+            return f"{n}. timeline range {float(a['start']):.2f}-{float(a['end']):.2f}s"
+        if kind == "time":
+            return f"{n}. the moment {float(a['t']):.2f}s on the timeline"
+        if kind == "marker":
+            m = next((m for m in p.markers if m.id == aid), None)
+            return f"{n}. marker {aid} at {m.t:.2f}s \"{m.label or ''}\"" if m else f"{n}. marker {aid}"
+        if kind == "ref":
+            return (f"{n}. reference video {aid} \"{a.get('name') or ''}\" (a studied style, not on the timeline): "
+                    f"`vedit ref show {aid}` = its Style DNA (pacing, hook, text, captions, transitions, sound); "
+                    f"`vedit ref recipe {aid}` = vedit commands to edit this video like it")
+        if kind == "source":
+            s = p.sources[aid]
+            return f"{n}. media file {aid} ({Path(s.path).name}, {s.duration:.2f}s)"
+    except Exception:
+        pass
+    return f"{n}. {kind} {aid or ''} (no longer in the project)"
+
+
 class ChatSession:
     def __init__(self, pdir: Path):
         self.pdir = pdir
@@ -958,6 +991,10 @@ class ChatSession:
                 lines.append(f"selected: media source {sid} ({Path(s.path).name}, {s.duration:.2f}s, not necessarily on the timeline)")
             else:
                 lines.append("selected: nothing")
+            atts = [x for x in (ctx.get("attachments") or []) if isinstance(x, dict)][:24]
+            if atts:
+                lines.append("attached by the user (\"these\", \"the first / second one\", \"like the reference\" refer to these, in this order):")
+                lines += ["  " + _attachment(p, i + 1, x) for i, x in enumerate(atts)]
         except Exception as e:  # never block a message because context failed
             lines.append(f"(context unavailable: {e})")
         lines += [n for n in (MODE_NOTES.get(getattr(self, "mode", "auto")), AUDIT_NOTES.get(getattr(self, "auditor", "checks"))) if n]

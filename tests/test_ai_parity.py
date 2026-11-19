@@ -196,3 +196,24 @@ def test_editor_context_describes_effect_and_layer_track(tmp_path, test_clip, cl
     ctx = s.context_block({"selection": {"kind": "layer", "id": lid}})
     assert "track 0" in ctx
     assert json.dumps(ctx)  # plain text
+
+
+def test_editor_context_lists_attachments_and_platform(tmp_path, test_clip, cli):
+    """The chat composer can attach several clips / layers / ranges / moments / references to one message."""
+    from vedit.editor.agent import ChatSession
+
+    cli("import", str(test_clip))
+    cli("split", "--at", "3")
+    lid = cli("text", "add", "Hook", "--end", "2")["layer"]
+    cli("platform", "tiktok")
+    s = ChatSession.__new__(ChatSession)
+    s.pdir = cli.project
+    ctx = s.context_block({"attachments": [
+        {"kind": "clip", "id": "c2"}, {"kind": "layer", "id": lid}, {"kind": "range", "start": 1, "end": 2.5},
+        {"kind": "time", "t": 4.2}, {"kind": "ref", "id": 6, "name": "motion design 1"}, {"kind": "clip", "id": "gone"}]})
+    assert "attached by the user" in ctx
+    assert "1. clip c2 at timeline 3.00-6.00s" in ctx and f"2. text layer {lid}" in ctx and '"Hook"' in ctx
+    assert "3. timeline range 1.00-2.50s" in ctx and "4. the moment 4.20s" in ctx
+    assert '5. reference video 6 "motion design 1"' in ctx and "vedit ref recipe 6" in ctx
+    assert "6. clip gone (no longer in the project)" in ctx
+    assert "TikTok safe area" in ctx

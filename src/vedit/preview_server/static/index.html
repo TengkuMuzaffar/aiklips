@@ -397,11 +397,61 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .m-perm { border: 1px solid var(--danger); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: grid; gap: 6px; }
 .m-perm code { white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
 .m-perm .btns { display: flex; gap: 6px; }
-.suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
-.suggest button { font-size: 12px; border-radius: 999px; }
-#composer { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--pane2); }
-#ctxchip { align-self: flex-start; font-size: 11px; color: var(--accent); background: #1c2a14; border: 1px solid #1f4a43; border-radius: 999px; padding: 1px 8px; }
-#composer .in { display: flex; gap: 8px; align-items: flex-end; }
+#composer { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--pane2); position: relative; }
+/* what goes with the message: the automatic playhead / selection chip, then the user's attachments (clips, layers,
+   ranges, moments, markers, reference videos), then "+ Attach". Typing @ in the prompt mentions one too. */
+#atts { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+#atts .att.auto { opacity: .8; }
+.att { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; font-size: 11px; line-height: 18px; border-radius: 999px; padding: 0 2px 0 8px;
+  background: var(--pane3); border: 1px solid var(--line2); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.att.auto { color: var(--accent); background: #1c2a14; border-color: #1f4a43; padding-right: 8px; }
+.att.ref { border-color: #5b4a8a; background: #221d33; }
+.att button { border: none; background: transparent; padding: 0 4px; min-height: 0; height: 18px; font-size: 13px; color: var(--muted); }
+.att button:hover { color: var(--text); }
+.att-add { font-size: 11px; height: 20px; padding: 0 8px; border-radius: 999px; }
+.att-menu, .mention { position: absolute; left: 10px; bottom: calc(100% - 4px); z-index: 30; min-width: 230px; max-width: calc(100% - 20px); max-height: 280px; overflow: auto;
+  background: var(--pane2); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 34px #000b; padding: 4px; }
+.att-menu button, .mention button { display: flex; width: 100%; gap: 8px; align-items: center; justify-content: flex-start; text-align: left; border: none; background: transparent;
+  font-size: 12px; padding: 6px 8px; border-radius: 7px; }
+.att-menu button:hover, .mention button.on { background: var(--pane3); }
+.mention button small, .att-menu button small { color: var(--faint); margin-left: auto; padding-left: 10px; white-space: nowrap; }
+.att-menu .hint { font-size: 11px; color: var(--faint); padding: 4px 8px 2px; }
+/* floating button over the chat: the reference videos the AI should follow */
+.fab { position: absolute; right: 12px; top: -52px; z-index: 3; width: 40px; height: 40px; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--pane3); border: 1px solid var(--line2); box-shadow: 0 6px 20px #0009; }
+.fab:hover { border-color: var(--ai); }
+.fab .n { position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; font-size: 10px; line-height: 16px; text-align: center; background: var(--ai); color: #111; border-radius: 999px; }
+.refs-dlg { width: min(680px, calc(100vw - 48px)); padding: 18px 20px 16px; box-sizing: border-box; }
+.refs-dlg h3 { margin: 0 0 4px; }
+.refs-dlg .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.refs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 52vh; overflow: auto; padding: 2px; }
+.ref-card { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 10px; border: 1.5px solid var(--line2); background: var(--pane2); text-align: left; cursor: pointer; min-width: 0; }
+.ref-card:hover { border-color: var(--muted); }
+.ref-card:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+.ref-card.on { border-color: var(--ai); box-shadow: 0 0 0 2px #c7a6ff33; }
+.ref-card .th { aspect-ratio: 9 / 12; border-radius: 7px; background: #000 center / cover no-repeat; position: relative; }
+.ref-card .th .tick { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%; background: var(--ai); color: #111; display: none; align-items: center; justify-content: center; font-size: 12px; }
+.ref-card.on .th .tick { display: flex; }
+.ref-card b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-card span { font-size: 11px; color: var(--faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.refs-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.refs-foot .spacer { flex: 1; }
+/* one input box: the attachment chips on top, the message and Send under them */
+.cmp-box { display: flex; flex-direction: column; gap: 6px; background: var(--bg); border: 1px solid var(--line2); border-radius: 10px; padding: 6px 6px 6px 8px; }
+.cmp-box:focus-within { border-color: var(--accent); }
+.cmp-foot { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.cmp-foot .spacer { flex: 1; }
+/* the message: plain text with attachments as pills inside it (like mentioning a file in Copilot chat) */
+#prompt { min-height: 22px; max-height: 160px; overflow-y: auto; padding: 4px 2px; outline: none; white-space: pre-wrap; word-break: break-word; line-height: 22px; cursor: text; }
+#prompt:empty::before { content: attr(data-ph); color: var(--faint); pointer-events: none; }
+#prompt[contenteditable="false"] { opacity: .5; cursor: default; }
+.pill { display: inline-flex; align-items: center; gap: 3px; vertical-align: baseline; max-width: 240px; padding: 0 6px; margin: 0 1px; border-radius: 5px; line-height: 19px;
+  font-size: 12px; background: #1d2a3a; color: #9cc8ff; border: 1px solid #2c4a6e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; cursor: default; }
+.pill svg { width: 12px; height: 12px; flex: none; }
+.pill.ref { background: #241d36; color: #cdb4ff; border-color: #4d3d7a; }
+.pill.time, .pill.range { background: #1c2a14; color: var(--accent); border-color: #2f4a1f; }
+.m-user .pill { line-height: 17px; }
+.cmp-box:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
 #composer .cmp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 #composer .cmp-row .spacer { flex: 1; }
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; }
@@ -412,7 +462,6 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .m-perm.edit { border-color: var(--sel); }
 .m-perm textarea { width: 100%; min-height: 54px; resize: vertical; font-size: 12px; }
 .m-perm .btns { flex-wrap: wrap; }
-#prompt { flex: 1; resize: none; min-height: 38px; max-height: 140px; }
 .typing { color: var(--muted); font-size: 12px; padding-left: 4px; }
 .typing i { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-right: 3px; animation: blink 1s infinite; }
 .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
@@ -816,7 +865,8 @@ header #status.error { color: var(--danger); }
     <div id="ai-setup" hidden></div>
     <div id="msgs"></div>
     <div id="composer">
-      <div class="cmp-row"><span id="ctxchip"></span><span class="spacer"></span>
+      <button class="fab" id="b-refs" title="Reference videos: pick videos whose style the AI should follow (attached to your message)"></button>
+      <div class="cmp-row"><span class="spacer"></span>
         <div class="seg" id="chat-mode" role="radiogroup" title="How the AI edits">
           <button data-mode="auto" title="Auto: the AI makes the edits straight away (every edit can be undone)">Auto</button>
           <button data-mode="ask" title="Ask per edit: you Allow or Deny each change before it happens">Ask per edit</button>
@@ -826,9 +876,12 @@ header #status.error { color: var(--danger); }
           <option value="off">Auditor: off</option><option value="checks">Auditor: checks</option><option value="ai">Auditor: checks + AI</option>
         </select>
       </div>
-      <div class="in">
-        <textarea id="prompt" rows="1" placeholder="Ask the AI to edit…"></textarea>
-        <button class="primary" id="b-send" title="Send (Enter) · Shift+Enter for a new line">Send</button>
+      <div class="cmp-box" id="cmp-box">
+        <div id="prompt" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="true" data-ph="Ask the AI to edit… (@ to mention a clip, layer, marker or reference)"></div>
+        <div class="cmp-foot">
+          <div id="atts"></div><span class="spacer"></span>
+          <button class="primary" id="b-send" title="Send (Enter) · Shift+Enter for a new line">Send</button>
+        </div>
       </div>
     </div>
   </section>
@@ -935,6 +988,8 @@ const ICONS = {
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   sparkle: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
   gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   "zoom-in": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/>',
   "zoom-out": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/>',
@@ -2908,19 +2963,222 @@ function selLabel() {
   if (SEL.kind === "fx") { const o = fxOwner(SEL.id); return o ? `effect ${SEL.id} (${fxLabel(o.e)}) on ${o.holder.id}` : `effect ${SEL.id}`; }
 }
 function updateCtx() {
-  const s = selLabel();
-  $("#ctxchip").textContent = `📎 playhead ${fmt(video.currentTime)}${s ? " · " + s : ""}`;
+  const s = selLabel(), c = $("#ctxchip");
+  if (c) c.textContent = `📎 ${fmt(video.currentTime)}${s ? " · " + s : ""}`; else renderAtts();
 }
+// ---- attachments: several clips / layers / ranges / moments / markers / reference videos sent with one message
+let ATT = [], REFS = null;
+const attKey = (a) => `${a.kind}:${a.id ?? a.t ?? a.start}`;
+function attLabel(a) {
+  if (a.kind === "layer") { const l = P().layers.find((x) => x.id === a.id); return `${l?.type || "layer"} ${a.id}${l ? " “" + (layerLabel(l) || "").slice(0, 18) + "”" : ""}`; }
+  if (a.kind === "clip") return `clip ${a.id}`;
+  if (a.kind === "range") return `${fmt(a.start)}–${fmt(a.end)}`;
+  if (a.kind === "time") return `at ${fmt(a.t)}`;
+  if (a.kind === "marker") return `marker ${a.label || a.id}`;
+  if (a.kind === "ref") return `ref: ${a.name}`;
+  return `${a.kind} ${a.id}`;
+}
+// Attachments live in the message itself as pills (contenteditable=false spans); ATT is kept in step with them.
+const PR = () => $("#prompt");
+let CARET = null; // the last caret position inside the message, so the menu / dialog insert where the user was typing
+document.addEventListener("selectionchange", () => {
+  const sel = getSelection();
+  if (sel.rangeCount && PR()?.contains(sel.anchorNode)) CARET = sel.getRangeAt(0).cloneRange();
+});
+const ATT_ICON = { clip: "film", layer: "layers", marker: "flag", ref: "sparkle", time: "clock", range: "scissors" };
+function attToken(a) { // what the AI reads in the message text
+  if (a.kind === "time") return `@${fmt(a.t)}`;
+  if (a.kind === "range") return `@${fmt(a.start)}–${fmt(a.end)}`;
+  if (a.kind === "ref") return `@ref${a.id}`;
+  return `@${a.id}`;
+}
+function pillEl(a) {
+  return h("span", { class: `pill ${a.kind}`, contenteditable: "false", "data-key": attKey(a), "data-token": attToken(a), title: attLabel(a) },
+    icon(ATT_ICON[a.kind] || "layers"), attLabel(a));
+}
+function placeCaretAfter(node) {
+  const r = document.createRange(); r.setStartAfter(node); r.collapse(true);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); CARET = r.cloneRange();
+}
+function insertAtCaret(nodes, range) {
+  const t = PR();
+  let r = range || (CARET && t.contains(CARET.startContainer) ? CARET : null);
+  if (!r) { r = document.createRange(); r.selectNodeContents(t); r.collapse(false); }
+  r.deleteContents();
+  const sc = r.startContainer, before = sc.nodeType === 3 ? sc.textContent.slice(0, r.startOffset) : sc.childNodes[r.startOffset - 1]?.textContent || "";
+  if (before && !/[\s\u00a0]$/.test(before)) nodes = [document.createTextNode(" "), ...nodes]; // don't glue the pill to the word before
+  let last = null;
+  for (const n of nodes) { r.insertNode(n); r.setStartAfter(n); r.collapse(true); last = n; }
+  if (last) placeCaretAfter(last);
+}
+function attach(a, range) {
+  if (ATT.some((x) => attKey(x) === attKey(a))) { renderAtts(); return; }
+  ATT.push(a);
+  const t = PR(); t.focus();
+  insertAtCaret([pillEl(a), document.createTextNode("\u00a0")], range);
+  renderAtts();
+}
+function detach(k) {
+  ATT = ATT.filter((x) => attKey(x) !== k);
+  PR()?.querySelectorAll(".pill").forEach((p) => { if (p.dataset.key === k) p.remove(); });
+  renderAtts();
+}
+function syncAtts() { // pills deleted with Backspace / cut drop their attachment
+  const keys = new Set([...PR().querySelectorAll(".pill")].map((p) => p.dataset.key));
+  const n = ATT.length; ATT = ATT.filter((a) => keys.has(attKey(a)));
+  if (ATT.length !== n) renderAtts();
+  if (!PR().textContent.trim() && !keys.size && PR().innerHTML) PR().innerHTML = ""; // back to the placeholder
+}
+function promptText() { // the message as text: pills become their @token
+  const out = [];
+  const walk = (n) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) out.push(c.textContent);
+      else if (c.classList?.contains("pill")) out.push(c.dataset.token);
+      else if (c.nodeName === "BR") out.push("\n");
+      else { if ((c.nodeName === "DIV" || c.nodeName === "P") && out.length && !out[out.length - 1].endsWith("\n")) out.push("\n"); walk(c); }
+    }
+  };
+  walk(PR());
+  return out.join("").replace(/\u00a0/g, " ");
+}
+// keep the old textarea-style API (value / placeholder / disabled) for the rest of the page
+Object.defineProperties(PR(), {
+  value: { get: promptText, set(v) { this.textContent = v; ATT = []; renderAtts(); if (v) placeCaretAfter(this.lastChild); } },
+  placeholder: { set(v) { this.dataset.ph = v; } },
+  disabled: { set(v) { this.contentEditable = v ? "false" : "true"; } },
+});
+function renderAtts() {
+  const box = $("#atts");
+  if (!box) return;
+  box.innerHTML = "";
+  const s = ST ? selLabel() : null;
+  box.append(h("span", { id: "ctxchip", class: "att auto", title: "Always sent: the playhead and what's selected (say “this”)" }, `📎 ${fmt(video.currentTime)}${s ? " · " + s : ""}`));
+  box.prepend(h("button", { class: "ghost att-add", title: "Put clips, layers, a time range or a reference video in your message (or type @)",
+    onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.stopPropagation(); attachMenu(); } }, "＋ Attach"));
+  const n = ATT.filter((a) => a.kind === "ref").length, fab = $("#b-refs");
+  if (fab) { fab.innerHTML = ""; fab.append(icon("film")); if (n) fab.append(h("span", { class: "n" }, n)); }
+}
+function popUnder(cls, items, onPick) { // a small list over the composer; returns {el, close}
+  $(".att-menu, .mention")?.remove();
+  const el = h("div", { class: cls });
+  items.forEach((it, i) => el.append(it.hint ? h("div", { class: "hint" }, it.hint)
+    : h("button", { class: i === 0 && cls === "mention" ? "on" : "", onmousedown: (e) => { e.preventDefault(); onPick(it); } }, it.icon ? icon(it.icon) : "", it.text, it.sub ? h("small", {}, it.sub) : "")));
+  $("#composer").append(el);
+  const close = () => { el.remove(); document.removeEventListener("mousedown", out, true); };
+  const out = (e) => { if (!el.contains(e.target)) close(); };
+  setTimeout(() => document.addEventListener("mousedown", out, true));
+  return { el, close };
+}
+function selectedItems() { // the selection + shift-clicked extras, as attachments
+  const p = P(), ids = [...new Set([SEL?.id, ...MULTI].filter(Boolean))], out = [];
+  for (const id of ids) {
+    if (p.clips.some((c) => c.id === id)) out.push({ kind: "clip", id });
+    else if (p.layers.some((l) => l.id === id)) out.push({ kind: "layer", id });
+    else if ((p.markers || []).some((m) => m.id === id)) { const m = p.markers.find((x) => x.id === id); out.push({ kind: "marker", id, label: m.label }); }
+  }
+  return out;
+}
+function attachMenu() {
+  if (!ST) return;
+  const sel = selectedItems(), items = [];
+  if (sel.length) items.push({ icon: "layers", text: sel.length > 1 ? `Selected (${sel.length})` : `Selected: ${attLabel(sel[0])}`, sub: "shift-click for more", act: () => sel.forEach(attach) });
+  items.push({ icon: "clock", text: `This moment`, sub: fmt(video.currentTime), act: () => attach({ kind: "time", t: +video.currentTime.toFixed(2) }) });
+  if (MARK.in != null || MARK.out != null) { const a = MARK.in ?? 0, b = MARK.out ?? dur(); items.push({ icon: "scissors", text: "In–out range", sub: `${fmt(a)}–${fmt(b)}`, act: () => attach({ kind: "range", start: +a.toFixed(2), end: +b.toFixed(2) }) }); }
+  else items.push({ hint: "Mark a range with I and O to attach it" });
+  items.push({ icon: "film", text: "Reference video…", sub: "style to follow", act: openRefs });
+  items.push({ hint: "Tip: type @ in your message to mention a clip, layer, marker or reference" });
+  const m = popUnder("att-menu", items, (it) => { m.close(); it.act(); });
+}
+async function loadRefs() { try { REFS = (await (await fetch("/api/references")).json()).references || []; } catch { REFS = REFS || []; } return REFS; }
+// @ mentions in the prompt: clips, layers, markers and reference videos; picking one attaches it
+let MENTION = null;
+function mentionCands(q) {
+  const p = P(), out = [], has = (t) => t.toLowerCase().includes(q.toLowerCase());
+  p.clips.forEach((c, i) => { if (!c.gap) out.push({ a: { kind: "clip", id: c.id }, text: `${c.id} · ${sourceName(p.sources[c.source])}`, sub: fmt(ST.starts[i]), icon: "film" }); });
+  for (const l of p.layers) out.push({ a: { kind: "layer", id: l.id }, text: `${l.id} · ${l.type} ${(layerLabel(l) || "").slice(0, 24)}`, sub: fmt(l.start), icon: "layers" });
+  for (const m of p.markers || []) out.push({ a: { kind: "marker", id: m.id, label: m.label }, text: `${m.id} · marker ${m.label || ""}`, sub: fmt(m.t), icon: "flag" });
+  for (const r of REFS || []) out.push({ a: { kind: "ref", id: r.id, name: r.name }, text: `ref · ${r.name}`, sub: r.status === "ready" ? "reference" : r.status, icon: "sparkle", token: `ref${r.id}` });
+  // ids starting with what was typed first (@t -> t1, t2 ...), then anything containing it
+  const rank = (c) => (String(c.token || c.a.id).toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1);
+  return out.filter((c) => !q || has(c.text)).sort((a, b) => rank(a) - rank(b)).slice(0, 9);
+}
+function mentionCheck() {
+  const sel = getSelection(), node = sel.anchorNode, off = sel.anchorOffset;
+  const m = node?.nodeType === 3 && PR().contains(node) ? /(^|[\s\u00a0])@([\w.-]*)$/.exec(node.textContent.slice(0, off)) : null;
+  if (!m || !ST) { MENTION?.close(); MENTION = null; return; }
+  if (REFS === null) loadRefs().then(() => MENTION && mentionCheck());
+  const cands = mentionCands(m[2]);
+  if (!cands.length) { MENTION?.close(); MENTION = null; return; }
+  const pick = (c) => { // the typed "@que" becomes the pill
+    const r = document.createRange(); r.setStart(node, off - m[2].length - 1); r.setEnd(node, Math.min(off, node.textContent.length));
+    MENTION?.close(); MENTION = null;
+    if (ATT.some((x) => attKey(x) === attKey(c.a))) { r.deleteContents(); return; }
+    attach(c.a, r);
+  };
+  const pop = popUnder("mention", cands, pick);
+  MENTION = { ...pop, cands, i: 0, pick };
+}
+function mentionKeys(e) {
+  if (!MENTION) return;
+  const btns = [...MENTION.el.querySelectorAll("button")];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    MENTION.i = (MENTION.i + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length;
+    btns.forEach((b, k) => b.classList.toggle("on", k === MENTION.i)); btns[MENTION.i].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); e.stopImmediatePropagation(); MENTION.pick(MENTION.cands[MENTION.i]); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); MENTION.close(); MENTION = null; }
+}
+// the reference picker (floating button): studied videos whose style the AI should follow, attached to the message
+async function openRefs() {
+  const grid = h("div", { class: "refs-grid" }), file = h("input", { type: "file", accept: "video/*", multiple: true, hidden: true });
+  let timer = null;
+  const draw = () => {
+    grid.innerHTML = "";
+    if (!REFS.length) grid.append(h("div", { class: "hint" }, "No reference videos yet. Add a video whose style you like: the AI studies its pacing, hook, text, captions and sound."));
+    for (const r of REFS) {
+      const on = ATT.some((a) => a.kind === "ref" && a.id === r.id), ready = r.status === "ready";
+      const toggle = () => { on ? detach(`ref:${r.id}`) : attach({ kind: "ref", id: r.id, name: r.name }); draw(); };
+      // a div, not a <button>: the app's button style would force one line and a fixed height
+      grid.append(h("div", { class: "ref-card" + (on ? " on" : ""), role: "button", tabindex: 0, "aria-pressed": on ? "true" : "false", title: r.dna?.summary || r.name,
+        onclick: toggle, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } },
+        h("div", { class: "th", style: { backgroundImage: `url(/api/references/${r.id}/thumb.jpg)` } }, h("span", { class: "tick" }, "✓")),
+        h("b", {}, r.name),
+        h("span", {}, ready ? (r.dna?.summary || "Studied") : r.status === "error" ? `Couldn't study: ${r.error || "error"}` : `Studying${r.progress != null ? ` ${Math.round(r.progress * 100)}%` : "…"}`)));
+    }
+    clearTimeout(timer);
+    if (REFS.some((r) => !["ready", "error"].includes(r.status))) timer = setTimeout(async () => { await loadRefs(); if (document.body.contains(grid)) draw(); }, 3000);
+  };
+  file.onchange = async () => {
+    const fd = new FormData(); for (const f of file.files) fd.append("files", f);
+    toast(`Adding ${file.files.length} reference video(s)…`);
+    const r = await fetch("/api/references", { method: "POST", body: fd });
+    if (!r.ok) toast("Couldn't add the reference", true);
+    file.value = ""; await loadRefs(); draw();
+  };
+  const body = h("div", { class: "refs-dlg" }, h("h3", {}, "Reference videos"),
+    h("p", { class: "hint" }, "Pick the videos whose style the AI should follow. They're attached to your next message (the AI reads each one's Style DNA and recipe)."),
+    grid, h("div", { class: "refs-foot" }, file, h("button", { class: "ghost", onclick: () => file.click() }, icon("plus"), "Add reference video"),
+      h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => dlg.close() }, "Done")));
+  const dlg = AK.modal(body, { onClose: () => { clearTimeout(timer); PR().focus(); if (CARET) { const s = getSelection(); s.removeAllRanges(); s.addRange(CARET); } } });
+  grid.append(h("div", { class: "hint" }, "Loading…"));
+  await loadRefs(); draw();
+}
+$("#b-refs").onclick = openRefs;
+$("#prompt").addEventListener("input", () => { syncAtts(); mentionCheck(); });
+$("#prompt").addEventListener("paste", (e) => { e.preventDefault(); document.execCommand("insertText", false, e.clipboardData.getData("text/plain")); });
+$("#prompt").addEventListener("keydown", mentionKeys, true);
+$("#prompt").addEventListener("blur", () => setTimeout(() => { if (document.activeElement === PR()) return; MENTION?.close(); MENTION = null; }, 120));
 function md(text) {
   const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return esc.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
 }
 function addMsg(ev) {
   const box = $("#msgs");
-  $(".suggest", box)?.remove();
+  $(".m-note", box)?.remove();
   let el = null;
   const copyBtn = () => h("button", { class: "m-copy", title: "Copy message", onclick: (e) => { e.stopPropagation(); copyText(ev.text); } }, icon("copy"));
-  if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ev.text, copyBtn());
+  if (ev.type === "user") el = h("div", { class: "m-user" }, ev.context ? h("span", { class: "ctx" }, "📎 " + ev.context) : "", ...withPills(ev.text), copyBtn());
   else if (ev.type === "assistant") { el = h("div", { class: "m-ai" }); el.innerHTML = md(ev.text); el.append(copyBtn()); }
   else if (ev.type === "tool") { el = h("div", { class: "m-tool" }, h("span", { class: "st" }, "▸"), h("span", { class: "tx", title: ev.summary }, ev.summary)); toolEls[ev.id] = el; $("#tl-step").textContent = "▸ " + ev.summary; $("#tl-step").title = ev.summary; }
   else if (ev.type === "tool_result") {
@@ -3119,9 +3377,7 @@ for (const id of ["#tl-lock", "#insp-lock"]) $(id).addEventListener("click", (e)
 function suggestions() {
   const box = $("#msgs");
   if (box.children.length) return;
-  box.append(h("div", { class: "m-note" }, "Ask for any edit. Select a clip or layer first and say “this” — the AI sees your selection and playhead."),
-    h("div", { class: "suggest" }, ["Remove the pauses", "Add a bold hook title for the first 3 seconds", "Add TikTok-style captions", "Blur my background", "Make this clip 2x faster"]
-      .map((s) => h("button", { onclick: () => { $("#prompt").value = s; $("#prompt").focus(); } }, s))));
+  box.append(h("div", { class: "m-note" }, "Ask for any edit. Select something and say “this”, type @ to mention clips, layers, markers or reference videos, or use ＋ Attach for several. The film button picks reference videos to follow."));
 }
 $("#auditor").onchange = (e) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "auditor", value: e.target.value })); };
 function showMode(m) { CHAT_MODE = m || "auto"; for (const b of $("#chat-mode").children) b.classList.toggle("on", b.dataset.mode === CHAT_MODE);
@@ -3201,18 +3457,29 @@ document.addEventListener("pointerdown", (e) => {
   if (!b.hidden && !b.contains(e.target) && !e.target.closest("#b-chats")) b.hidden = true;
 });
 
+const PILL_RE = /(@(?:ref\d+|[a-z]+\d+|\d+:\d{2}\.\d{2}(?:–\d+:\d{2}\.\d{2})?))/;
+function withPills(text) { // a sent message: its @mentions shown as the same pills as in the message box
+  return String(text || "").split(PILL_RE).map((part, i) => {
+    if (i % 2 === 0) return part;
+    const k = /^@ref\d+$/.test(part) ? "ref" : /^@\d/.test(part) ? (part.includes("–") ? "range" : "time") : /^@m\d/.test(part) ? "marker" : "layer";
+    return h("span", { class: `pill ${k}` }, icon(ATT_ICON[k]), part.slice(1));
+  });
+}
 function send() {
   if (busy) { ws.send(JSON.stringify({ type: "interrupt" })); return; }
-  const text = $("#prompt").value.trim();
-  if (!text) return;
-  const label = [selLabel(), `@ ${fmt(video.currentTime)}`].filter(Boolean).join(" ");
-  ws.send(JSON.stringify({ type: "ask", text, context: { playhead: video.currentTime, selection: SEL, label } }));
-  $("#prompt").value = ""; autosize();
+  const text = promptText().trim();
+  if (!text && !ATT.length) return;
+  const label = [selLabel(), `@ ${fmt(video.currentTime)}`].filter(Boolean).join(" · ");
+  ws.send(JSON.stringify({ type: "ask", text, context: { playhead: video.currentTime, selection: SEL, label, attachments: ATT } }));
+  PR().innerHTML = ""; ATT = []; renderAtts(); MENTION?.close(); MENTION = null;
 }
 function askAbout(what) { $("#prompt").value = `For ${what}: `; $("#prompt").focus(); }
-function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(140, t.scrollHeight) + "px"; }
-$("#prompt").addEventListener("input", autosize);
-$("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+function autosize() {} // the message box grows by itself
+$("#prompt").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  if (e.shiftKey) document.execCommand("insertLineBreak"); else send();
+});
 $("#b-send").onclick = send;
 $("#model").onchange = (e) => {
   if (e.target.value === "__manage") { e.target.value = CUR_MODEL; openSettings("models"); return; }
@@ -3289,7 +3556,7 @@ function renderSetup() {
   const box = $("#ai-setup"), ready = !AI || AI.step === "ready";
   box.hidden = ready; $("#msgs").hidden = !ready;
   $("#prompt").disabled = !ready; if (!busy) $("#b-send").disabled = !ready;
-  $("#ctxchip").hidden = !ready; $("#composer").hidden = !ready;
+  $("#atts").hidden = !ready; $("#composer").hidden = !ready;
   if (ready) {
     if (LOGIN_WAIT) { LOGIN_WAIT = null; stopPoll(); toast("You're all set — the AI editor is ready"); }
     return;
@@ -4469,14 +4736,14 @@ window.addEventListener("aiklips:menu", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && DRAW) { e.preventDefault(); endDraw(); return; }
-  if (e.key === "Escape" && FX_OPEN.size && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector(".modal, #palette:not([hidden])")) {
+  if (e.key === "Escape" && FX_OPEN.size && !(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) && !document.querySelector(".modal, #palette:not([hidden])")) {
     e.preventDefault(); exitFocus(); return;
   }
-  if (PAINT_UNDO && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+  if (PAINT_UNDO && !(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable)) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.stopPropagation(); PAINT_UNDO.undo(); return; }
     if (!e.metaKey && !e.ctrlKey && "bgxek[]".includes(e.key.toLowerCase()) && e.key.length === 1) { e.preventDefault(); PAINT_UNDO.key(e.key.toLowerCase()); return; }
   }
-  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
   // Cmd/Ctrl+C on selected page text (the native desktop window doesn't copy it reliably)
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && !typing) {
