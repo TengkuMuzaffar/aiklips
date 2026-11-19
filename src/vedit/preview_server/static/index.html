@@ -1404,7 +1404,12 @@ function drawOverlays() {
   const on = hasTimeline() && (liveMode() || FRAME.active) && video.style.display !== "none" && video.videoWidth;
   const ready = hasTimeline() && video.style.display !== "none" && video.videoWidth;
   placePreviewTools(ready ? videoBox() : null);
-  if (!on) { if (stage.style.display !== "none") { stage.style.display = "none"; stopLayerVideos(); } return; }
+  if (!on) { // nothing to draw (e.g. the last layer was just deleted): no stale selection box either
+    if (stage.style.display !== "none") { stage.style.display = "none"; stopLayerVideos(); }
+    $("#pv-selbox").style.display = "none";
+    if (SEL?.kind === "layer" && ST && !P().layers.some((x) => x.id === SEL.id)) SEL = null;
+    return;
+  }
   const box = videoBox(), cv = P().canvas, D = dur();
   Object.assign(stage.style, { display: "block", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
   // sprite resolution: about screen resolution, in steps so a small resize doesn't redraw everything
