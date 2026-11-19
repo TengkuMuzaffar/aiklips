@@ -37,6 +37,7 @@ music_app = typer.Typer(help="Background music")
 mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
+sfx_app = typer.Typer(help="Sound effects made by aiklips' own synth (whoosh, pop, riser, impact...): pick a preset, move its pitch / length, tweak any setting")
 sound_app = typer.Typer(help="Footage sound vs music: what each clip's audio is (speech / background / silent), and sensible defaults")
 fx_app = typer.Typer(help="Signature moves (punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, "
                           "zoom-out reveal) and clip filters (blur, sharpen, glow, vignette, grain, RGB split, film, VHS, shake...)")
@@ -64,7 +65,7 @@ safe_app = typer.Typer(help="Safe zone of the project's platform (`vedit platfor
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app), ("sfx", sfx_app),
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
                   ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
                   ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
@@ -2630,6 +2631,54 @@ def music_set(music_id: str, volume: Optional[float] = None, duck: Optional[bool
         e: Any = tracks._KEEP if end is None else None if end.lower() in ("none", "") else float(end)
         m = tracks.set_music(tx.project, music_id, volume, start, offset, e, duck, loop)
     emit({"music": m.model_dump(by_alias=True)}, f"Updated {music_id}")
+
+
+@sfx_app.command("list")
+def sfx_list():
+    """The sound presets and every setting a sound has."""
+    from . import sfx
+
+    ps = sfx.presets()
+    fields = {k: v.get("description", "") for k, v in sfx.SfxParams.model_json_schema()["properties"].items()}
+    emit({"presets": [{k: x[k] for k in ("key", "cat", "about")} for x in ps], "settings": fields},
+         "\n".join(f"{x['cat']:<14} {x['key']:<15} {x['about']}" for x in ps) + "\n\nSettings (--set key=value): " + ", ".join(fields))
+
+
+@sfx_app.command("add")
+def sfx_add(preset: str = typer.Argument(..., help="A preset from `sfx list`, e.g. 'mouse click', 'soft click', 'keyboard key', whoosh, impact, pop, ding"),
+            at: float = typer.Option(0.0, "--at", help="Timeline second the sound starts"),
+            pitch: float = typer.Option(0.0, help="Semitones up (+) or down (-); 12 = one octave"),
+            length: Optional[float] = typer.Option(None, help="Stretch the sound to this many seconds"),
+            volume: float = typer.Option(0.8, help="Track volume (0-2)"),
+            name: Optional[str] = typer.Option(None, help="Name for the sound file"),
+            set_: list[str] = typer.Option([], "--set", help="Any setting, e.g. --set wave=saw --set echo=0.3 (see `sfx list`)"),
+            vary: Optional[int] = typer.Option(None, help="Use a natural variation of the sound (another take); the number picks which one"),
+            amount: float = typer.Option(0.25, help="How different the --vary take is: 0.1 subtle, 0.25 clear, 0.6 wild"),
+            for_: Optional[float] = typer.Option(None, "--for", help="Loops (rain, wind, fire, applause): play this many seconds; default = to the end of the edit")):
+    """Make a sound effect with the built-in synth and put it on the timeline at --at (its own music track, no ducking).
+    Ambiences (rain, wind, fire, applause...) are seamless loops that play --for S seconds or to the end."""
+    from . import sfx
+
+    over: dict[str, Any] = {}
+    for kv in set_:
+        k, _, v = kv.partition("=")
+        if k.strip() not in sfx.SfxParams.model_fields:
+            raise VeditError(f"Unknown sound setting '{k}'. See `vedit sfx list`")
+        v = v.strip()
+        over[k.strip()] = json.loads(v) if v[:1] in "[{" else v  # modes / hits are JSON lists
+    try:
+        prm = sfx.preset(preset, pitch, length, **over)
+        prm = sfx.SfxParams(**prm.model_dump())  # validate the --set values
+    except ValueError as e:
+        raise VeditError(str(e))
+    if vary is not None:
+        prm = sfx.vary(prm, amount, seed=vary).model_copy(update={"name": prm.name})
+    if name:
+        prm.name = name
+    with edit(f"add sound {prm.name}") as tx:
+        m = sfx.add_to_project(tx.project, pdir(), prm, at, volume, for_)
+    how = (f"looping until {m.end:.2f}s" if m.end is not None else "looping to the end of the edit") if prm.loop else f"{prm.duration:.2f}s"
+    emit({"music": m.id, "params": prm.model_dump()}, f"Added sound '{prm.name}' ({how}) as {m.id} at {at:.2f}s")
 
 
 # ---- history ------------------------------------------------------------------------------

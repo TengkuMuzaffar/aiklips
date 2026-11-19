@@ -497,6 +497,17 @@ def _add_music(p: Project, a: dict) -> str:
     return f"add music {m.id}"
 
 
+@op("sfx_add")
+def _sfx_add(p: Project, a: dict) -> str:
+    from .. import sfx
+
+    prm = sfx.SfxParams(**(a.get("params") or {})) if a.get("params") else sfx.preset(a.get("preset") or "whoosh")
+    prm = sfx.adjust(prm, float(a.get("pitch") or 0), _num(a, "length"))
+    m = sfx.add_to_project(p, _PDIR[0], prm, float(a.get("start") or 0), float(a.get("volume") if a.get("volume") is not None else 0.8),
+                           _num(a, "hold") or None)
+    return f"add sound '{prm.name}' as {m.id} at {m.start:.2f}s"
+
+
 _LAYER_FIELDS = ("start", "end", "x", "y", "scale", "rotation", "opacity", "text", "width", "words_per_group")
 
 

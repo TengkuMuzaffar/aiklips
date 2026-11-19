@@ -56,6 +56,17 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
   and use at most one texture for the whole edit. Shapes are for callouts (arrow, ring) and boxes behind titles.
   A blank / colour screen (title card, fade-to-colour) = `shape add rect --full --fill #hex` (or `--gradient`);
   the editor calls these the Elements tab.
+- **Sound effects.** `vedit sfx add <preset> --at T` makes one with aiklips' own synth (no download, no licence
+  issues) on its own music track: a whoosh / swish on a transition, impact on a title slam, pop on text or stickers,
+  riser before a reveal. Shape it with `--pitch` (semitones) and `--length`, any setting with `--set` (`sfx list`).
+  Keep them subtle (volume 0.4-0.8) and sparse; they suit transitions and UI moments, not realistic sounds.
+  Repeated sounds (several clicks, typing) should not be identical: give each one another take with `--vary 1`,
+  `--vary 2`... (a natural variation). Never imitate a specific brand's or operating system's sound.
+  Ambiences (rain, wind, fire, applause, water drips) are seamless loops: `--for S` seconds, or to the end of the edit
+  by default; keep them low (volume 0.2-0.4) under speech. Voices and creatures (scream, yell, growl, moan) are
+  synthesised from a vowel and sound game / cartoon-like: tell the user, and don't use them where a real person
+  should be heard.
+  The editor's Sound tab is the same synth (plus "Make with AI" from a description).
 - **Sound polish.** Talking clips: `sound voice clean` (or `studio` for a podcast sound). Use `sound fade` on clips
   whose sound starts or ends abruptly (0.1-0.3 s), not on speech cut mid-sentence.
 - **Tracks are equal.** The video track holds the clips (and gaps) and sits among the other tracks (0 = bottom,
@@ -132,6 +143,7 @@ face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|m
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list
 mask find --at T [--near x,y,w,h] | mask add --at T --box x,y,w,h[;x,y,w,h...] [--space source] | --paint JSON | --object NAME [--style remove|blur|pixelate|fill|dim --keep-box x,y,w,h --no-track --shape ellipse --tracker auto|segment|outline|box --sam auto|on|off] | mask check <id|all> | mask fix <id> --at T --box x,y,w,h [--space source | --remove-at T | --clear] | mask list | mask set <id> [--tracker] | mask remove <id|all>
 focus add --at T --box x,y,w,h | --paint JSON | --object NAME [--mode spotlight|follow|both --style spotlight|colorpop|brighten|glow|outline --color --width --zoom 1.3] | focus set [--style --color --width --strength] | focus clear
+sfx list | sfx add '<preset>' --at T [--pitch ±semitones --length S --volume 0.8 --for S (loops) --set wave=voice --set vowel=a --set 'pitch_points=[[0,-5],[0.2,3],[1,-4]]' --vary N --amount 0.25]   (presets: `sfx list`: clicks & taps, whooshes, hits, rain / heavy rain / drizzle / wind / fire / water drips / bubbles / applause, scream / yell / monster growl / ghost moan / robot voice, UI & game, tones)
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto

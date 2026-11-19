@@ -1025,6 +1025,49 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise bad(e)
         return {"ok": True}
 
+    # ---- sound effects: aiklips' own synth (presets, live preview, AI design) -------------------------
+    @app.get("/api/sfx/presets")
+    def api_sfx_presets() -> dict:
+        from .. import sfx
+
+        return {"presets": sfx.presets(), "max_len": sfx.MAX_LEN}
+
+    def _sfx_in(body: dict):
+        """The sound in a request: its settings with the Pitch / Length knobs applied."""
+        from .. import sfx
+
+        try:
+            return sfx.adjust(sfx.SfxParams(**(body.get("params") or {})), float(body.get("pitch") or 0),
+                              float(body["length"]) if body.get("length") else None)
+        except (ValueError, TypeError) as e:
+            raise bad(e)
+
+    @app.post("/api/sfx/preview")
+    def api_sfx_preview(body: dict) -> Response:
+        from .. import sfx
+
+        return Response(sfx.render(_sfx_in(body)), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/sfx/variations")
+    def api_sfx_variations(body: dict) -> dict:
+        """Takes of the current sound (knobs folded in), each with its settings."""
+        from .. import sfx
+
+        prm = _sfx_in(body)
+        vs = sfx.variations(prm, int(body.get("n") or 6), float(body.get("amount") or 0.25))
+        return {"base": prm.model_dump(), "takes": [v.model_dump() for v in vs]}
+
+    @app.post("/api/sfx/ai")
+    def api_sfx_ai(body: dict) -> dict:
+        from .. import sfx
+        from ..ai import client as aic
+
+        try:
+            cur = _sfx_in(body) if body.get("params") else None
+            return sfx.design(body.get("prompt", ""), cur, body.get("model") or None)
+        except (aic.AIError, ValueError) as e:
+            raise bad(e)
+
     @app.get("/api/overlays")
     def overlays_catalog() -> dict:
         from ..ops import overlays
