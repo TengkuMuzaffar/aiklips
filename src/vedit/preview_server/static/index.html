@@ -280,6 +280,11 @@ video { max-height: 100%; max-width: 100%; background: #000; border-radius: 10px
 #pv-layers .vl video, #pv-layers .vl canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 #pv-layers .vl-border { position: absolute; inset: 0; border-radius: inherit; box-sizing: border-box; }
 #t-mode { font-size: 11px; padding: 3px 8px; }
+/* expanded preview: the preview pane covers the whole window (and the screen, where fullscreen is allowed) */
+body.pv-expanded #p-prev { position: fixed; inset: 0; z-index: 50; background: var(--bg); }
+body.pv-expanded #p-prev > .pane-h { display: none; }
+body.pv-expanded #stage { padding: 0; background: #000; }
+body.pv-expanded video, body.pv-expanded #pv-hold, body.pv-expanded #pv-layers { border-radius: 0; }
 #t-mode.final { border-color: var(--sel); color: var(--sel); }
 #pv-busy { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; pointer-events: none;
   background: #0b0d1059; backdrop-filter: blur(2px) saturate(.6); -webkit-backdrop-filter: blur(2px) saturate(.6); overflow: hidden; animation: fadein .18s ease-out; }
@@ -896,6 +901,10 @@ header #status.error { color: var(--danger); }
       <span id="tc">0:00.00 / 0:00.00</span>
       <span style="width:14px"></span>
       <button class="ghost" id="t-mode" title="Live: text and images update instantly over the video. Final: the exact FFmpeg render, as it will export (slower to update).">Live</button>
+      <select id="t-quality" title="Preview quality: the size the preview renders at. Quarter is fastest on slower computers; the export is always full quality." style="font-size:12px">
+        <option value="full">Full</option><option value="half">Half</option><option value="quarter">Quarter</option>
+      </select>
+      <button class="ghost icon" id="t-expand" data-icon="maximize" title="Expand: watch the exact Final render, filling the window (F)"></button>
       <select id="t-guides" title="Safe-zone guides: where each app's buttons, captions and username cover the video (approximate; apps change their layout). Also what dragging snaps to. Picking an app saves it as this video's platform: the AI and the audit keep things inside its zone." style="font-size:12px;max-width:150px">
         <option value="off">Guides: off</option><option value="center">Centre lines</option><option value="tiktok">TikTok safe zone</option>
         <option value="reels">Instagram Reels safe zone</option><option value="shorts">YouTube Shorts safe zone</option><option value="audit">All apps safe zone</option>
@@ -1011,6 +1020,8 @@ const ICONS = {
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   shape: '<rect x="3" y="3" width="10" height="10" rx="1.5"/><circle cx="16" cy="16" r="5"/>',
   panels: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/><path d="M12 12h9"/>',
+  maximize: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+  minimize: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
   grid: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
@@ -1240,6 +1251,8 @@ function releaseFrame() { $("#pv-hold").style.display = "none"; }
 // text edits show up immediately instead of after a full FFmpeg render. "Final" plays the real render.
 const liveMode = () => !ST?.render?.final;
 function updateModeBtn() {
+  const q = $("#t-quality");
+  if (q && !EXPANDED && q.value !== pvQuality()) q.value = pvQuality();
   const b = $("#t-mode"); if (!b) return;
   const fin = !liveMode();
   b.textContent = fin ? "Final" : "Live"; b.classList.toggle("final", fin);
@@ -1248,6 +1261,45 @@ $("#t-mode").onclick = async () => {
   const r = await fetch("/api/preview-mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ final: liveMode() }) });
   if (r.ok && ST) { ST.render.final = (await r.json()).final; updateModeBtn(); PV.waitUntil = Date.now() + 2500; updatePreviewBusy(); }
 };
+// ---------- preview quality + expanded view ----------
+// Quality = the size the preview renders at (Full = as exported). Low-spec machines edit at Quarter; Expand fills the
+// window with the exact Final render (at the chosen quality), and going back restores the mode the user had.
+const QUALITY_SCALE = { full: 1, half: 0.5, quarter: 0.25 };
+const pvQuality = () => ST?.render?.quality || "half";
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode: not remembered */ } }
+async function setPreviewMode(body) {
+  const r = await fetch("/api/preview-mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok || !ST) return;
+  const d = await r.json();
+  ST.render.final = d.final; ST.render.quality = d.quality;
+  updateModeBtn(); PV.waitUntil = Date.now() + 2500; updatePreviewBusy();
+}
+$("#t-quality").onchange = (e) => {
+  lsSet("aiklips.pvQuality", e.target.value);
+  if (EXPANDED) EXPANDED.quality = e.target.value; // applies after leaving the expanded view
+  else setPreviewMode({ quality: e.target.value });
+};
+let EXPANDED = null; // {final, quality} to restore, while the preview fills the window
+function setExpanded(on) {
+  if (!!EXPANDED === on) return;
+  document.body.classList.toggle("pv-expanded", on);
+  const b = $("#t-expand");
+  b.replaceChildren(icon(on ? "minimize" : "maximize"));
+  b.title = on ? "Back to the editor (Esc)" : "Expand: watch the exact Final render, filling the window (F)";
+  if (on) {
+    EXPANDED = { final: !liveMode(), quality: pvQuality() };
+    setPreviewMode({ final: true }); // at the user's quality: Full on a slow PC can take minutes
+    document.documentElement.requestFullscreen?.().catch(() => { /* the window still fills: fine */ });
+  } else {
+    const back = EXPANDED; EXPANDED = null;
+    setPreviewMode(back);
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }
+  window.dispatchEvent(new Event("resize")); // overlays and guides re-measure the bigger stage
+}
+$("#t-expand").onclick = () => setExpanded(!EXPANDED);
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && EXPANDED) setExpanded(false); });
 const SPRITES = new Map();   // request key -> {img, w, h, scale} once loaded
 const SPR_WAIT = new Map();  // request key -> Promise while loading
 const CONTENT = new WeakMap(); // layer object -> JSON of what its pixels depend on
@@ -1431,7 +1483,7 @@ function drawOverlays() {
   const box = videoBox(), cv = P().canvas, D = dur();
   Object.assign(stage.style, { display: "block", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
   // sprite resolution: about screen resolution, in steps so a small resize doesn't redraw everything
-  const want = Math.max(0.25, Math.min(1, Math.ceil(((box.width * (window.devicePixelRatio || 1)) / cv.width) * 4) / 4));
+  const want = Math.max(0.25, Math.min(QUALITY_SCALE[pvQuality()] ?? 1, Math.ceil(((box.width * (window.devicePixelRatio || 1)) / cv.width) * 4) / 4));
   if (want !== SPR_SCALE) SPR_SCALE = want;
   const T = PV_TIME.override ?? video.currentTime, seen = new Set();
   P().layers.filter((l) => !underVideo(l)).forEach((l, z) => {
@@ -1815,11 +1867,17 @@ function mediaKey(id) { const s = P().sources[id]; return hashStr(`${ST.project_
 function srcThumb(id) { return `/api/source/${encodeURIComponent(id)}/thumb.jpg?k=${mediaKey(id)}`; }
 
 // ---------- state ----------
+let REFRESH_SEQ = 0;
 async function refresh() {
+  // events can start several refreshes at once (an AI run writes project.json every few seconds); a slow older
+  // response must never overwrite a newer one, or the preview and timeline go back to an earlier edit
+  const seq = ++REFRESH_SEQ;
   const res = await fetch("/api/state");
   if (res.status === 409) { location.href = "/"; return; }
+  const next = await res.json();
+  if (seq !== REFRESH_SEQ) return;
   const prev = ST;
-  ST = await res.json();
+  ST = next;
   if (prev && prev.project_dir === ST.project_dir && (busy || Date.now() < AI_EDIT_UNTIL)) noteEdits(diffEdits(prev, ST));
   if (SEL && !selExists()) SEL = null;
   $("#proj-name").textContent = P().name; $("#proj-name").title = P().name;
@@ -1858,14 +1916,14 @@ function setStatus(r) {
   el.title = r.error ? String(r.error) : r.status === "rendering" ? "Updating the preview with your latest changes" : "The preview shows your latest edit";
   updatePreviewBusy();
 }
-function reloadVideo() {
+function reloadVideo(file = ST?.render?.file) {
   const t = video.currentTime, playing = !video.paused, v = Date.now();
   if (!FRAME.active) holdFrame();
   PV.loading = true; updatePreviewBusy();
   let done = false;
   const ready = () => { if (done) return; done = true; clearTimeout(fallback); FRAME.active = false; FRAME.shown = FRAME.gen; releaseFrame(); PV.loading = false; updatePreviewBusy(); };
   const fallback = setTimeout(ready, 4000);
-  video.src = `/media/${liveMode() ? "base" : "preview"}.mp4?v=${v}`;
+  video.src = `/media/${file || (liveMode() ? "base.mp4" : "preview.mp4")}?v=${v}`;
   video.addEventListener("loadedmetadata", () => {
     video.addEventListener("seeked", ready, { once: true });
     video.currentTime = Math.min(t, video.duration || t);
@@ -5329,7 +5387,9 @@ document.addEventListener("keydown", (e) => {
   else if (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "c") op("split", { at: video.currentTime });
   else if (e.key.toLowerCase() === "t") addTextAtPlayhead();
   else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+  else if (e.key === "Escape" && EXPANDED) setExpanded(false);
   else if (e.key === "Escape") { MULTI.clear(); select(null); }
+  else if (e.key.toLowerCase() === "f" && hasTimeline()) setExpanded(!EXPANDED);
   else if (e.key === "=" || e.key === "+") { PPS = Math.min(400, PPS * 1.25); $("#zoom").value = PPS; renderTimeline(); }
   else if (e.key === "-") { PPS = Math.max(15, PPS / 1.25); $("#zoom").value = PPS; renderTimeline(); }
 });
@@ -5343,17 +5403,23 @@ es.onmessage = async (m) => {
   // only re-fetch the project when it actually changed; render-status ticks just update the pill
   const passes = ST?.render?.passes;
   if (!ST || d.rev !== ST.rev) await refresh();
-  else { ST.render = { status: d.status, error: d.error, version: d.version, final: d.final, passes: d.passes }; setStatus(ST.render); }
+  else { ST.render = { status: d.status, error: d.error, version: d.version, final: d.final, passes: d.passes, quality: d.quality, file: d.file }; setStatus(ST.render); }
   if (passes != null && d.passes !== passes && d.status === "idle") { // edit handled (maybe a cache hit)
     PV.waitUntil = 0; updatePreviewBusy();
     if (d.version === lastVideoVersion && FRAME.active && !FRAME.busy && !FRAME.next && !DRAGGING) dropFrame();
   }
   updateModeBtn();
-  if (d.status === "idle" && !d.error && d.version !== lastVideoVersion && hasTimeline()) { lastVideoVersion = d.version; reloadVideo(); }
+  // a new version is a finished file (renders are written to a temp file, then renamed), so load it straight away:
+  // waiting for "idle" kept the old preview on screen for the whole AI run, while newer edits kept rendering
+  if (!d.error && d.version !== lastVideoVersion && hasTimeline()) { lastVideoVersion = d.version; reloadVideo(d.file); }
 };
 es.onerror = () => { const s = $("#status"); s.className = "pill error"; s.textContent = "Disconnected"; };
 
-refresh().then(() => { if (hasTimeline()) reloadVideo(); });
+refresh().then(() => {
+  const q = lsGet("aiklips.pvQuality");
+  if (q && QUALITY_SCALE[q] && q !== pvQuality()) setPreviewMode({ quality: q });
+  if (hasTimeline()) reloadVideo();
+});
 connectChat();
 checkAI();
 </script>

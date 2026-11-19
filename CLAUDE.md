@@ -24,6 +24,11 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
      findings back to you (up to the round cap). Fix them, or say clearly why one shouldn't be fixed. If the
      `<editor_context>` says `auditor: off`, the user switched it off: skip `why` / `audit` unless they ask.
    - Don't call an edit finished while the audit has must-fix findings; if one can't be fixed, say so and why.
+   - **Text must be readable against what is really behind it.** Hex colours tell you nothing about what a viewer
+     sees: light text on a white card, lime on white, dark on dark are invisible. Every edit command checks the
+     contrast of text against the shape / box / canvas under it and returns a `warnings` entry when it fails (with
+     the fix); the audit's `contrast` check also measures text over footage from the rendered pixels. Never ignore
+     either. Choose text colour from the background it sits on (dark text on light cards, light on dark).
 6. **Tell the user what changed**, in timeline seconds, the audit score, and mention they can say "undo".
 7. **Export only when asked**, or when the user is happy: `uv run vedit --json export`. Default: H.264 MP4 at the project's size and fps in `projects/<name>/exports/`; unset options reuse the project's last export settings, and a file is never overwritten (name-2…). Ask before ProRes or 2× (huge files).
 
@@ -286,6 +291,16 @@ Load the relevant one before doing that kind of edit.
     (`tests/test_live_preview.py` checks they agree). The "Final" toggle and `vedit frame` / audit use the full render.
     Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
     frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
+    Preview quality (Full / Half / Quarter = `runner.PREVIEW_QUALITIES`, one file + hash per scale, `preview_name`)
+    and Expand (window-filling Final render at the chosen quality; restores the user's mode on exit) go through `/api/preview-mode`.
+    A newer edit cancels the running render only within `CANCEL_GRACE` (app.py), and the browser loads each new
+    `version` at once (not only when idle), so the preview keeps up during an AI run; `refresh()` drops stale responses.
+  - Render speed (render/layers.py `layer_clip`, graph.py `draw`): each layer video is cropped to the area it ever
+    covers (offset in the file name `@x_y`), keeps only frames that change (variable frame rate via `select`; overlay
+    holds a frame until the next), and uncached layers render in a spawn process pool (`_layer_clips`; scripts that
+    render need an `if __name__ == "__main__"` guard). The composite reads layers with `-itsoffset` + an `enable`
+    window (half a frame of slack) and overlays in `format=yuv420`; previews use a hardware encoder (`media.hw_h264`).
+    Check speed changes on a many-layer project and compare frames with the old code (PSNR) before trusting them.
   - Motion graphics (no browser): `ops/motion.py` (counters, kinetic text = `render_text(spans=)` pieces composed
     per frame, field validation), `ops/chart.py` (charts), paths / trim / morph outlines in `ops/shapes.py`, drawn
     in `overlay_style.render_shape(draw=, morph=)`; progress props `draw` / `morph` / `count` + cubic-bezier easing in
@@ -329,6 +344,9 @@ Load the relevant one before doing that kind of edit.
   - Audit & justification: `audit.py` (code checks -> findings with evidence + suggested command), `Clip.meta` /
     `Layer.why` / `Project.notes` (beats, rationale), plan validation in `generate/planner.py` (`validate_plan`).
     Design + roadmap (AI reviewer, chat Stop hook, creativity): `docs/design/auditor-justification-creativity.md`
+  - Text contrast: `ops/contrast.py` (WCAG ratio of the letters vs. what is behind them: structural walk down the
+    layers, else the rendered pixels around the glyphs), used by `audit.check_contrast` and by the CLI's `edit()`
+    wrapper, which adds `warnings` to the command's output when an edit makes text unreadable.
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
 - **Before committing:** keep the tests green. Add a test for each new op.

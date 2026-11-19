@@ -163,7 +163,58 @@ def test_sprite_and_mode_api(cli, test_clip):
     assert client.post("/api/sprite", json={"layer": {"type": "nope"}}).status_code == 400
 
     assert client.get("/api/state").json()["render"]["final"] is False
-    assert client.post("/api/preview-mode", json={"final": True}).json() == {"final": True}
+    assert client.post("/api/preview-mode", json={"final": True}).json() == {"final": True, "quality": "half"}
     assert client.get("/api/state").json()["render"]["final"] is True
+    # quality alone keeps the mode; an unknown one is refused
+    assert client.post("/api/preview-mode", json={"quality": "quarter"}).json() == {"final": True, "quality": "quarter"}
+    assert client.get("/api/state").json()["render"]["quality"] == "quarter"
+    assert client.post("/api/preview-mode", json={"quality": "8k"}).status_code == 400
+    assert client.get("/media/preview-25.mp4").status_code in (200, 404)  # allowed name (404 until rendered)
+    assert client.get("/media/project.json").status_code == 404
     assert client.get("/static/animate.js").status_code == 200
     assert client.get("/static/../app.py").status_code == 404
+
+
+def test_preview_quality_has_its_own_file_and_cache(cli, test_clip):
+    """Each preview quality renders to its own file at that size, and the default keeps the old names."""
+    from vedit.render.runner import preview_dir, preview_name
+
+    cli("import", str(test_clip))
+    d = cli.project
+    p = load(d)
+    half = render_preview(p, d, progress=False, base=True)
+    quarter = render_preview(p, d, progress=False, base=True, scale=0.25)
+    assert Path(half["output"]).name == "base.mp4" and Path(quarter["output"]).name == preview_name(True, 0.25) == "base-25.mp4"
+    assert quarter["width"] * 2 == pytest.approx(half["width"], abs=2)
+    # both stay cached: switching quality back and forth renders nothing
+    assert render_preview(p, d, progress=False, base=True)["cached"] is True
+    assert render_preview(p, d, progress=False, base=True, scale=0.25)["cached"] is True
+    assert (preview_dir(d) / "base-hash").exists() and (preview_dir(d) / "base-hash-25").exists()
+
+
+def test_renderer_lets_a_running_render_finish(cli, test_clip, monkeypatch):
+    """A newer edit cancels only a young render: one well under way finishes, so the preview moves on during a
+    stream of AI edits instead of staying on the old video until the AI stops."""
+    from vedit.preview_server import app as app_mod
+
+    cli("import", str(test_clip))
+    seen = []
+
+    def fake_render(p, pdir, should_stop=None, **kw):
+        r.pending.set()  # an edit arrives mid-render
+        seen.append(should_stop())
+        return {"cached": False}
+
+    monkeypatch.setattr(app_mod, "render_preview", fake_render)
+    monkeypatch.setattr(app_mod, "CANCEL_GRACE", 0.0)  # every render counts as "under way"
+    r = app_mod.Renderer(cli.project, watch=False)
+    try:
+        import time
+        for _ in range(100):
+            if len(seen) >= 2:
+                break
+            time.sleep(0.05)
+    finally:
+        r.stop()
+    assert seen and not any(seen)  # never cancelled
+    assert r.version >= 1 and r.file == "base.mp4"

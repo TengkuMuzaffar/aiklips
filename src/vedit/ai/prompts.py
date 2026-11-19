@@ -165,7 +165,9 @@ Check, in this order:
 2. Story: for each clip, does the picture actually do what its WHY claims for its beat? Do the beats land in order?
    Is the payoff/CTA earned? Flag any clip whose WHY doesn't match what is on screen.
 3. Pacing: does the rhythm fit the target style; any dead stretch?
-4. Typography: readable at phone size, consistent, not covering faces or the product.
+4. Typography: readable at phone size, consistent, not covering faces or the product. Look at the PIXELS, not the
+   overlay list: text you can only just make out (light on white, dark on dark, lime on white) is unreadable for a
+   viewer even when you can parse the words; flag it as must-fix.
 5. Colour: consistent between shots; does the look suit the content?
 6. Sound (you can't hear it): judge from each clip's measured "sound:" line and the code checks. B-roll noise under
    music, music drowning speech, speech cut mid-word, a silent stretch, music that doesn't fit the mood of the cut.

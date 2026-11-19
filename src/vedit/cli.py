@@ -9,6 +9,7 @@ import json
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -99,14 +100,41 @@ def pdir() -> Path:
 
 
 def emit(data: dict, human: str | None = None) -> None:
+    warnings = STATE.pop("warnings", None)
+    if warnings:
+        data = {**data, "warnings": [*data.get("warnings", []), *warnings]}
     if STATE["json"]:
         print(json.dumps({"ok": True, **data}, default=str))
     else:
         print(human if human is not None else json.dumps(data, indent=2, default=str))
+        for w in warnings or []:
+            print(f"WARNING: {w}")
 
 
+@contextmanager
 def edit(message: str):
-    return history.transaction(pdir(), message)
+    """An undoable edit (history.transaction). Afterwards, text this edit made unreadable (contrast against the shape /
+    box / canvas really behind it, ops/contrast.py) comes back as a warning in the command's own output, so the AI
+    sees it at once instead of only in the audit."""
+    d = pdir()
+    with history.transaction(d, message) as tx:
+        before = tx.project.model_copy(deep=True)
+        yield tx
+    if not tx.cancelled:
+        try:
+            STATE["warnings"] = _contrast_warnings(before, tx.project, d)
+        except Exception:  # a guardrail must never break the edit itself
+            pass
+
+
+def _contrast_warnings(before: Project, after: Project, d: Path) -> list[str]:
+    from .ops import contrast
+
+    now = [r for r in contrast.issues(after, d) if r.severity]
+    if not now:
+        return []
+    old = {(r.layer, r.fill, r.behind_hex) for r in contrast.issues(before, d) if r.severity}
+    return [f"{contrast.message(r)} Fix: {r.suggest}" for r in now if (r.layer, r.fill, r.behind_hex) not in old]
 
 
 def fmt_t(t: float) -> str:

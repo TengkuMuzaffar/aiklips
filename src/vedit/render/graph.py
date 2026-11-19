@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 from .. import media
 from ..ops import color
 from ..project import Clip, Project, VeditError, resolve_media, state_dir
-from .layers import ensure_layer, even, layer_span
+from .layers import even, layer_clip, layer_span
 
 
 def _f(v: float) -> str:
@@ -324,14 +325,39 @@ BLEND_FILTER = {"screen": "screen", "multiply": "multiply", "overlay": "overlay"
                 "lighten": "lighten", "darken": "darken"}
 
 
-def _blend_layer(g: Graph, base: str, li: int, start: float, mode: str, out: str) -> str:
-    """Composite a full-canvas RGBA layer video over `base` with a blend mode, limited to the layer's own alpha.
+def _layer_clips(project: Project, pdir: Path, layers: list, scale: float) -> dict:
+    """{layer id: layer_clip(...)} for these layers. The ones not cached yet render in worker processes: the drawing
+    is Pillow work that holds Python's lock, so threads barely overlap and processes use every core."""
+    from .layers import MISS, cached_clip
+
+    out = {l.id: cached_clip(project, pdir, l, scale) for l in layers}
+    todo = [l for l in layers if out[l.id] is MISS]
+    if len(todo) < 3:  # starting worker processes costs ~0.5 s: not worth it for one or two layers
+        out.update({l.id: layer_clip(project, pdir, l, scale) for l in todo})
+        return out
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
+    # the biggest jobs first, so a long layer doesn't start last and hold the render up
+    todo.sort(key=lambda l: -layer_span(l, project.duration)[1])
+    workers = max(2, min(len(todo), (os.cpu_count() or 4) - 1))
+    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
+        futs = {l.id: ex.submit(layer_clip, project, pdir, l, scale) for l in todo}
+        out.update({k: f.result() for k, f in futs.items()})
+    return out
+
+
+def _blend_layer(g: Graph, base: str, src: str, start: float, mode: str, out: str,
+                 box: tuple[int, int, int, int] | None = None) -> str:
+    """Composite an RGBA layer video over `base` with a blend mode, limited to the layer's own alpha.
 
     blend works on colour only, so: blend the base with the layer's colours, give that result the layer's alpha,
-    and lay it over the base. The layer is padded with transparent frames until its start so both line up."""
+    and lay it over the base. The layer is padded with transparent frames until its start so both line up.
+    `box` = (canvas W, H, x, y) when the layer video is cropped: it is padded back to the canvas first."""
     lp, l1, l2, b1, b2, bb, lr, bl, al, blm = (g.label(x) for x in ("lp", "l1", "l2", "b1", "b2", "bb", "lr", "bl", "al", "blm"))
     pad = f"tpad=start_duration={_f(start)}:start_mode=add:color=black@0," if start > 1e-3 else ""
-    g.add(f"[{li}:v]setpts=PTS-STARTPTS,{pad}format=rgba[{lp}]")
+    grow = f"format=rgba,pad={box[0]}:{box[1]}:{box[2]}:{box[3]}:color=black@0," if box else ""
+    g.add(f"[{src}]setpts=PTS-STARTPTS,{grow}{pad}format=rgba[{lp}]")
     g.add(f"[{lp}]split=2[{l1}][{l2}]")
     g.add(f"[{base}]split=2[{b1}][{b2}]")
     g.add(f"[{b1}]format=gbrp[{bb}]")
@@ -582,6 +608,9 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     else:
         g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
 
+    # render every layer video up front, the uncached ones in parallel (see _layer_clips)
+    wanted = [l for l in below + (above if layers else []) if l.type not in ("adjust", "glass")]
+    clips = _layer_clips(project, pdir, wanted, scale)
 
     def draw(layer, vcur: str) -> str:
         start, ldur = layer_span(layer, total)
@@ -589,16 +618,26 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
             return _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
         if layer.type == "glass":
             return _glass_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale)
-        f = ensure_layer(project, pdir, layer, scale)
-        if f is None:
+        lc = clips.get(layer.id) if layer.id in clips else layer_clip(project, pdir, layer, scale)
+        if lc is None:
             return vcur
-        li = g.add_input(["-i", str(f)])
+        f, x, y = lc  # the layer's video is cropped to where it appears; (x, y) puts it back on the canvas
+        # -itsoffset: the file's timestamps start where the layer does, so FFmpeg reads each input only when the
+        # timeline gets there instead of buffering hundreds of inputs from the first frame
+        src = f"{g.add_input(['-itsoffset', _f(start), '-i', str(f)])}:v"
         ll, out = g.label("L"), g.label("V")
         if layer.blend == "normal":
-            g.add(f"[{li}:v]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
-            g.add(f"[{vcur}][{ll}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+            g.add(f"[{src}]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
+            # enable: outside the layer's own time the step passes frames straight through (no framesync, no
+            # conversion), so a project with hundreds of short layers doesn't pay for every layer on every frame
+            # half a frame of slack: t = n / fps is inexact (frame 1566 at 30 fps is 52.19999..), and a window starting
+            # at exactly 52.2 dropped the layer's first frame. Outside its frames the layer has nothing to draw anyway.
+            en = f"enable='between(t,{_f(start - 0.5 / fps)},{_f(start + ldur + 0.5 / fps)})'"
+            # format=yuv420: blend straight into the picture's own format. "auto" kept the chain in RGB and converted
+            # every frame of every layer (~6 ms per full-size frame): 2x slower, for the same yuv420p output
+            g.add(f"[{vcur}][{ll}]overlay={x}:{y}:eof_action=pass:format=yuv420:{en}[{out}]")
             return out
-        return _blend_layer(g, vcur, li, start, layer.blend, out)
+        return _blend_layer(g, vcur, src, start, layer.blend, out, (W, H, x, y))
 
     if stacked:  # canvas colour, the tracks under the video (always: the editor's base video has them too), the video
         cur = g.label("base")
@@ -671,7 +710,11 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     gfile.write_text(";\n".join(g.filters))
     graph_flag = ["-/filter_complex", str(gfile)] if media.ffmpeg_major() >= 7 else ["-filter_complex_script", str(gfile)]
 
-    if quality == "preview":
+    hw = media.hw_h264() if quality == "preview" else None
+    if hw:  # previews on the GPU's encoder: about twice as fast as x264, and the CPU is left for drawing layers
+        kbps = max(1500, round(6000 * W * H / (1080 * 1920)))  # ~6 Mb/s at 1080x1920, less for smaller previews
+        enc = ["-c:v", hw, "-b:v", f"{kbps}k", "-c:a", "aac", "-b:a", "128k"]
+    elif quality == "preview":
         enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "128k"]
     else:
         enc = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-c:a", "aac", "-b:a", "192k"]

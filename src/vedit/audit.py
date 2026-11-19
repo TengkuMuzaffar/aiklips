@@ -1,4 +1,4 @@
-"""Audit an edit with code: hook, readability, safe zones, overlaps, typography, colour, pacing,
+"""Audit an edit with code: hook, readability, text contrast, safe zones, overlaps, typography, colour, pacing,
 footage use, audio loudness and justification. No AI; every finding carries its evidence.
 
     report = audit(project, pdir)          # {"score", "passed", "counts", "findings": [...]}
@@ -151,6 +151,20 @@ def check_layout(p: Project, pdir: Path) -> list[dict]:
     return out
 
 
+def check_contrast(p: Project, pdir: Path, preview: Path | None = None) -> list[dict]:
+    """Text a person can't read against what is really behind it (ops/contrast.py): WCAG contrast of the letters on
+    the shape / box / canvas under them, or on the rendered pixels around them when footage or images are behind."""
+    from .ops import contrast
+
+    out = []
+    for r in contrast.check(p, pdir, preview):
+        if r.severity:
+            out.append(_finding(r.severity, "contrast", contrast.message(r), r.t,
+                                f"fill {r.fill.upper()} vs {r.behind_hex} behind ({r.behind}): {r.ratio:.2f}:1, "
+                                f"needs {r.need:g}:1", r.suggest))
+    return out
+
+
 def check_typography(p: Project, pdir: Path) -> list[dict]:
     from .ops import fonts
 
@@ -290,16 +304,19 @@ def loudness(path: Path) -> tuple[float | None, float | None]:
     return num(_I), num(_PEAK)
 
 
+def _preview(p: Project, pdir: Path) -> Path:
+    from .render.runner import render_preview
+
+    return Path(render_preview(p, pdir, progress=False)["output"])
+
+
 def check_audio(p: Project, pdir: Path, render: bool = True) -> list[dict]:
     if not render or not p.clips:
         return []
-    from .render.runner import render_preview
-
     try:
-        res = render_preview(p, pdir, progress=False)
+        lufs, peak = loudness(_preview(p, pdir))
     except VeditError as e:
         return [_finding("must-fix", "render", f"The edit does not render: {e}")]
-    lufs, peak = loudness(Path(res["output"]))
     out = []
     if lufs is None:
         return out
@@ -456,6 +473,16 @@ def audit(p: Project, pdir: Path, render: bool = True) -> dict:
         findings += check_audio(p, pdir, render)
     except Exception as e:
         findings.append(_finding("note", "audit", f"Check 'audio' could not run: {e}"))
+    try:  # after the audio check: the preview it rendered is reused for the pixels behind text over footage
+        preview = None
+        if render and p.clips:
+            try:
+                preview = _preview(p, pdir)
+            except VeditError:
+                pass
+        findings += check_contrast(p, pdir, preview)
+    except Exception as e:
+        findings.append(_finding("note", "audit", f"Check 'contrast' could not run: {e}"))
     order = {"must-fix": 0, "should-fix": 1, "note": 2}
     findings.sort(key=lambda f: (order[f["severity"]], f["at"] if f["at"] is not None else 1e9))
     for i, f in enumerate(findings, 1):

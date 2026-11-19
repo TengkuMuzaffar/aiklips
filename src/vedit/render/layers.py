@@ -20,7 +20,8 @@ from ..ops.overlay_style import render_shape, style_frame, video_width
 from ..ops.text import find_font, render_image, render_text
 from ..project import Layer, Project, VeditError, resolve_media, state_dir
 
-RENDER_VERSION = "5"
+RENDER_VERSION = "7"
+FRAME_BUDGET = 256 * 1024 * 1024  # bytes of distinct layer frames kept between the measuring and the encoding pass
 
 
 def even(v: float) -> int:
@@ -247,82 +248,182 @@ class _SpriteSource:
 
 def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0) -> Path | None:
     """Render (or reuse) the overlay video for one layer. Returns None if it is not visible."""
+    lc = layer_clip(project, pdir, layer, scale)
+    return lc[0] if lc else None
+
+
+def _offset(path: Path) -> tuple[int, int]:
+    x, y = path.stem.rsplit("@", 1)[1].split("_")
+    return int(x), int(y)
+
+
+def _changed_frames(frames: list) -> str | None:
+    """A `select` expression keeping only the frames that differ from the one before (plus the last, so the stream
+    lasts the layer's whole time), or None when that saves nothing. The file becomes variable frame rate: FFmpeg's
+    overlay keeps showing a frame until the next one arrives, so a title that holds still for 20 s is decoded and
+    converted to the video's colour format once instead of 600 times."""
+    n = len(frames)
+    keep = [i for i in range(n) if i == 0 or i == n - 1 or frames[i] is not frames[i - 1]]
+    if len(keep) > n * 0.8:
+        return None
+    runs: list[list[int]] = []
+    for i in keep:
+        if runs and i == runs[-1][1] + 1:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i])
+    if len(runs) > 200:  # a very long expression: not worth it
+        return None
+    return "+".join(f"eq(n,{a})" if a == b else f"between(n,{a},{b})" for a, b in runs)
+
+
+MISS = object()  # cached_clip: not rendered yet
+
+
+def _cache_place(project: Project, pdir: Path, layer: Layer, scale: float) -> tuple[str, Path, str]:
+    cdir = state_dir(pdir) / "cache" / "layers"
+    cdir.mkdir(parents=True, exist_ok=True)
+    return _cache_key(project, pdir, layer, scale), cdir, f"{layer.id}-s{scale:g}-"
+
+
+def cached_clip(project: Project, pdir: Path, layer: Layer, scale: float = 1.0):
+    """layer_clip's answer when it is already rendered (a clip, or None for a layer that is never visible), else MISS."""
+    if layer.type == "glass" or layer_span(layer, project.duration)[1] <= 0.01:
+        return None
+    key, cdir, prefix = _cache_place(project, pdir, layer, scale)
+    hit = next((p for p in cdir.glob(f"{prefix}{key}@*.mov") if not p.name.endswith(".tmp.mov")), None)
+    if hit is not None:
+        return (hit, *_offset(hit))
+    if (cdir / f"{prefix}{key}.none").exists():
+        return None
+    return MISS
+
+
+def layer_clip(project: Project, pdir: Path, layer: Layer, scale: float = 1.0) -> tuple[Path, int, int] | None:
+    """Render (or reuse) one layer as an RGBA video cropped to the part of the canvas it ever covers, and where that
+    crop sits on the canvas: (file, x, y). None if the layer is never visible.
+
+    Cropping matters: a full-canvas RGBA frame is 8 MB at 1080x1920, and piping + encoding + overlaying those for a
+    small caption or shape was most of a render's time."""
     if layer.type == "glass":  # drawn from the picture under it in the graph (render/graph.py _glass_layer)
         return None
     start, dur = layer_span(layer, project.duration)
     if dur <= 0.01:
         return None
-    key = _cache_key(project, pdir, layer, scale)
-    cdir = state_dir(pdir) / "cache" / "layers"
-    cdir.mkdir(parents=True, exist_ok=True)
-    prefix = f"{layer.id}-s{scale:g}-"
-    out = cdir / f"{prefix}{key}.mov"
-    if out.exists():
-        return out
+    key, cdir, prefix = _cache_place(project, pdir, layer, scale)
+    hit = cached_clip(project, pdir, layer, scale)
+    if hit is not MISS:
+        return hit
 
     canvas = project.canvas
     W, H = even(canvas.width * scale), even(canvas.height * scale)
     fps = canvas.fps
     n = max(1, round(dur * fps))
-    sprites = _SpriteSource(project, pdir, layer, scale, dur)
+
+    def placed():
+        """Each frame's (image, x, y) in order (None = shows nothing); unchanged frames repeat the same tuple."""
+        src = _SpriteSource(project, pdir, layer, scale, dur)
+        try:
+            last_key, last = None, None
+            for i in range(n):
+                fr, last_key, last = _place(src, layer, start, i / fps, dur, canvas, scale, i, last_key, last)
+                yield fr
+        finally:
+            src.close()
+
+    if layer.type == "video":  # decoding is one ordered pass, so no measuring pass: keep the whole canvas
+        x0, y0, bw, bh, frames = 0, 0, W, H, None
+    else:
+        # pass 1: where does the layer ever appear? Keep the frames for pass 2 unless they get big (long kinetic text
+        # makes a new image every frame); then pass 2 draws them again (sprites are cached, only transforms repeat)
+        frames, kept, x0, y0, x1, y1 = [], 0, W, H, 0, 0
+        for fr in placed():
+            if fr is not None and (not frames or fr is not frames[-1]):
+                im, x, y = fr
+                x0, y0, x1, y1 = min(x0, max(0, x)), min(y0, max(0, y)), max(x1, min(W, x + im.width)), max(y1, min(H, y + im.height))
+                kept += im.width * im.height * 4
+            if frames is not None:
+                frames.append(fr)
+                if kept > FRAME_BUDGET:
+                    frames = None
+        if x1 <= x0 or y1 <= y0:  # never on screen (off-canvas, fully transparent...): remember that, render nothing
+            for old in cdir.glob(f"{prefix}*"):
+                old.unlink(missing_ok=True)
+            (cdir / f"{prefix}{key}.none").touch()
+            return None
+        x0, y0 = x0 // 2 * 2, y0 // 2 * 2  # even offsets and sizes keep the chroma planes aligned
+        bw, bh = min(W - x0, even(x1 - x0 + 1)), min(H - y0, even(y1 - y0 + 1))
+        if frames is None:
+            frames = placed()
+
+    sel = _changed_frames(frames) if isinstance(frames, list) else None
+    vfr = ["-vf", f"select='{sel}'", *(["-fps_mode", "passthrough"] if media.ffmpeg_major() >= 5 else ["-vsync", "0"])] if sel else []
+    out = cdir / f"{prefix}{key}@{x0}_{y0}.mov"
     tmp = out.with_suffix(".tmp.mov")
     proc = subprocess.Popen(
         [
             media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
-            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
+            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{bw}x{bh}", "-r", str(fps), "-i", "-", *vfr,
             "-c:v", "qtrle", "-pix_fmt", "argb", str(tmp),
         ],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert proc.stdin is not None
-    blank = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    blank = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     blank_bytes = blank.tobytes()
-    last_key, last_bytes = None, blank_bytes
     try:
-        for i in range(n):
-            t = i / fps
-            pr = props_at(layer, t, dur, canvas)
-            sprite, extra = sprites.get(start + t, pr["reveal"], pr)
-            s = pr["scale"] * extra
-            sx, sy = s * pr["sx"], s * pr["sy"]
-            wipe = pr["reveal"] if layer.type != "text" else 1.0  # text reveals letter by letter instead
-            if sprite is None or pr["opacity"] <= 0.001 or sx <= 0.001 or sy <= 0.001 or wipe <= 0.001:
-                proc.stdin.write(blank_bytes)
-                continue
-            live = sprites.kinetic is not None and t < sprites.kinetic.end  # a new image every frame: id() may repeat
-            fkey = (id(sprite), i if live else -1, round(sx, 4), round(sy, 4), round(pr["rotation"], 2), round(pr["opacity"], 3),
-                    round(pr["x"], 1), round(pr["y"], 1), round(wipe, 3))
-            if fkey == last_key:
-                proc.stdin.write(last_bytes)
-                continue
-            img = sprite
-            if wipe < 0.999:  # wipe on from the left: hide everything right of the revealed part
-                img = img.copy()
-                cut = round(img.width * wipe)
-                img.paste((0, 0, 0, 0), (cut, 0, img.width, img.height))
-            if abs(sx - 1) > 1e-3 or abs(sy - 1) > 1e-3:
-                img = img.resize((max(1, round(img.width * sx)), max(1, round(img.height * sy))), Image.BICUBIC)
-            if abs(pr["rotation"]) > 0.01:
-                img = img.rotate(-pr["rotation"], resample=Image.BICUBIC, expand=True)
-            if pr["opacity"] < 0.999:
-                a = img.getchannel("A").point(lambda v, o=pr["opacity"]: int(v * o))
-                img = img.copy()
-                img.putalpha(a)
-            frame = blank.copy()
-            frame.paste(img, (round(pr["x"] * scale - img.width / 2), round(pr["y"] * scale - img.height / 2)))
-            last_key, last_bytes = fkey, frame.tobytes()
-            proc.stdin.write(last_bytes)
+        prev, prev_bytes = None, blank_bytes
+        for fr in (frames if frames is not None else placed()):
+            if fr is None:
+                prev, prev_bytes = None, blank_bytes
+            elif fr is not prev:  # unchanged frames are the same tuple: reuse its bytes
+                img, x, y = fr
+                frame = blank.copy()
+                frame.paste(img, (x - x0, y - y0))
+                prev, prev_bytes = fr, frame.tobytes()
+            proc.stdin.write(prev_bytes)
         proc.stdin.close()
     except BrokenPipeError:
         pass
-    finally:
-        sprites.close()
     err = proc.stderr.read().decode() if proc.stderr else ""
     if proc.wait() != 0:
         tmp.unlink(missing_ok=True)
         raise VeditError(f"Rendering layer {layer.id} failed: {err[-800:]}")
     tmp.replace(out)
-    for old in cdir.glob(f"{prefix}*.mov"):
+    for old in cdir.glob(f"{prefix}*"):
         if old != out and not old.name.endswith(".tmp.mov"):
             old.unlink(missing_ok=True)
-    return out
+    return out, x0, y0
+
+
+def _place(sprites: "_SpriteSource", layer: Layer, start: float, t: float, dur: float, canvas, scale: float, i: int,
+           last_key, last):
+    """The layer's picture at time `t` (seconds into the layer) and its top-left on the canvas, or None when it shows
+    nothing. Returns (frame, key, frame) so an unchanged frame is the same object as the one before."""
+    pr = props_at(layer, t, dur, canvas)
+    sprite, extra = sprites.get(start + t, pr["reveal"], pr)
+    s = pr["scale"] * extra
+    sx, sy = s * pr["sx"], s * pr["sy"]
+    wipe = pr["reveal"] if layer.type != "text" else 1.0  # text reveals letter by letter instead
+    if sprite is None or pr["opacity"] <= 0.001 or sx <= 0.001 or sy <= 0.001 or wipe <= 0.001:
+        return None, None, None
+    live = (sprites.kinetic is not None and t < sprites.kinetic.end) or layer.type == "video"  # new image every frame
+    fkey = (id(sprite), i if live else -1, round(sx, 4), round(sy, 4), round(pr["rotation"], 2), round(pr["opacity"], 3),
+            round(pr["x"], 1), round(pr["y"], 1), round(wipe, 3))
+    if fkey == last_key:
+        return last, last_key, last
+    img = sprite
+    if wipe < 0.999:  # wipe on from the left: hide everything right of the revealed part
+        img = img.copy()
+        cut = round(img.width * wipe)
+        img.paste((0, 0, 0, 0), (cut, 0, img.width, img.height))
+    if abs(sx - 1) > 1e-3 or abs(sy - 1) > 1e-3:
+        img = img.resize((max(1, round(img.width * sx)), max(1, round(img.height * sy))), Image.BICUBIC)
+    if abs(pr["rotation"]) > 0.01:
+        img = img.rotate(-pr["rotation"], resample=Image.BICUBIC, expand=True)
+    if pr["opacity"] < 0.999:
+        a = img.getchannel("A").point(lambda v, o=pr["opacity"]: int(v * o))
+        img = img.copy()
+        img.putalpha(a)
+    fr = (img, round(pr["x"] * scale - img.width / 2), round(pr["y"] * scale - img.height / 2))
+    return fr, fkey, fr

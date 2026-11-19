@@ -36,6 +36,29 @@ def ffprobe_bin() -> str:
     return _tool("ffprobe")
 
 
+# hardware H.264 encoders to try for previews, in order (macOS, NVIDIA, Intel, AMD)
+HW_H264 = ("h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf")
+
+
+@lru_cache
+def hw_h264() -> str | None:
+    """The first hardware H.264 encoder that really works on this machine (a one-frame test encode), or None.
+    FFmpeg lists encoders it was built with even when the GPU / driver is missing, so listing them is not enough.
+    AIKLIPS_HW_ENCODE=0 turns this off."""
+    if os.environ.get("AIKLIPS_HW_ENCODE", "1") == "0":
+        return None
+    for name in HW_H264:
+        try:
+            r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i",
+                                "color=c=gray:s=256x256:d=0.1", "-frames:v", "2", "-c:v", name, "-pix_fmt", "yuv420p",
+                                "-f", "null", "-"], capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode == 0:
+            return name
+    return None
+
+
 @lru_cache
 def ffmpeg_major() -> int:
     out = subprocess.run([ffmpeg_bin(), "-version"], capture_output=True, text=True).stdout

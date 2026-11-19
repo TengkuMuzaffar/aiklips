@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 
 from .. import history, library, media
 from ..project import PROJECT_FILE, VeditError, load, resolve_media, state_dir
-from ..render.runner import preview_dir, render_preview
+from ..render.runner import PREVIEW_QUALITIES, preview_dir, preview_name, render_preview
 
 STATIC = Path(__file__).parent / "static"
 SRC = Path(__file__).resolve().parents[1]  # src/vedit, watched by `vedit serve --dev`
@@ -60,6 +60,12 @@ def _rev(pdir: Path) -> float:
         return 0.0
 
 
+# A newer edit cancels the running preview render only while that render is young. Past this, the render finishes
+# and is shown, then the newest edit renders: during an AI run (an edit every few seconds) cancelling every time
+# meant the preview never updated until the AI stopped.
+CANCEL_GRACE = 1.5
+
+
 class Renderer:
     """Re-renders the preview whenever project.json changes."""
 
@@ -69,8 +75,10 @@ class Renderer:
         # live mode (default): render base.mp4 without overlay layers; the browser draws them from sprites.
         # final mode: render the full preview.mp4 exactly as it will export.
         self.final = False
+        self.quality = "half"  # PREVIEW_QUALITIES key: the size the preview renders at
+        self.file = preview_name(base=True)  # what the browser plays at `version`
         self.passes = 0  # finished render passes (cache hits too): tells the browser the edit has been handled
-        self._shown_final: bool | None = None
+        self._shown: tuple | None = None  # (final, quality) of the file at `version`
         self.status = "idle"
         self.error: str | None = None
         self.pending = threading.Event()
@@ -119,12 +127,15 @@ class Renderer:
             time.sleep(0.15)  # debounce bursts of edits
             self.pending.clear()
             self.status = "rendering"
-            fresh, final = False, self.final
+            fresh, final, quality = False, self.final, self.quality
+            scale = PREVIEW_QUALITIES[quality]
+            t0 = time.monotonic()
+            # a newer edit makes this render stale: stop FFmpeg and start over, unless it is well under way
+            young = lambda: self.pending.is_set() and time.monotonic() - t0 < CANCEL_GRACE  # noqa: E731
             try:
                 p = load(self.pdir)
                 if p.duration > 0.01:  # clips, or layers only (equal tracks)
-                    # a newer edit makes this render stale: stop FFmpeg now and start over
-                    res = render_preview(p, self.pdir, progress=False, should_stop=self.pending.is_set, base=not final)
+                    res = render_preview(p, self.pdir, progress=False, should_stop=young, base=not final, scale=scale)
                     fresh = not res.get("cached")
                 self.error = None
             except media.Cancelled:
@@ -136,9 +147,10 @@ class Renderer:
             self.status = "idle"
             # the version only moves when there is a new file to load (or on the first pass), so the
             # browser never re-downloads an unchanged preview
-            if fresh or self.version == 0 or self._shown_final != final:
+            if fresh or self.version == 0 or self._shown != (final, quality):
+                self.file = preview_name(base=not final, scale=scale)
                 self.version += 1
-                self._shown_final = final
+                self._shown = (final, quality)
             self.passes += 1
 
     def _watch(self) -> None:
@@ -760,8 +772,10 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             "starts": p.clip_starts(),
             "history": history.log(d, 80),
             "rev": _rev(d),
-            "render": {"status": r.status, "error": r.error, "version": r.version, "final": r.final, "passes": r.passes} if r
-            else {"status": "idle", "error": None, "version": 0, "final": False, "passes": 0},
+            "render": {"status": r.status, "error": r.error, "version": r.version, "final": r.final, "passes": r.passes,
+                       "quality": r.quality, "file": r.file} if r
+            else {"status": "idle", "error": None, "version": 0, "final": False, "passes": 0, "quality": "half",
+                  "file": preview_name(base=True)},
         }
 
     def _hist(fn, *a):
@@ -937,7 +951,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
     @app.get("/media/{name}")
     def media_file(name: str):
-        if name not in ("preview.mp4", "base.mp4", "thumbs.jpg", "wave.png"):
+        renders = {preview_name(b, sc) for b in (True, False) for sc in PREVIEW_QUALITIES.values()}
+        if name not in renders | {"thumbs.jpg", "wave.png"}:
             raise HTTPException(404)
         f = preview_dir(host.need()) / name
         if not f.exists():
@@ -1123,16 +1138,20 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
     @app.post("/api/preview-mode")
     def preview_mode(body: dict) -> dict:
-        """Live (base video + browser-drawn overlays) or final (the full FFmpeg render, as exported)."""
+        """Live (base video + browser-drawn overlays) or final (the full FFmpeg render, as exported), and the
+        quality (size) the preview renders at: full / half / quarter. Either key may be left out."""
         host.need()
         r = host.renderer
         if r is None:
             raise HTTPException(409, "No renderer")
-        final = bool(body.get("final"))
-        if final != r.final:
-            r.final = final
+        final = bool(body.get("final", r.final))
+        quality = body.get("quality", r.quality)
+        if quality not in PREVIEW_QUALITIES:
+            raise HTTPException(400, f"quality must be one of {', '.join(PREVIEW_QUALITIES)}")
+        if (final, quality) != (r.final, r.quality):
+            r.final, r.quality = final, quality
             r.pending.set()
-        return {"final": r.final}
+        return {"final": r.final, "quality": r.quality}
 
     @app.post("/api/frame")
     async def frame(body: dict):
@@ -1252,11 +1271,11 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     yield f"data: {json.dumps({'closed': True})}\n\n"
                     return
                 rev = _rev(d)
-                key = (id(r), r.version, r.status, r.error, rev, r.final, r.passes)
+                key = (id(r), r.version, r.status, r.error, rev, r.final, r.passes, r.quality)
                 if key != last:
                     last = key
                     msg = {'version': r.version, 'status': r.status, 'error': r.error, 'rev': rev, 'final': r.final,
-                           'passes': r.passes}
+                           'passes': r.passes, 'quality': r.quality, 'file': r.file}
                     yield f"data: {json.dumps(msg)}\n\n"
                 await asyncio.sleep(0.15)
 
