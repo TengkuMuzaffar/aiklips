@@ -131,14 +131,21 @@ const SPRITES = new Map(), SPR_WAIT = new Map();
 let SPR_SCALE = 0.5, CONTENT_GEN = 0;
 function contentKey(l) {
   return JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, radius: l.radius, bw: l.border_width,
-    bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity });
+    bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity,
+    shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner,
+    path: l.path, closed: l.closed, morph_to: l.morph_to, split: l.split, sa: l.split_anim, stg: l.stagger, sd: l.split_dur, se: l.split_ease,
+    counter: l.counter, chart: l.chart });
 }
+const KEND = new Map(); // kinetic text: content key -> seconds until it stops moving
 function spriteFetch(l, opts) {
-  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}`;
+  const { ctext, ...rest } = opts;
+  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.motion ? JSON.stringify(opts.motion) : ""}|${ctext ?? ""}`;
   if (SPRITES.has(key) || SPR_WAIT.has(key)) return key;
   const layer = { ...l, keyframes: [], presets: [], sx: 1, sy: 1 };
-  const pr = fetch("/api/sprite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layer, scale: SPR_SCALE, ...opts }) })
-    .then((r) => (r.ok ? r.blob() : null))
+  if (ctext != null) { layer.text = ctext; layer.counter = null; }
+  const ck = contentKey(l);
+  const pr = fetch("/api/sprite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layer, scale: SPR_SCALE, ...rest }) })
+    .then((r) => { const e = r.headers.get("X-Kinetic-End"); if (e) KEND.set(ck, +e); return r.ok ? r.blob() : null; })
     .then((b) => new Promise((res) => {
       if (!b) return res(null);
       const img = new Image();
@@ -151,8 +158,29 @@ function spriteFetch(l, opts) {
   SPR_WAIT.set(key, pr);
   return key;
 }
+// shapes with a path, a draw-on or a morph are drawn by Python (the export's renderer), not as SVG
+const DRAWS = new Set(["draw_in", "draw_out"]);
+function spriteShape(l) {
+  return l.type === "shape" && (l.shape === "path" || !!l.morph_to || (l.presets || []).some((x) => DRAWS.has(x.name)) || (l.keyframes || []).some((k) => k.draw != null));
+}
+const q2 = (v) => Math.round(v * 100) / 100;
 function spriteFor(l, pr) {
   if (l.type === "image") return spriteFetch(l, {});
+  if (l.type === "shape") {
+    const m = {};
+    if (pr.draw < 0.9995) m.draw = q2(pr.draw);
+    if (l.morph_to && pr.morph > 0.0005) m.morph = q2(pr.morph);
+    return spriteFetch(l, Object.keys(m).length ? { motion: m } : {});
+  }
+  if (l.type === "chart") return spriteFetch(l, pr.draw < 0.9995 ? { motion: { draw: q2(pr.draw) } } : {});
+  if (l.type === "text" && l.split && l.split !== "none" && !l.counter) {
+    const t = T - l.start, end = KEND.get(contentKey(l)) ?? 10;
+    if (t >= end) return spriteFetch(l, { motion: { kt: 600 } });
+    const f = Math.floor(Math.max(0, t) * 30);
+    for (let k = 1; k <= 4; k++) if ((f + k) / 30 < end) spriteFetch(l, { motion: { kt: (f + k) / 30 } });
+    return spriteFetch(l, { motion: { kt: f / 30 } });
+  }
+  if (l.type === "text" && l.counter) return spriteFetch(l, { ctext: VAnim.counterText(l.counter, pr.count) });
   const total = (l.text || "").split(/\s+/).filter(Boolean).reduce((a, w) => a + w.length, 0);
   const k = VAnim.pyRound(total * pr.reveal);
   return spriteFetch(l, k >= total ? {} : { reveal: k });
@@ -181,7 +209,7 @@ function makeEl(l) {
     const bord = h("div", { class: "vl-border" });
     return { el: h("div", { class: "L" }, vid, bord), kind: "video", vid, bord, src: null };
   }
-  if (l.type === "shape") return { el: h("div", { class: "L" }), kind: "shape", key: null };
+  if (l.type === "shape" && !spriteShape(l)) return { el: h("div", { class: "L" }), kind: "shape", key: null };
   const img = h("img", { alt: "", draggable: false });
   return { el: h("div", { class: "L" }, img), kind: "img", img, shown: null };
 }
@@ -221,7 +249,7 @@ function drawStage() {
   P().layers.forEach((l, z) => {
     seen.add(l.id);
     let v = LV.get(l.id);
-    const want = l.type === "video" ? "video" : l.type === "shape" ? "shape" : "img";
+    const want = l.type === "video" ? "video" : l.type === "shape" && !spriteShape(l) ? "shape" : "img";
     if (v && v.kind !== want) { v.el.remove(); v = null; }
     if (!v) { v = makeEl(l); LV.set(l.id, v); }
     if (stage.children[z] !== v.el) stage.insertBefore(v.el, stage.children[z] || null);
@@ -237,7 +265,7 @@ function drawStage() {
       if (o.sxm) pr.sx *= o.sxm; if (o.sym) pr.sy *= o.sym;
     }
     st.mixBlendMode = BLEND[l.blend] || "normal";
-    if (l.type === "shape") {
+    if (l.type === "shape" && v.kind === "shape") {
       const [w, hh] = baseSize(l, pr);
       const key = `${CONTENT_GEN}|${Math.round(w * K)}|${Math.round(hh * K)}|${pr.fill}|${K}`;
       if (v.key !== key) { v.el.innerHTML = VShapes.svg(l, w * K, hh * K, pr.fill, K); v.key = key; }
@@ -250,7 +278,8 @@ function drawStage() {
       const sp = v.shown && SPRITES.get(v.shown);
       if (!sp) { st.display = "none"; return; }
       if (v.img.src !== sp.url) v.img.src = sp.url;
-      place(l, v, st, pr, sp.w / sp.scale, sp.h / sp.scale);
+      if (l.type === "shape") { const [w, hh] = baseSize(l, pr); place(l, v, st, pr, w, hh); } // keyframed size stretches the sprite
+      else place(l, v, st, pr, sp.w / sp.scale, sp.h / sp.scale);
     }
   });
   for (const [id, v] of LV) if (!seen.has(id)) { if (v.vid) v.vid.pause(); v.el.remove(); LV.delete(id); }
@@ -867,7 +896,7 @@ function drawSceneProps(body, sc, picked) {
       h("button", { disabled: P().scenes.length < 2, onclick: () => confirm(`Delete ${sc.name || sc.id} and its elements?`) && op("scene_remove", { scene: sc.id }).then(() => { SCENE_SEL = null; }) }, ic("trash", 14), " Delete"),
       sc.notes ? h("button", { class: "ghost", disabled: AIBUSY.scene, onclick: () => designScene(sc.id) }, "✦ Design from notes") : null)));
 }
-const TYPE_LABEL = { text: "Text", shape: "Shape", image: "Image", video: "Video", adjust: "Adjustment", captions: "Captions" };
+const TYPE_LABEL = { text: "Text", shape: "Shape", image: "Image", video: "Video", adjust: "Adjustment", captions: "Captions", chart: "Chart" };
 function drawLayerProps(body, l) {
   const [s, e] = spanOf(l), b = BOX.get(l.id), pr = b ? b.pr : { x: 0, y: 0 };
   const name = l.type === "shape" ? SHAPE_LABELS[l.shape] : l.type === "text" ? (l.text || "").slice(0, 28) : TYPE_LABEL[l.type];

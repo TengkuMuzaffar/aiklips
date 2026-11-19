@@ -12,7 +12,8 @@ from typing import Callable
 
 from ..project import Canvas, Keyframe, Layer, Preset, VeditError, parse_pos
 
-PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy")
+PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count")
+PROGRESS = ("draw", "morph", "count")  # 0..1 build-up values (ops/motion.py), clamped
 COLOR_PROPS = ("fill",)
 
 
@@ -43,6 +44,76 @@ def _back_out(p: float, s: float = 1.70158) -> float:
     return p * p * ((s + 1) * p + s) + 1
 
 
+def _bezier(x1: float, y1: float, x2: float, y2: float) -> Callable[[float], float]:
+    """CSS cubic-bezier(x1, y1, x2, y2) easing. Same steps as animate.js (Newton, then bisection), so the live
+    preview and the export agree to the last digit."""
+    def coord(t: float, a: float, b: float) -> float:
+        return ((1 - 3 * b + 3 * a) * t + (3 * b - 6 * a)) * t * t + 3 * a * t
+
+    def slope(t: float, a: float, b: float) -> float:
+        return 3 * (1 - 3 * b + 3 * a) * t * t + 2 * (3 * b - 6 * a) * t + 3 * a
+
+    def fn(p: float) -> float:
+        if p <= 0 or p >= 1:
+            return p
+        t = p
+        for _ in range(8):
+            d = slope(t, x1, x2)
+            if abs(d) < 1e-7:
+                break
+            t2 = t - (coord(t, x1, x2) - p) / d
+            if t2 < 0 or t2 > 1:
+                break
+            t = t2
+        if abs(coord(t, x1, x2) - p) > 1e-7:
+            lo, hi = 0.0, 1.0
+            t = p
+            for _ in range(40):
+                x = coord(t, x1, x2)
+                if abs(x - p) < 1e-7:
+                    break
+                if x < p:
+                    lo = t
+                else:
+                    hi = t
+                t = (lo + hi) / 2
+        return coord(t, y1, y2)
+
+    return fn
+
+
+# curves named after what motion designers ask for, as numbers (style rules: design/styles.py)
+NAMED_BEZIERS = {
+    "snap": (0.7, 0.0, 0.2, 1.0),  # hard start, settles fast: Swiss / kinetic type
+    "smooth": (0.4, 0.0, 0.2, 1.0),  # material standard
+    "expo_out": (0.16, 1.0, 0.3, 1.0),  # very fast out of the gate, long glide
+    "circ_out": (0.0, 0.55, 0.45, 1.0),
+    "anticipate": (0.36, -0.4, 0.5, 1.0),  # pulls back a little before it goes
+    "overshoot": (0.34, 1.56, 0.64, 1.0),  # past the target, back again
+}
+
+
+def parse_bezier(name: str) -> tuple[float, float, float, float] | None:
+    """(x1, y1, x2, y2) of "cubic-bezier(a,b,c,d)" / "bezier:a,b,c,d", else None."""
+    s = name.strip().lower().replace(" ", "")
+    for pre in ("cubic-bezier(", "bezier("):
+        if s.startswith(pre) and s.endswith(")"):
+            s = s[len(pre):-1]
+            break
+    else:
+        if s.startswith("bezier:"):
+            s = s[7:]
+        else:
+            return None
+    try:
+        v = [float(x) for x in s.split(",")]
+    except ValueError:
+        return None
+    if len(v) != 4 or not (0 <= v[0] <= 1 and 0 <= v[2] <= 1):
+        return None
+    return v[0], v[1], v[2], v[3]
+
+
 EASINGS: dict[str, Callable[[float], float]] = {
     "linear": lambda p: p,
     "ease_in": lambda p: p * p * p,
@@ -53,15 +124,20 @@ EASINGS: dict[str, Callable[[float], float]] = {
     "bounce_out": _bounce_out,
     "elastic_out": _elastic_out,
     "step": lambda p: 0.0 if p < 1 else 1.0,
+    **{k: _bezier(*v) for k, v in NAMED_BEZIERS.items()},
 }
+_BEZ_CACHE: dict[str, Callable[[float], float]] = {}
 
 
 def ease(name: str, p: float) -> float:
     p = max(0.0, min(1.0, p))
-    try:
-        return EASINGS[name](p)
-    except KeyError:
-        raise VeditError(f"Unknown easing '{name}'. Options: {', '.join(EASINGS)}") from None
+    fn = EASINGS.get(name) or _BEZ_CACHE.get(name)
+    if fn is None:
+        b = parse_bezier(name)
+        if b is None:
+            raise VeditError(f"Unknown easing '{name}'. Options: {', '.join(EASINGS)}, or cubic-bezier(x1,y1,x2,y2)")
+        fn = _BEZ_CACHE[name] = _bezier(*b)
+    return fn(p)
 
 
 # ---- presets ------------------------------------------------------------------
@@ -244,6 +320,20 @@ def mix_hex(a: str, b: str, p: float) -> str:
     return "#" + "".join(f"{max(0, min(255, n)):02X}" for n in (v if alpha else v[:3]))
 
 
+def _draw(pr, p, t, k, c):
+    pr["draw"] *= ease(str(k.get("ease", "ease_in_out")), p)
+
+
+def _count(pr, p, t, k, c):
+    pr["count"] *= ease(str(k.get("ease", "expo_out")), p)
+
+
+def _morph_loop(pr, p, t, k, c):
+    period = float(k.get("period", 2.4))
+    if period > 0:
+        pr["morph"] = 0.5 - 0.5 * math.cos(2 * math.pi * t / period)
+
+
 PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "fade_in": ("in", 0.4, _fade, "Fade in"),
     "fade_out": ("out", 0.4, _fade, "Fade out"),
@@ -275,6 +365,10 @@ PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "breathe": ("loop", 0.0, _breathe, "Slow, calm scale in and out. params: amount=0.04, period=3"),
     "squash_stretch": ("loop", 0.0, _squash, "Cartoon squash and stretch (wide <-> tall). params: amount=0.08, period=0.9"),
     "color_cycle": ("loop", 0.0, _color_cycle, "Shape fill cycles through colours. params: colors=[hex...], period=3"),
+    "draw_in": ("in", 1.0, _draw, "Draw on: a shape's outline / a path draws itself, a chart grows. params: ease=ease_in_out"),
+    "draw_out": ("out", 0.6, _draw, "Undraw: the outline / chart retracts. params: ease"),
+    "count_up": ("in", 1.2, _count, "A counter counts from its `from` to its `to`. params: ease=expo_out"),
+    "morph_loop": ("loop", 0.0, _morph_loop, "Shape morphs to its morph_to kind and back. params: period=2.4"),
 }
 
 
@@ -332,9 +426,12 @@ def _interp(kfs: list[Keyframe], prop: str, t: float, total: float) -> float | N
 
 
 def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict:
-    """Resolved transform of a layer at local time t (seconds since layer start), in canvas px. Besides the
+    """Resolved transform of a layer at local time t (seconds since layer start), in canvas px. With `step_fps` the
+    motion moves in steps (t snapped down to 1/step_fps), like stop motion. Besides the
     transform: w / h (the layer's width / height, None when it has none: animating them redraws a shape at that
     size), sx / sy (stretch of the drawn sprite) and fill (shape colour, a hex string or None)."""
+    if layer.step_fps:
+        t = math.floor(t * layer.step_fps + 1e-9) / layer.step_fps
     pr: dict = {
         "x": parse_pos(layer.x, canvas.width),
         "y": parse_pos(layer.y, canvas.height),
@@ -347,6 +444,9 @@ def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict:
         "sx": layer.sx,
         "sy": layer.sy,
         "fill": layer.fill,
+        "draw": 1.0,
+        "morph": 0.0,
+        "count": 1.0,
     }
     for prop in PROPS:
         total = canvas.width if prop == "x" else canvas.height
@@ -373,6 +473,8 @@ def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict:
     pr["scale"] = max(0.0, pr["scale"])
     pr["sx"] = max(0.0, pr["sx"])
     pr["sy"] = max(0.0, pr["sy"])
+    for k in PROGRESS:
+        pr[k] = max(0.0, min(1.0, pr[k]))
     for k in ("w", "h"):
         if pr[k] is not None:
             pr[k] = max(1.0, pr[k])

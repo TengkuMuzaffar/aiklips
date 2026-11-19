@@ -58,11 +58,14 @@ class KF(_M):
     sx: float | None = Field(None, description="stretch width (1 = normal)")
     sy: float | None = Field(None, description="stretch height")
     fill: str | None = Field(None, description="shapes: fill hex colour")
-    ease: str = "ease_in_out"
+    draw: float | None = Field(None, description="0..1 how much of a shape outline / path / chart is drawn")
+    morph: float | None = Field(None, description="0..1 how far a shape has morphed into its morph_to")
+    count: float | None = Field(None, description="0..1 how far a counter has counted")
+    ease: str = Field("ease_in_out", description="easing name or cubic-bezier(x1,y1,x2,y2)")
 
 
 class Element(_M):
-    kind: Literal["clip", "image", "text", "shape"]
+    kind: Literal["clip", "image", "text", "shape", "counter", "chart"]
     file: str | None = Field(None, description="clip / image: file id (f1.., p1.. for sheet pieces)")
     src_in: float | None = Field(None, description="clip: where to start inside the file, seconds")
     at: float = Field(0.0, description="Seconds after the scene start")
@@ -72,7 +75,23 @@ class Element(_M):
     size: int | None = None
     color: str | None = None
     shape: Literal["rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
-                   "arrow"] | None = None
+                   "arrow", "path"] | None = None
+    points_xy: list[list[float]] | None = Field(None, description="path: [[x, y], ...] as 0..1 of its box (a line, "
+                                                                  "bracket, underline, drawing); draw it on with enter draw_in")
+    closed: bool | None = Field(None, description="path: closed = filled outline")
+    morph_to: str | None = Field(None, description="shape: the kind it morphs into (path keyframes morph 0->1, or loop morph_loop)")
+    split: Literal["none", "word", "letter", "line"] | None = Field(None, description="text: animate by word / letter / line")
+    split_anim: Literal["rise", "drop", "fade", "pop", "mask_up", "slide", "type"] | None = None
+    stagger: float | None = Field(None, description="text split: seconds between pieces")
+    split_ease: str | None = Field(None, description="text split: easing of each piece")
+    count_to: float | None = Field(None, description="counter: the number it counts to")
+    count_from: float | None = None
+    prefix: str | None = Field(None, description="counter / chart values: e.g. '$'")
+    suffix: str | None = Field(None, description="counter / chart values: e.g. '%', 'k', '+'")
+    decimals: int | None = None
+    chart: Literal["bar", "hbar", "line", "donut"] | None = None
+    data: str | None = Field(None, description="chart: 'Mon=12, Tue=30, Wed=18'")
+    colors: list[str] | None = Field(None, description="chart palette")
     fill: str | None = None
     gradient: list[str] | None = Field(None, description="shapes: 2-4 hex colours, a top-to-bottom gradient fill")
     sides: int | None = Field(None, description="polygon: number of sides")
@@ -119,6 +138,8 @@ class MotionPlan(_M):
     texture: str | None = Field(None, description="Optional overlay library key over everything (grain, dust, bokeh...)")
     palette: list[str] = Field(default_factory=list, description="3-4 hex colours used throughout")
     font: str | None = None
+    style: str | None = Field(None, description="Motion style key (`vedit style list`): its numbers (easing, timing, "
+                                                "palette, transitions) apply and the audit checks them")
     scenes: list[Scene] = Field(min_length=1)
     music: Music | None = None
     rationale: str = ""

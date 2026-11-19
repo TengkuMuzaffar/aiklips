@@ -17,6 +17,8 @@ _PCT = re.compile(r"^-?\d+(\.\d+)?%$")
 
 
 def catalog() -> dict:
+    from . import styles
+
     return {
         "presets": {k: v[0] + ": " + v[3] for k, v in anim.PRESETS.items()},
         "looks": {x["name"]: x["about"] for x in text_looks.catalog()},
@@ -24,7 +26,12 @@ def catalog() -> dict:
         "fonts": list(fonts.FONTS),
         "frames": list(FRAMES),
         "transitions": list(TRANSITIONS),
-        "eases": list(anim.EASINGS),
+        "eases": list(anim.EASINGS) + ["cubic-bezier(x1,y1,x2,y2)"],
+        # motion styles (plan.style): looks as numbers; follow the chosen one's easing, timing, palette and fonts
+        "motion_styles": {k: styles.brief(st) for k, st in styles.STYLES.items()},
+        "motion_elements": "kind counter (count_to, prefix, suffix, decimals), kind chart (chart bar|hbar|line|donut, "
+                           "data 'A=3, B=7'), text split word|letter|line + split_anim + stagger, shape path (points_xy) "
+                           "drawn on with enter draw_in, shape morph_to + keyframes morph 0->1 or loop morph_loop",
     }
 
 

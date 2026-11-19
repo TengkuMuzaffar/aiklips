@@ -136,6 +136,59 @@ def _draw(d: ImageDraw.ImageDraw, layer: Layer, W: int, H: int, fill, out, bw: i
             d.line(pts + [pts[0], pts[1]], fill=out, width=bw * 2, joint="curve")
 
 
+def _motion_shape(layer: Layer, scale: float, lw, lh, w: int, h: int, col, gradient, bw: int, out, draw: float,
+                  morph: float) -> Image.Image:
+    """Paths, shapes part-way through a draw-on (only the first `draw` of the outline, as a stroke) and shapes
+    morphing into `morph_to`. Strokes are `border_width` thick (or a default), in the border colour (or the fill);
+    a line keeps its own thickness."""
+    W, H = w * SS, h * SS
+    if layer.shape == "line":
+        sw = H
+    elif bw:
+        sw = bw
+    else:
+        sw = round(max(6.0, min(lw or 400, lh or 400) * 0.035) * scale) * SS
+    sw = max(SS, min(sw, W, H))
+    stroke_col = out or (rgba(col) if col else rgba(gradient[0]) if gradient else (255, 255, 255, 255))
+    iw, ih = max(1.0, W - sw), max(1.0, H - sw)  # the outline sits inside the box by half a stroke
+    kw = dict(sides=layer.sides, points=layer.points, inner=layer.inner, radius=layer.radius * scale * SS)
+    a = shapes.any_outline(layer.shape, iw, ih, path=layer.path, **kw)
+    if layer.shape == "path" and layer.closed:
+        a = (a[0], True)
+    pts, closed = a
+    if layer.morph_to and morph > 0.0005:
+        pts, closed = shapes.morph(a, shapes.any_outline(layer.morph_to, iw, ih, path=None, **kw), morph, iw)
+    pts = [(x + sw / 2, y + sw / 2) for x, y in pts]
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    def stroke(line: list[tuple[float, float]], color, width: int) -> None:
+        if len(line) < 2:
+            return
+        d.line(line, fill=color, width=width, joint="curve")
+        r = width / 2
+        for x, y in (line[0], line[-1]):  # round caps
+            d.ellipse((x - r, y - r, x + r, y + r), fill=color)
+
+    if draw < 0.9995:
+        stroke(shapes.trim(pts, closed, draw), stroke_col, sw)
+    elif closed and layer.shape != "line":
+        if gradient:
+            m = Image.new("L", (W, H), 0)
+            ImageDraw.Draw(m).polygon(pts, fill=255)
+            g = _gradient(W, H, gradient, layer.gradient_angle)
+            g.putalpha(Image.fromarray((np.asarray(g.getchannel("A"), np.uint16) * np.asarray(m, np.uint16) // 255).astype(np.uint8), "L"))
+            img = g
+            d = ImageDraw.Draw(img)
+        elif col:
+            d.polygon(pts, fill=rgba(col))
+        if out:
+            stroke(pts + [pts[0], pts[1]], out, bw)
+    else:
+        stroke(pts, stroke_col, sw)
+    return img.resize((w, h), Image.LANCZOS)
+
+
 def outline_points(layer: Layer, W: float, H: float, scale: float = 1.0) -> list[tuple[float, float]]:
     """A polygon kind's outline in a W x H supersampled box."""
     return shapes.outline(layer.shape, W, H, layer.sides, layer.points, layer.inner, layer.radius * scale * SS)
@@ -148,7 +201,7 @@ def _inside(layer: Layer, W: int, H: int, scale: float) -> Image.Image:
 
 
 def render_shape(layer: Layer, scale: float = 1.0, width: float | None = None, height: float | None = None,
-                 fill: str | None | bool = False) -> Image.Image:
+                 fill: str | None | bool = False, draw: float = 1.0, morph: float = 0.0) -> Image.Image:
     """A shape layer's sprite: rect (rounded with radius), ellipse, line, arrow (pointing right; rotate the layer),
     ring and the polygon kinds of ops/shapes.py, filled with `fill` or the `fill_gradient`. width / height / fill
     override the layer's (animated values at one moment); fill=False = the layer's own."""
@@ -162,6 +215,8 @@ def render_shape(layer: Layer, scale: float = 1.0, width: float | None = None, h
     out = rgba(layer.border_color) if bw else None
     polygonal = layer.shape not in shapes.PRIMITIVE
     gradient = layer.fill_gradient if layer.fill_gradient and len(layer.fill_gradient) >= 2 else None
+    if layer.shape == "path" or (morph > 0.0005 and layer.morph_to) or draw < 0.9995:
+        return _motion_shape(layer, scale, lw, lh, w, h, col, gradient, bw, out, draw, morph)
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if gradient:  # the shape's own outline as an alpha mask over the gradient, then the border on top
         m = Image.new("RGBA", (W, H), (0, 0, 0, 0))

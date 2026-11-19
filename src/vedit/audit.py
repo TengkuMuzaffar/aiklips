@@ -46,7 +46,9 @@ def text_box(p: Project, layer: Layer) -> tuple[float, float, float, float] | No
     from .ops.text import render_text
 
     if layer.type == "text":
-        sample = layer.text or ""
+        from .ops.motion import shown_text
+
+        sample = shown_text(layer)  # a counter's final value
     elif layer.type == "captions" and layer.words:
         n = max(1, layer.words_per_group)
         groups = [" ".join(w.text for w in layer.words[i:i + n]) for i in range(0, len(layer.words), n)]
@@ -354,6 +356,8 @@ def check_motion(p: Project, pdir: Path) -> list[dict]:
                 continue
             if l.type == "video" or l.keyframes:
                 return True
+            if l.type == "text" and l.split != "none" and t - l.start < l.split_dur + l.stagger * len(l.text or ""):
+                return True
             for pr in l.presets:
                 phase = anim.PRESETS.get(pr.name, ("loop",))[0]
                 d = anim._preset_duration(l, pr) if pr.name in anim.PRESETS else 0
@@ -375,10 +379,64 @@ def check_motion(p: Project, pdir: Path) -> list[dict]:
     return out
 
 
+def check_style(p: Project, pdir: Path) -> list[dict]:
+    """The project's motion style (design/styles.py): presets, scene transitions, fonts, easing and colour count
+    must stay inside its rules."""
+    if not p.motion_style:
+        return []
+    from .design import styles
+
+    try:
+        s = styles.get(p.motion_style)
+    except Exception:
+        return [_finding("note", "style", f"Unknown motion style '{p.motion_style}'.", None, "", "vedit style none")]
+    out = []
+    eases = {s.ease, "linear", "step"}
+    for l in p.layers:
+        if l.hidden:
+            continue
+        bad = [pr.name for pr in l.presets if pr.name in s.forbid]
+        if bad:
+            out.append(_finding("should-fix", "style", f"{l.id} uses {', '.join(bad)}, which {s.name} never does.", l.start,
+                                f"style {s.key}: never {', '.join(s.forbid)}",
+                                f"vedit animate preset {l.id} {s.enter[0]}  (and remove {', '.join(bad)})"))
+        off = sorted({k.ease for k in l.keyframes if k.ease not in eases})
+        if l.type == "text" and l.split != "none" and l.split_ease not in eases:
+            off.append(l.split_ease)
+        if off:
+            out.append(_finding("note", "style", f"{l.id} eases with {', '.join(off)}; {s.name} moves on '{s.ease}'.", l.start,
+                                "", f"use ease '{s.ease}' on its keyframes / `vedit motion set {l.id} --ease {s.ease}`"))
+        if l.type in ("text", "captions") and l.style.font and s.fonts and l.style.font not in s.fonts:
+            out.append(_finding("should-fix", "style", f"{l.id} is in font {l.style.font}; {s.name} uses {', '.join(s.fonts)}.",
+                                l.start, "", f"vedit text edit {l.id} --font {s.fonts[0]}"))
+        if "glow" in s.forbid and l.type in ("text", "captions") and l.style.glow_color:
+            out.append(_finding("should-fix", "style", f"{l.id} glows; {s.name} has no glow.", l.start, "",
+                                f"vedit text edit {l.id} --glow none"))
+    for sc in p.scenes:
+        if sc.transition not in s.transitions:
+            out.append(_finding("should-fix", "style", f"Scene {sc.id} enters with a {sc.transition}; {s.name} uses "
+                                f"{', '.join(s.transitions)}.", None, "", f"vedit scene set {sc.id} --transition {s.transitions[0]}"))
+    cols: set[str] = set()
+    for l in p.layers:
+        if l.hidden:
+            continue
+        if l.type == "shape" and l.fill and not (l.width and l.width >= p.canvas.width * 0.9 and (l.height or 0) >= p.canvas.height * 0.9):
+            cols.add(l.fill.upper()[:7])
+        if l.type == "text":
+            cols.add(l.style.color.upper()[:7])
+        if l.type == "chart" and l.chart:
+            n = len(l.chart.items)
+            cols |= {(it.color or l.chart.colors[i % len(l.chart.colors)]).upper()[:7] for i, it in enumerate(l.chart.items[:n])}
+    if len(cols) > s.max_colors + 1:  # + the text colour
+        out.append(_finding("should-fix", "style", f"{len(cols)} colours on screen; {s.name} keeps to {s.max_colors} plus text.",
+                            None, ", ".join(sorted(cols)), f"use {s.text} and {', '.join(s.accents)}"))
+    return out
+
+
 CHECKS: list[tuple[str, Callable]] = [
     ("hook", check_hook), ("readability", check_readability), ("layout", check_layout), ("typography", check_typography),
     ("colour", check_color), ("pacing", check_pacing), ("footage", check_footage), ("justification", check_justification),
-    ("sound", check_sound), ("motion", check_motion),
+    ("sound", check_sound), ("motion", check_motion), ("style", check_style),
 ]
 
 

@@ -161,6 +161,11 @@ class _SpriteSource:
             self.video = _VideoFrames(project, pdir, layer, scale, dur)
         if layer.type == "captions":
             self.groups = _caption_groups(layer)
+        self.kinetic = None
+        if layer.type == "text" and layer.split != "none" and not layer.counter:
+            from ..ops.motion import Kinetic
+
+            self.kinetic = Kinetic(layer.text or "", layer.style, scale, layer)
 
     def close(self) -> None:
         if self.video:
@@ -172,13 +177,14 @@ class _SpriteSource:
         w = L.width if pr.get("w") is None else round(pr["w"])
         h = L.height if pr.get("h") is None else round(pr["h"])
         fill = pr.get("fill", L.fill)
-        if (w, h, fill) == (L.width, L.height, L.fill):
+        draw, morph = round(pr.get("draw", 1.0), 4), round(pr.get("morph", 0.0), 4) if L.morph_to else 0.0
+        if (w, h, fill, draw, morph) == (L.width, L.height, L.fill, 1.0, 0.0):
             return self.image
-        key = ("shape", w, h, fill)
+        key = ("shape", w, h, fill, draw, morph)
         if key not in self.cache:
             if len(self.cache) > 256:
                 self.cache.clear()
-            self.cache[key] = render_shape(L, self.scale, w, h, fill)
+            self.cache[key] = render_shape(L, self.scale, w, h, fill, draw=draw, morph=morph)
         return self.cache[key]
 
     def get(self, t_abs: float, reveal: float, pr: dict | None = None) -> tuple[Image.Image | None, float]:
@@ -190,12 +196,27 @@ class _SpriteSource:
             return self.image, 1.0
         if L.type == "video":
             return self.video.next(), 1.0  # type: ignore[union-attr]
-        if L.type == "text":
-            text = L.text or ""
-            total = sum(len(w) for w in text.split())
-            key = round(total * reveal)
+        if L.type == "chart":
+            from ..ops.chart import render_chart
+
+            key = ("chart", round((pr or {}).get("draw", 1.0), 4))
             if key not in self.cache:
-                self.cache[key] = render_text(text, L.style, self.scale, reveal=key / total if total else 1.0)
+                if len(self.cache) > 256:
+                    self.cache.clear()
+                self.cache[key] = render_chart(L, self.scale, key[1])
+            return self.cache[key], 1.0
+        if L.type == "text" and self.kinetic is not None:
+            return self.kinetic.frame(t_abs - L.start), 1.0
+        if L.type == "text":
+            from ..ops.motion import shown_text
+
+            text = shown_text(L, (pr or {}).get("count", 1.0))
+            total = sum(len(w) for w in text.split())
+            key = (text, round(total * reveal))
+            if key not in self.cache:
+                if len(self.cache) > 512:
+                    self.cache.clear()
+                self.cache[key] = render_text(text, L.style, self.scale, reveal=key[1] / total if total else 1.0)
             return self.cache[key], 1.0
         # captions
         words = L.words
@@ -257,7 +278,8 @@ def ensure_layer(project: Project, pdir: Path, layer: Layer, scale: float = 1.0)
             if sprite is None or pr["opacity"] <= 0.001 or sx <= 0.001 or sy <= 0.001 or wipe <= 0.001:
                 proc.stdin.write(blank_bytes)
                 continue
-            fkey = (id(sprite), round(sx, 4), round(sy, 4), round(pr["rotation"], 2), round(pr["opacity"], 3),
+            live = sprites.kinetic is not None and t < sprites.kinetic.end  # a new image every frame: id() may repeat
+            fkey = (id(sprite), i if live else -1, round(sx, 4), round(sy, 4), round(pr["rotation"], 2), round(pr["opacity"], 3),
                     round(pr["x"], 1), round(pr["y"], 1), round(wipe, 3))
             if fkey == last_key:
                 proc.stdin.write(last_bytes)

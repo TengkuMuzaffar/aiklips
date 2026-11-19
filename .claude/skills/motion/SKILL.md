@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design projects (the Design studio) - motion-design videos made of scenes of animated shapes, text and the user's media. Use when the user asks for an animated / motion-graphics / explainer / kinetic-type / promo video, wants shapes or text that move, stretch or change colour, wants a storyboard turned into scenes, or is working in a design project (`<editor_context>` says DESIGN project). NOT for editing the user's existing video (a social media / TikTok version, text or captions on footage, a promo cut from their clips): that is the normal video editor, never `design build` on it.
+description: Design projects (the Design studio) and motion graphics - motion-design videos made of scenes of animated shapes, text, counters, charts, drawn-on lines and morphs, in a named style (swiss, data-story, dark-keynote, flat-explainer, hud ...). Use when the user asks for an animated / motion-graphics / explainer / kinetic-type / data / launch / promo video, wants shapes or text that move, stretch or change colour, wants a storyboard turned into scenes, or is working in a design project (`<editor_context>` says DESIGN project). NOT for editing the user's existing video (a social media / TikTok version, text or captions on footage, a promo cut from their clips): that is the normal video editor, never `design build` on it.
 ---
 
 # Motion design (Design studio)
@@ -17,6 +17,41 @@ A **design project** (`kind: design`) is made of **scenes** (like Canva pages) t
 belongs to the scene its times fall inside; changing a scene's length, order or deleting it moves its elements
 along. The user edits the same project by hand in the Design studio (canvas with stretch / rotate handles, scene
 strip, Animate panel), so re-run `info` / `scene list` before acting on old assumptions.
+
+## Start with a style (looks as numbers)
+
+Before building anything, pick the style that fits the brief and set it: `vedit style list`, `vedit style show
+data-story`, `vedit style set data-story` (or `"style": "data-story"` in a MotionPlan). A style is numbers: one easing
+curve for every move, entrance length, stagger, scene length, palette, fonts, what it never does (e.g. swiss = snap
+`cubic-bezier(.7,0,.2,1)`, wipes and masks, never fades). Follow them exactly; `<editor_context>` repeats them and the
+audit flags anything outside them. Not available yet (say so, offer the closest): isometric / toy 3D, watercolour,
+hand-drawn line boil.
+
+Then work like a motion designer: **storyboard** (scenes with seconds and what moves in each), **build**, **look**
+(`vedit frame --at T1,T2,...` at the moments things move, and `vedit sheet`; Read the images: clipped text, reads too
+short, dead time), **fix**, **audit**.
+
+## Motion building blocks
+
+```
+uv run vedit --json motion set t1 --split letter --anim mask_up --stagger 0.03 --ease snap   # kinetic type
+uv run vedit --json motion set t2 --split word --anim rise --stagger 0.08                    # word by word
+uv run vedit --json counter add 1250000 --prefix '$' --suffix + --y 30% --size 180 --dur 1.2  # counts up (expo_out)
+uv run vedit --json chart add bar --data "Mon=12, Tue=30, Wed=18" --suffix k --y 62%        # bars rise one by one
+uv run vedit --json chart add line|hbar|donut --data "..." ; chart set ch1 --colors "#22D3EE,#A3E635"
+uv run vedit --json shape add path --path "0,1 0.3,0.2 0.6,0.8 1,0" --width 700 --height 200 --border 12 --border-color "#F472B6"
+uv run vedit --json motion draw sh3 --dur 1.2 [--out]      # outline / path / chart draws itself on (preset draw_in)
+uv run vedit --json motion morph sh2 --to star --at 0.5 --dur 0.8   # or --loop: there and back (morph_loop)
+```
+
+- **Kinetic text** pieces: word / letter / line; `--anim` rise, mask_up (rises out of its own row), drop, slide, pop,
+  fade, type; each piece starts `--stagger` s after the last and takes `--dur` s on `--ease`.
+- **Easing** anywhere (keyframes, kinetic text, draw-on): names (`snap`, `smooth`, `expo_out`, `circ_out`,
+  `overshoot`, `anticipate`, `ease_out`, `back_out` ...) or `cubic-bezier(x1,y1,x2,y2)`.
+- **Progress keyframes**: `draw` (outline / chart drawn, 0..1), `morph` (0 = own shape, 1 = `morph_to`), `count`
+  (0 = `from`, 1 = `to`): `animate keyframes sh1 '[{"t":0,"draw":0},{"t":1.2,"draw":1,"ease":"snap"}]'`.
+- Paths: points are fractions of the shape's box; open = a stroke (`--border` thickness / colour), `--closed` = filled.
+  Brackets, underlines, arrows' trails, a signature, a journey across the frame.
 
 ## Small edits: one command each
 
@@ -80,9 +115,13 @@ uv run vedit --json audit                                # fix must-fix findings
 ```
 
 - Scenes play in order; give only `dur`. Element `at` / `dur` are relative to the scene, `path` `t` to the element.
-- Elements: `clip` / `image` (`file`, `frame` full|card|circle|half|pip), `text` (`look`, `size`, `color`), `shape`
-  (`shape`, `fill` or `gradient`, `sides`, `points`, `inner`, `width`, `height`, `radius`, `border`). Any: `x`, `y`,
-  `scale`, `rotation`, `opacity`, `sx`, `sy`, `enter`, `exit`, `loop`, `path`, `why`.
+- Elements: `clip` / `image` (`file`, `frame` full|card|circle|half|pip), `text` (`look`, `size`, `color`, `split`
+  word|letter|line, `split_anim`, `stagger`, `split_ease`), `shape` (`shape` incl. `path` with `points_xy`
+  [[x,y],...] and `closed`, `fill` or `gradient`, `sides`, `points`, `inner`, `width`, `height`, `radius`, `border`,
+  `morph_to`), `counter` (`count_to`, `count_from`, `prefix`, `suffix`, `decimals`, `size`), `chart` (`chart`
+  bar|hbar|line|donut, `data` "A=3, B=7", `colors`, `prefix`, `suffix`). Any: `x`, `y`, `scale`, `rotation`,
+  `opacity`, `sx`, `sy`, `enter` (e.g. `draw_in` for a path), `exit`, `loop` (e.g. `morph_loop`), `path`
+  (keyframes, which may animate `draw` / `morph` / `count`), `why`. Top level: `"style": "<key>"`.
 
 ## Taste
 

@@ -28,12 +28,13 @@ DEFAULTS: dict[str, dict] = {
     "blob": {"width": 420, "height": 400, "fill": "#34D399"},
     "line": {"width": 600, "height": 14, "fill": "#FFFFFF"},
     "arrow": {"width": 320, "height": 110, "fill": "#FFE600"},
+    "path": {"width": 600, "height": 240, "fill": "#FFFFFF", "path": [[0.0, 0.8], [0.25, 0.2], [0.5, 0.7], [0.75, 0.15], [1.0, 0.5]]},
 }
 
 LABELS: dict[str, str] = {
     "rect": "Rectangle", "ellipse": "Circle", "triangle": "Triangle", "diamond": "Diamond", "polygon": "Hexagon",
     "star": "Star", "ring": "Ring", "heart": "Heart", "bubble": "Speech bubble", "blob": "Blob", "line": "Line",
-    "arrow": "Arrow",
+    "arrow": "Arrow", "path": "Path",
 }
 
 
@@ -113,3 +114,111 @@ def outline(kind: str, w: float, h: float, sides: int = 6, points: int = 5, inne
     if kind == "bubble":
         return bubble(w, h, radius)
     return polygon(kind, w, h, sides, points, inner)
+
+
+# ---- motion: paths, draw-on and morphing (ops/motion.py) -------------------------------------------------------
+
+def path_points(path: list[list[float]] | None, w: float, h: float) -> list[tuple[float, float]]:
+    """A path shape's points (0..1 fractions of its box) in box pixels."""
+    return [(float(x) * w, float(y) * h) for x, y in (path or [[0, 0.5], [1, 0.5]])]
+
+
+def _ellipse(w: float, h: float, n: int = SAMPLES) -> list[tuple[float, float]]:
+    """Clockwise from the top, like the polygon kinds."""
+    return [(w / 2 + w / 2 * math.sin(2 * math.pi * i / n), h / 2 - h / 2 * math.cos(2 * math.pi * i / n)) for i in range(n)]
+
+
+def _rounded_rect(w: float, h: float, r: float) -> list[tuple[float, float]]:
+    r = max(0.0, min(r, w / 2, h / 2))
+    out: list[tuple[float, float]] = [(w / 2, 0.0)]
+    for cx, cy, a0 in ((w - r, r, 270), (w - r, h - r, 0), (r, h - r, 90), (r, r, 180)):
+        for i in range(CORNER_STEPS + 1):
+            a = math.radians(a0 + 90 * i / CORNER_STEPS)
+            out.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return out
+
+
+def any_outline(kind: str, w: float, h: float, sides: int = 6, points: int = 5, inner: float = 0.5, radius: float = 0.0,
+                path: list[list[float]] | None = None) -> tuple[list[tuple[float, float]], bool]:
+    """The outline of ANY shape kind as (points, closed), in box pixels, clockwise from the top centre where the
+    kind has one. Lines and open paths are open; a ring is its outer edge; an arrow its silhouette."""
+    if kind == "path":
+        return path_points(path, w, h), False
+    if kind == "line":
+        return [(0.0, h / 2), (w, h / 2)], False
+    if kind in ("ellipse", "ring"):
+        return _ellipse(w, h), True
+    if kind == "rect":
+        return _rounded_rect(w, h, radius), True
+    if kind == "arrow":
+        head, shaft, mid = min(w * 0.45, h), h * 0.38, h / 2
+        return [(0.0, mid - shaft / 2), (w - head, mid - shaft / 2), (w - head, 0.0), (w, mid), (w - head, h),
+                (w - head, mid + shaft / 2), (0.0, mid + shaft / 2)], True
+    return outline(kind, w, h, sides, points, inner, radius), True
+
+
+def _length(pts: list[tuple[float, float]], closed: bool) -> list[float]:
+    """Cumulative length at each point (closed: one more entry, back to the start)."""
+    seq = pts + [pts[0]] if closed else pts
+    acc = [0.0]
+    for (x0, y0), (x1, y1) in zip(seq, seq[1:]):
+        acc.append(acc[-1] + math.hypot(x1 - x0, y1 - y0))
+    return acc
+
+
+def trim(pts: list[tuple[float, float]], closed: bool, frac: float) -> list[tuple[float, float]]:
+    """The first `frac` (0..1) of an outline by length, as an open polyline: what a draw-on shows."""
+    if not pts:
+        return []
+    seq = pts + [pts[0]] if closed else list(pts)
+    acc = _length(pts, closed)
+    want = acc[-1] * max(0.0, min(1.0, frac))
+    out = [seq[0]]
+    for i in range(1, len(seq)):
+        if acc[i] <= want:
+            out.append(seq[i])
+            if acc[i] == want:
+                break
+            continue
+        seg = acc[i] - acc[i - 1]
+        k = (want - acc[i - 1]) / seg if seg else 0.0
+        (x0, y0), (x1, y1) = seq[i - 1], seq[i]
+        out.append((x0 + (x1 - x0) * k, y0 + (y1 - y0) * k))
+        break
+    return out
+
+
+def resample(pts: list[tuple[float, float]], closed: bool, n: int) -> list[tuple[float, float]]:
+    """n points equally spaced by length along an outline, starting at its first point."""
+    acc = _length(pts, closed)
+    seq = pts + [pts[0]] if closed else pts
+    total = acc[-1] or 1.0
+    out, j = [], 1
+    for i in range(n):
+        d = total * i / (n if closed else max(1, n - 1))
+        while j < len(acc) - 1 and acc[j] < d:
+            j += 1
+        seg = acc[j] - acc[j - 1]
+        k = (d - acc[j - 1]) / seg if seg else 0.0
+        (x0, y0), (x1, y1) = seq[j - 1], seq[j]
+        out.append((x0 + (x1 - x0) * k, y0 + (y1 - y0) * k))
+    return out
+
+
+MORPH_POINTS = 120
+
+
+def _start_at_top(pts: list[tuple[float, float]], w: float) -> list[tuple[float, float]]:
+    """Rotate a closed outline to start at its point nearest the top centre, so two morphing shapes line up."""
+    i = min(range(len(pts)), key=lambda k: (pts[k][1], abs(pts[k][0] - w / 2)))
+    return pts[i:] + pts[:i]
+
+
+def morph(a: tuple[list[tuple[float, float]], bool], b: tuple[list[tuple[float, float]], bool], p: float, w: float
+          ) -> tuple[list[tuple[float, float]], bool]:
+    """Outline between shape a (p = 0) and shape b (p = 1): both resampled to the same number of points from the top
+    centre, then blended point by point. Closed if either end is closed."""
+    pa = resample(_start_at_top(a[0], w) if a[1] else a[0], a[1], MORPH_POINTS)
+    pb = resample(_start_at_top(b[0], w) if b[1] else b[0], b[1], MORPH_POINTS)
+    p = max(0.0, min(1.0, p))
+    return [(x0 + (x1 - x0) * p, y0 + (y1 - y0) * p) for (x0, y0), (x1, y1) in zip(pa, pb)], (a[1] or b[1])

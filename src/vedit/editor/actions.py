@@ -574,6 +574,10 @@ def _layer_add_text(p: Project, a: dict) -> str:
         from ..ops import text_looks
 
         text_looks.apply(l, a["look"], animation=a.get("animation", True))
+    if a.get("split"):  # Elements: kinetic title
+        from ..ops import motion
+
+        motion.set_fields(l, {k: a.get(k) for k in ("split", "split_anim", "stagger", "split_dur", "split_ease")})
     scenes.place_in_scene(p, l, a.get("scene"))
     return f"add text {l.id}"
 
@@ -627,9 +631,63 @@ def _layer_add_shape(p: Project, a: dict) -> str:
         kw.update(width=p.canvas.width, height=p.canvas.height, radius=0, x="50%", y="50%")
     l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"), **kw)
     overlays.set_fields(l, {k: v for k, v in a.items() if k in overlays.FRAME_FIELDS})
+    from ..ops import motion
+    from ..project import Preset
+
+    motion.set_fields(l, {k: a[k] for k in ("path", "closed", "morph_to") if a.get(k) is not None})
+    if a.get("draw"):  # Elements: a line that draws itself on
+        l.presets.append(Preset(name="draw_in", duration=float(a.get("draw_dur", 1.0))))
+    if a.get("morph_loop"):
+        l.presets.append(Preset(name="morph_loop"))
     scenes.place_in_scene(p, l, a.get("scene"))
     _drop_on_track(p, l, a)
     return f"add {l.shape} {l.id}"
+
+
+@op("motion_set")
+def _motion_set(p: Project, a: dict) -> str:
+    """Kinetic text / counter / morph target / path / chart fields from the properties panel (`vedit motion set`,
+    `chart set`, `counter set`)."""
+    from ..ops import motion
+
+    l = p.layer(a["layer"])
+    if a.get("path") is not None and l.type == "shape":
+        l.shape = "path"
+    changed = motion.set_fields(l, a)
+    if "counter" in changed and l.counter:
+        l.text = motion.counter_text(l.counter, 1.0)
+        if not any(x.name == "count_up" for x in l.presets):
+            from ..project import Preset
+
+            l.presets.append(Preset(name="count_up", duration=1.2))
+    return f"{l.id}: " + ", ".join(changed)
+
+
+@op("chart_add")
+def _chart_add(p: Project, a: dict) -> str:
+    """The Elements tab's chart cards (`vedit chart add`)."""
+    from ..ops import chart, motion, scenes
+
+    items = a["items"] if isinstance(a.get("items"), list) else chart.parse_items(a.get("data") or "A=3, B=7, C=5, D=9")
+    l = motion.add_chart(p, a.get("kind") or "bar", items, float(a.get("start") or 0), _num(a, "end"),
+                         a.get("x") or "50%", a.get("y") or "50%", duration=float(a.get("dur", 1.2)))
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add {l.chart.kind} chart {l.id}"
+
+
+@op("counter_add")
+def _counter_add(p: Project, a: dict) -> str:
+    """The Elements tab's counter card (`vedit counter add`)."""
+    from ..ops import motion, scenes
+
+    l = motion.add_counter(p, float(a.get("to", 1000)), float(a.get("start") or 0), _num(a, "end"), a.get("x") or "50%",
+                           a.get("y") or "40%", float(a.get("dur", 1.2)), a.get("ease") or "expo_out",
+                           a.get("style") if isinstance(a.get("style"), dict) else None,
+                           **{k: a[k] for k in ("from", "decimals", "prefix", "suffix", "separator") if a.get(k) is not None})
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add counter {l.id}"
 
 
 # ---- design scenes (Design studio) -----------------------------------------------------------------------------

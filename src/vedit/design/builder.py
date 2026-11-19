@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .. import history
 from ..ops import animate as anim
-from ..ops import cut, fonts, overlays, text_looks
+from ..ops import cut, fonts, motion, overlays, text_looks
 from ..ops import scenes as scenes_ops
 from ..project import ClipMeta, Keyframe, Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError
 from ..project import Scene as ProjScene
@@ -65,6 +65,13 @@ def build(plan: MotionPlan, pdir: Path, files: dict[str, dict]) -> dict:
         p.layers, p.clips, p.music, p.scenes = [], [], [], []
         # a design project: the plan's scenes become studio scenes (pages), so it opens in the Design studio
         p.kind = "design"
+        if plan.style:
+            from . import styles
+
+            try:
+                p.motion_style = styles.get(plan.style).key
+            except VeditError as ex:
+                report["skipped"].append(f"style: {ex}")
         t = 0.0
         for sc in plan.scenes:
             if t >= length - 0.05:
@@ -140,7 +147,8 @@ def _scene(p: Project, sc: Scene, si: int, t0: float, dur: float, plan: MotionPl
                                _preset(e.loop)) if x]
             for pr in ins:
                 anim.validate_preset(pr)
-            l.presets = ins
+            own = [x for x in l.presets if x.name in ("count_up", "draw_in") and x.name not in {i.name for i in ins}]
+            l.presets = own + ins  # a counter's count / a chart's growth stay
             if e.path:
                 l.keyframes = keyframes(e.path)
                 anim.validate_keyframes(l.keyframes)
@@ -179,8 +187,17 @@ def keyframes(path) -> list[Keyframe]:
     for k in path:
         fill = _hex(k.fill, "") or None if k.fill else None
         out.append(Keyframe(t=max(0.0, k.t), x=k.x, y=k.y, scale=k.scale, rotation=k.rotation, opacity=k.opacity,
-                            w=k.w, h=k.h, sx=k.sx, sy=k.sy, fill=fill, ease=k.ease if k.ease in anim.EASINGS else "ease_in_out"))
+                            w=k.w, h=k.h, sx=k.sx, sy=k.sy, fill=fill, draw=k.draw, morph=k.morph, count=k.count,
+                            ease=_ease(k.ease)))
     return out
+
+
+def _ease(name: str | None, default: str = "ease_in_out") -> str:
+    try:
+        anim.ease(name or default, 0.5)
+        return name or default
+    except VeditError:
+        return default
 
 
 def _frame(l: Layer, e: Element, W: int) -> None:
@@ -241,6 +258,25 @@ def _element(p: Project, e: Element, t0: float, dur: float, plan: MotionPlan, fi
         if plan.font and plan.font in fonts.FONTS:
             l.style.font = plan.font
         p.layers.append(l)
+        if e.split and e.split != "none":
+            motion.set_fields(l, {"split": e.split, "split_anim": e.split_anim, "stagger": e.stagger,
+                                  "split_ease": _ease(e.split_ease, "ease_out")})
+    elif e.kind == "counter":
+        style = {"size": max(24, min(320, e.size or 150)), "color": _hex(e.color or (plan.palette[0] if plan.palette else None), "#FFFFFF"),
+                 "stroke_width": 0}
+        if plan.font and plan.font in fonts.FONTS:
+            style["font"] = plan.font
+        l = motion.add_counter(p, float(e.count_to if e.count_to is not None else 100), start, end, e.x or "50%", e.y or "40%",
+                               min(1.5, max(0.3, (end - start) * 0.6)), "expo_out", style,
+                               **{"from": e.count_from, "decimals": e.decimals, "prefix": e.prefix, "suffix": e.suffix})
+    elif e.kind == "chart":
+        from ..ops import chart as chart_ops
+
+        opts = {k: v for k, v in (("prefix", e.prefix), ("suffix", e.suffix), ("decimals", e.decimals),
+                                  ("colors", [_hex(c, "#22D3EE") for c in e.colors] if e.colors else (plan.palette or None)),
+                                  ("font", plan.font if plan.font in fonts.FONTS else None)) if v is not None}
+        l = motion.add_chart(p, e.chart or "bar", chart_ops.parse_items(e.data or "A=3, B=7, C=5"), start, end,
+                             e.x or "50%", e.y or "50%", e.width, e.height, min(1.6, max(0.4, (end - start) * 0.5)), **opts)
     else:  # shape
         kw: dict = {}
         if e.width:
@@ -257,6 +293,8 @@ def _element(p: Project, e: Element, t0: float, dur: float, plan: MotionPlan, fi
         extra = {k: v for k, v in (("fill_gradient", ",".join(e.gradient) if e.gradient else None), ("sides", e.sides),
                                    ("points", e.points), ("inner", e.inner)) if v is not None}
         overlays.set_fields(l, extra)
+        if e.shape == "path" or e.morph_to:
+            motion.set_fields(l, {"path": e.points_xy, "closed": e.closed, **({"morph_to": e.morph_to} if e.morph_to else {})})
     _common(l, e)
     return l
 

@@ -17,6 +17,43 @@
   }
   function backOut(p, s = 1.70158) { p -= 1; return p * p * ((s + 1) * p + s) + 1; }
 
+  // CSS cubic-bezier, same steps as animate.py _bezier (Newton, then bisection)
+  function bezier(x1, y1, x2, y2) {
+    const coord = (t, a, b) => ((1 - 3 * b + 3 * a) * t + (3 * b - 6 * a)) * t * t + 3 * a * t;
+    const slope = (t, a, b) => 3 * (1 - 3 * b + 3 * a) * t * t + 2 * (3 * b - 6 * a) * t + 3 * a;
+    return (p) => {
+      if (p <= 0 || p >= 1) return p;
+      let t = p;
+      for (let i = 0; i < 8; i++) {
+        const d = slope(t, x1, x2);
+        if (Math.abs(d) < 1e-7) break;
+        const t2 = t - (coord(t, x1, x2) - p) / d;
+        if (t2 < 0 || t2 > 1) break;
+        t = t2;
+      }
+      if (Math.abs(coord(t, x1, x2) - p) > 1e-7) {
+        let lo = 0, hi = 1; t = p;
+        for (let i = 0; i < 40; i++) {
+          const x = coord(t, x1, x2);
+          if (Math.abs(x - p) < 1e-7) break;
+          if (x < p) lo = t; else hi = t;
+          t = (lo + hi) / 2;
+        }
+      }
+      return coord(t, y1, y2);
+    };
+  }
+  const NAMED_BEZIERS = { snap: [0.7, 0, 0.2, 1], smooth: [0.4, 0, 0.2, 1], expo_out: [0.16, 1, 0.3, 1], circ_out: [0, 0.55, 0.45, 1],
+    anticipate: [0.36, -0.4, 0.5, 1], overshoot: [0.34, 1.56, 0.64, 1] };
+  function parseBezier(name) {
+    let s = String(name).trim().toLowerCase().replace(/ /g, "");
+    const m = /^(?:cubic-bezier|bezier)\((.*)\)$/.exec(s);
+    if (m) s = m[1]; else if (s.startsWith("bezier:")) s = s.slice(7); else return null;
+    const v = s.split(",").map(Number);
+    if (v.length !== 4 || v.some((x) => isNaN(x)) || !(v[0] >= 0 && v[0] <= 1 && v[2] >= 0 && v[2] <= 1)) return null;
+    return v;
+  }
+  const BEZ = {};
   const EASINGS = {
     linear: (p) => p,
     ease_in: (p) => p * p * p,
@@ -28,7 +65,12 @@
     elastic_out: elasticOut,
     step: (p) => (p < 1 ? 0 : 1),
   };
-  function ease(name, p) { return (EASINGS[name] || EASINGS.linear)(clamp01(p)); }
+  for (const [k, v] of Object.entries(NAMED_BEZIERS)) EASINGS[k] = bezier(...v);
+  function ease(name, p) {
+    let fn = EASINGS[name] || BEZ[name];
+    if (!fn) { const b = parseBezier(name); fn = BEZ[name] = b ? bezier(...b) : EASINGS.linear; }
+    return fn(clamp01(p));
+  }
 
   function parsePos(v, total) {
     if (typeof v === "string") {
@@ -96,6 +138,10 @@
       const x = ((t / per) % 1) * cols.length, i = Math.floor(x) % cols.length;
       pr.fill = mixHex(cols[i], cols[(i + 1) % cols.length], x - Math.floor(x));
     }],
+    draw_in: ["in", 1.0, (pr, p, t, k) => { pr.draw *= ease(String(k.ease ?? "ease_in_out"), p); }],
+    draw_out: ["out", 0.6, (pr, p, t, k) => { pr.draw *= ease(String(k.ease ?? "ease_in_out"), p); }],
+    count_up: ["in", 1.2, (pr, p, t, k) => { pr.count *= ease(String(k.ease ?? "expo_out"), p); }],
+    morph_loop: ["loop", 0, (pr, p, t, k) => { const per = num(k.period, 2.4); if (per > 0) pr.morph = 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / per); }],
   };
 
   function presetDuration(layer, preset) {
@@ -135,14 +181,17 @@
     return mixHex(last, last, 0);
   }
 
-  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy"];
+  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count"];
+  const PROGRESS = ["draw", "morph", "count"];
   function propsAt(layer, t, duration, canvas) {
+    if (layer.step_fps) t = Math.floor(t * layer.step_fps + 1e-9) / layer.step_fps; // stop-motion steps, as animate.py
     const pr = {
       x: parsePos(layer.x, canvas.width), y: parsePos(layer.y, canvas.height),
       scale: Number(layer.scale), rotation: Number(layer.rotation), opacity: Number(layer.opacity), reveal: 1,
       w: layer.width == null ? null : Number(layer.width), h: layer.height == null ? null : Number(layer.height),
       sx: layer.sx == null ? 1 : Number(layer.sx), sy: layer.sy == null ? 1 : Number(layer.sy),
       fill: layer.fill === undefined ? null : layer.fill,
+      draw: 1, morph: 0, count: 1,
     };
     for (const prop of PROPS) {
       const v = interp(layer.keyframes || [], prop, t, prop === "x" ? canvas.width : canvas.height);
@@ -160,6 +209,7 @@
     }
     pr.opacity = clamp01(pr.opacity); pr.reveal = clamp01(pr.reveal); pr.scale = Math.max(0, pr.scale);
     pr.sx = Math.max(0, pr.sx); pr.sy = Math.max(0, pr.sy);
+    for (const k of PROGRESS) pr[k] = clamp01(pr[k]);
     if (pr.w != null) pr.w = Math.max(1, pr.w);
     if (pr.h != null) pr.h = Math.max(1, pr.h);
     return pr;
@@ -188,7 +238,19 @@
     return Math.round(x);
   }
 
-  const api = { ease, parsePos, propsAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
+  // a counter's text at progress c (0..1): same digits as ops/motion.py counter_text
+  function counterText(c, prog) {
+    const from = Number(c.from ?? 0), to = Number(c.to ?? 100), d = Math.max(0, Math.min(6, Math.trunc(Number(c.decimals ?? 0))));
+    const v = from + (to - from) * prog, f = 10 ** d;
+    const n = Math.floor(Math.abs(v) * f + 0.5);
+    let ip = String(Math.floor(n / f));
+    const sep = c.separator ?? ",";
+    if (sep) ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+    const frac = d ? "." + String(n % f).padStart(d, "0") : "";
+    return `${c.prefix ?? ""}${v < 0 && n > 0 ? "-" : ""}${ip}${frac}${c.suffix ?? ""}`;
+  }
+
+  const api = { counterText, ease, parsePos, propsAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.VAnim = api;
 })(typeof window !== "undefined" ? window : globalThis);

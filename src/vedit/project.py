@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4  # 4 also has Clip.zoom_ease (additive, default linear)
 
 
 class VeditError(Exception):
@@ -175,7 +175,50 @@ class Keyframe(_Model):
     sx: float | None = None  # non-uniform stretch (multiplies the drawn width / height, any layer)
     sy: float | None = None
     fill: str | None = None  # shape fill colour, blended in RGB between keyframes
-    ease: str = "ease_in_out"  # easing used from this keyframe to the next
+    # build-up progress, 0..1 (ops/motion.py): draw = how much of a shape's outline / a chart is drawn (1 = all),
+    # morph = how far a shape has turned into its `morph_to` kind, count = how far a counter has counted (1 = `to`)
+    draw: float | None = None
+    morph: float | None = None
+    count: float | None = None
+    # easing used from this keyframe to the next: a name (ease_out, snap, expo_out ...) or "cubic-bezier(a,b,c,d)"
+    ease: str = "ease_in_out"
+
+
+class Counter(_Model):
+    """A text layer that counts: its text is `from` -> `to` as the `count` progress goes 0 -> 1 (`count_up` preset)."""
+    from_: float = Field(default=0.0, alias="from")
+    to: float = 100.0
+    decimals: int = 0
+    prefix: str = ""
+    suffix: str = ""
+    separator: str = ","  # thousands separator ("" = none)
+
+
+class ChartItem(_Model):
+    label: str = ""
+    value: float = 0.0
+    color: str | None = None  # None = the chart's palette
+
+
+class Chart(_Model):
+    """A chart layer (ops/chart.py), grown by the `draw` progress (`draw_in` preset): bars rise one after another,
+    a line draws itself, a donut sweeps round, and the values roll up with them."""
+    kind: Literal["bar", "hbar", "line", "donut"] = "bar"
+    items: list[ChartItem] = Field(default_factory=list)
+    colors: list[str] = Field(default_factory=lambda: ["#22D3EE", "#A78BFA", "#F472B6", "#FBBF24", "#34D399", "#60A5FA"])
+    max: float | None = None  # top of the value axis (None = the largest value)
+    show_values: bool = True
+    show_labels: bool = True
+    prefix: str = ""
+    suffix: str = ""
+    decimals: int = 0
+    font: str | None = None
+    text_color: str = "#FFFFFF"
+    text_size: int = 40
+    radius: int = 12  # bar corners
+    gap: float = 0.35  # space between bars, as a fraction of each bar's slot
+    line_width: int = 10  # line chart stroke / donut ring thickness (0 = a pie)
+    stagger: float = 0.5  # how much each item waits for the previous one (0 = all together, 1 = one after another)
 
 
 class Preset(_Model):
@@ -219,7 +262,7 @@ class Word(_Model):
 
 BLEND_MODES = ("normal", "screen", "multiply", "overlay", "add", "lighten", "darken")
 SHAPE_KINDS = ("rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
-               "arrow")
+               "arrow", "path")
 SCENE_TRANSITIONS = ("cut", "fade", "slide", "zoom", "pop", "wipe")
 
 
@@ -229,7 +272,7 @@ class Layer(_Model):
     order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape", "adjust"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart"]
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
@@ -254,6 +297,16 @@ class Layer(_Model):
     width: int | None = None  # image width in canvas px
     words: list[Word] = Field(default_factory=list)
     words_per_group: int = 3
+    # kinetic text (ops/kinetic.py): animate the text by word / letter / line, each piece `split_anim`-ing in
+    # `stagger` seconds after the previous one, over `split_dur` seconds with `split_ease`
+    split: Literal["none", "word", "letter", "line"] = "none"
+    split_anim: Literal["rise", "drop", "fade", "pop", "mask_up", "slide", "type"] = "rise"
+    stagger: float = 0.06
+    split_dur: float = 0.45
+    split_ease: str = "ease_out"
+    counter: Counter | None = None  # a counting number (text layers)
+    step_fps: int | None = None  # motion in steps ("on twos": 12) like stop motion / paper cut-out; None = smooth
+    chart: Chart | None = None  # chart layers
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
     # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
     blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"
@@ -277,7 +330,12 @@ class Layer(_Model):
     chroma_similarity: float = 0.25
     # shape layers
     shape: Literal["rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
-                   "arrow"] = "rect"
+                   "arrow", "path"] = "rect"
+    # path shapes: points in the box as 0..1 fractions [[x, y], ...]; open paths are strokes (lines, brackets,
+    # underlines, a drawing), closed ones are filled outlines
+    path: list[list[float]] | None = None
+    closed: bool = False
+    morph_to: str | None = None  # shape kind this shape turns into as `morph` goes 0 -> 1 (keyframes)
     height: int | None = None  # shape height in canvas px (line / arrow: thickness)
     fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
     fill_gradient: list[str] | None = None  # shape fill as a linear gradient (2+ colours), replaces `fill`
@@ -347,6 +405,9 @@ class Project(_Model):
     # the social app this video is for (tiktok | reels | shorts | all): its safe zone is where text, stickers and
     # buttons go (ops/safezone.py; the editor's guides, `vedit safe`, the audit). None = "all apps" on a portrait canvas
     platform: str | None = None
+    # motion style (design/styles.py): a look as numbers (easing, timing, palette, fonts) the AI follows and the
+    # audit checks; None = no style rules
+    motion_style: str | None = None
     scenes: list[Scene] = Field(default_factory=list)  # design projects only
 
     def scene_starts(self) -> list[float]:
@@ -449,6 +510,7 @@ def find_project_dir(explicit: str | None = None) -> Path:
 MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     1: lambda d: d,  # 2: design projects (kind, scenes), stretch (sx / sy), more shapes, keyframed size / fill
     2: lambda d: d,  # 3: equal tracks: `main_z` (video track position; default 0 = bottom), timeline = longest track
+    3: lambda d: d,  # 4: motion: draw-on / morph / counters / kinetic text / charts (`draw`, `morph`, `count` keyframes)
 }
 
 

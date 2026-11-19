@@ -41,6 +41,18 @@ def _layers() -> list[Layer]:
         Layer(id="cycle", type="shape", shape="rect", presets=[Preset(name="color_cycle", params={"colors": ["#000", "#FFFFFF", "#FF00FF"], "period": 1.3}),
                                                                  Preset(name="squash_stretch"), Preset(name="stretch_in", params={"axis": "y"})]),
         Layer(id="typ", type="text", text="typed out slowly", presets=[Preset(name="typewriter"), Preset(name="fade_out")]),
+        # motion: progress props, cubic-bezier and named bezier easings
+        Layer(id="mo", type="shape", shape="ellipse", morph_to="star", keyframes=[
+            Keyframe(t=0, draw=0, morph=0, count=0, x=100, ease="cubic-bezier(.7,0,.2,1)"),
+            Keyframe(t=0.9, draw=0.6, morph=1, x=500, ease="snap"),
+            Keyframe(t=1.7, draw=1, count=1, x=300, ease="overshoot"),
+            Keyframe(t=2.5, morph=0.2, x=900, ease="anticipate"),
+        ]),
+        Layer(id="steps", type="shape", shape="rect", step_fps=12, presets=[Preset(name="sway"), Preset(name="drop_in")],
+              keyframes=[Keyframe(t=0, x=0, ease="smooth"), Keyframe(t=2, x=500)]),
+        Layer(id="eases", type="text", text="e", keyframes=[
+            Keyframe(t=0, x=0, ease="expo_out"), Keyframe(t=0.6, x=400, ease="circ_out"), Keyframe(t=1.2, x=100, ease="smooth"),
+            Keyframe(t=1.8, x=600, ease="bezier:0.1,0.9,0.9,0.1"), Keyframe(t=2.6, x=50)]),
     ]
     params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20}}
     for name in PRESETS:  # every preset, alone and with a custom duration
@@ -71,7 +83,7 @@ def test_js_props_at_matches_python():
     js = json.loads(res.stdout)
     for lid, frames in py.items():
         for t, a, b in zip(times, frames, js[lid]):
-            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy"):
+            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count"):
                 if a[k] is None:
                     assert b[k] is None, f"{lid} {k} at t={t:.2f}: python None js {b[k]}"
                     continue

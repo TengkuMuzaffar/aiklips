@@ -1132,12 +1132,29 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         opt = lambda k: None if body.get(k) is None else int(body[k])  # noqa: E731
         try:
             png = await asyncio.to_thread(sprite_png, d, body.get("layer") or {}, float(body.get("scale", 0.5)),
-                                          opt("reveal"), opt("group"), opt("hi"))
+                                          opt("reveal"), opt("group"), opt("hi"), body.get("motion"))
         except VeditError as e:
             raise bad(e)
         except (ValueError, TypeError) as e:
             raise HTTPException(400, f"Bad layer: {e}")
-        return Response(png, media_type="image/png")
+        headers = {}
+        lay = body.get("layer") or {}
+        if lay.get("type") == "text" and lay.get("split", "none") != "none" and not lay.get("counter"):
+            from ..ops.motion import kinetic_end
+
+            headers["X-Kinetic-End"] = f"{kinetic_end(lay, float(body.get('scale', 0.5))):.3f}"  # when it stops moving
+        return Response(png, media_type="image/png", headers=headers)
+
+    @app.get("/api/motion-thumb/{name}")
+    async def motion_thumb(name: str):
+        """Elements > Motion card previews: {key}.png (the finished element) or {key}.webp (it animating in)."""
+        from .motion_thumbs import KEYS, thumb
+
+        key, _, ext = name.rpartition(".")
+        if key not in KEYS or ext not in ("png", "webp"):
+            raise HTTPException(404, "No such preview")
+        data = await asyncio.to_thread(thumb, key, ext == "webp")
+        return Response(data, media_type=f"image/{ext}", headers={"Cache-Control": "max-age=86400"})
 
     @app.get("/api/source/{sid}/thumb.jpg")
     def source_thumb(sid: str):

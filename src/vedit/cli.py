@@ -20,7 +20,7 @@ from .ops import captions as caps
 from .ops import cut
 from .ops.silence import find_silences, silence_cut
 from .project import (
-    ACTIVE_FILE, PROJECT_FILE, Effect, Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError,
+    ACTIVE_FILE, PROJECT_FILE, Effect, Keyframe, Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError,
     find_project_dir, load, save, store_media_path,
 )
 
@@ -51,6 +51,10 @@ marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTub
 shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
                              "backgrounds, motion-design elements)")
 scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
+style_app = typer.Typer(help="Motion styles: a look as numbers (easing, timing, palette, fonts) the AI follows and the audit checks")
+motion_app = typer.Typer(help="Motion graphics on the tracks: kinetic text (by word / letter / line), draw-on, morph, paths")
+chart_app = typer.Typer(help="Charts that grow in: bar, hbar, line, donut (values roll up with the bars)")
+counter_app = typer.Typer(help="Numbers that count up: 0 -> 1,250,000 with prefix / suffix / decimals")
 safe_app = typer.Typer(help="Safe zone of the project's platform (`vedit platform`): check where every layer is, fit "
                              "the ones under the app's buttons / caption bar back inside")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
@@ -59,7 +63,8 @@ for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app)
                   ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
                   ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
-                  ("safe", safe_app)]:
+                  ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
+                  ("style", style_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -830,7 +835,7 @@ def overlay_add(
 @shape_app.command("add")
 def shape_add(
     shape: str = typer.Argument(..., help="rect | ellipse | triangle | diamond | polygon | star | ring | heart | bubble | "
-                                            "blob | line | arrow"),
+                                            "blob | line | arrow | path (--path)"),
     start: Optional[float] = typer.Option(None, help="Timeline seconds (design: default = start of --scene)"),
     end: Optional[float] = None, x: str = "50%", y: str = "50%",
     width: Optional[int] = None, height: Optional[int] = None, fill: Optional[str] = typer.Option(None, help="Fill colour, or 'none'"),
@@ -846,6 +851,11 @@ def shape_add(
                                                     "gradient screen (rect + --gradient)"),
     track: Optional[int] = typer.Option(None, help="Timeline track to put it on (0 = bottom overlay track)"),
     new_track: bool = typer.Option(False, "--new-track", help="Open a new track at --track for it (a track of its own)"),
+    path: Optional[str] = typer.Option(None, help="path: points as x,y fractions of the box, '0,1 0.3,0.2 1,0' (a line, "
+                                                  "bracket, underline, scribble; draw it on with --preset draw_in)"),
+    closed: bool = typer.Option(False, "--closed", help="path: close it into a filled outline"),
+    morph_to: Optional[str] = typer.Option(None, help="Shape kind it turns into (animate `morph` 0->1 with keyframes, "
+                                                      "or --preset morph_loop)"),
 ):
     """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it, a star that pops in,
     or with --full a colour / gradient screen covering the canvas)."""
@@ -867,12 +877,221 @@ def shape_add(
             if v is not None:
                 vals[k] = v
         overlays.set_fields(layer, vals)
+        from .ops import motion as motion_ops
+
+        motion_ops.set_fields(layer, {"path": path, "closed": closed if shape == "path" else None, "morph_to": morph_to}
+                              if (path or morph_to or closed) else {})
         layer.presets = _presets(preset)
         scenes.place_in_scene(p, layer, scene)
         if track is not None or new_track:
             overlays.place_layer(p, layer.id, track if track is not None else 1 + max((o.track or 0 for o in p.layers if o is not layer), default=-1),
                                  new_track=new_track)
     emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
+
+
+@style_app.command("list")
+def style_list():
+    """The motion styles (and the ones still to come)."""
+    from .design import styles
+
+    rows = [{"key": s.key, "name": s.name, "use_for": s.use_for} for s in styles.STYLES.values()]
+    emit({"styles": rows, "planned": styles.PLANNED},
+         "\n".join(f"  {r['key']:<18} {r['name']}: {r['use_for']}" for r in rows)
+         + "\nComing later: " + "; ".join(styles.PLANNED.values()))
+
+
+@style_app.command("show")
+def style_show(name: str):
+    """A style's numbers: easing, entrances, what it never does, timing, palette, fonts, filters, rules."""
+    from .design import styles
+
+    s = styles.get(name)
+    emit(s.card(), styles.brief(s))
+
+
+@style_app.command("set")
+def style_set(name: str = typer.Argument(..., help="A style key (`vedit style list`), or 'none'")):
+    """Give the project a motion style: its rules go to the AI and the audit checks them."""
+    from .design import styles
+
+    with edit(f"style {name}") as tx:
+        tx.project.motion_style = None if name == "none" else styles.get(name).key
+    emit({"style": tx.project.motion_style}, f"Motion style: {tx.project.motion_style or 'none'}")
+
+
+@motion_app.command("set")
+def motion_set(
+    layer_id: str,
+    split: Optional[str] = typer.Option(None, help="Kinetic text: none | word | letter | line (each piece animates in)"),
+    anim: Optional[str] = typer.Option(None, help="How each piece comes in: rise | drop | fade | pop | mask_up | slide | type"),
+    stagger: Optional[float] = typer.Option(None, help="Seconds between pieces (0.03 letters, 0.08 words, 0.15 lines)"),
+    dur: Optional[float] = typer.Option(None, help="Seconds each piece takes"),
+    ease: Optional[str] = typer.Option(None, help="Each piece's easing: ease_out, snap, expo_out, overshoot, "
+                                                  "cubic-bezier(.7,0,.2,1) ..."),
+    morph_to: Optional[str] = typer.Option(None, help="Shapes: the kind it morphs into ('none' to clear)"),
+    path: Optional[str] = typer.Option(None, help="Path shapes: points '0,1 0.3,0.2 1,0' (0..1 of the box)"),
+    closed: Optional[bool] = typer.Option(None, help="Path shapes: closed (filled) or open (a stroke)"),
+    step_fps: Optional[int] = typer.Option(None, help="Move in steps like stop motion (12 = on twos, paper cut-out); 0 = smooth"),
+):
+    """Set a layer's motion-graphics fields (kinetic text, morph target, path points)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"motion set {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if (split or anim) and l.type != "text":
+            raise VeditError("Kinetic text (--split / --anim) is for text layers")
+        if path is not None and l.type == "shape" and l.shape != "path":
+            l.shape = "path"
+        changed = motion_ops.set_fields(l, {"split": split, "split_anim": anim, "stagger": stagger, "split_dur": dur, "split_ease": ease,
+                                            **({"morph_to": None if morph_to == "none" else morph_to} if morph_to is not None else {}),
+                                            "path": path, "closed": closed, "step_fps": step_fps})
+    emit({"layer": layer_id, "changed": changed}, f"{layer_id}: " + (", ".join(changed) or "nothing changed"))
+
+
+@motion_app.command("draw")
+def motion_draw(layer_id: str, dur: float = typer.Option(1.0, help="Seconds to draw on"),
+                ease: str = typer.Option("ease_in_out", help="Easing (a name or cubic-bezier(...))"),
+                out: bool = typer.Option(False, "--out", help="Also undraw at the end (draw_out)")):
+    """Draw a shape's outline / a path / a chart on (preset draw_in), optionally off again at its end."""
+    with edit(f"motion draw {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if l.type not in ("shape", "chart"):
+            raise VeditError("Draw-on is for shapes, paths and charts")
+        anim.ease(ease, 0.5)
+        l.presets = [x for x in l.presets if x.name not in ("draw_in", "draw_out")]
+        l.presets.append(Preset(name="draw_in", duration=dur, params={"ease": ease}))
+        if out:
+            l.presets.append(Preset(name="draw_out", duration=min(dur, 0.6), params={"ease": ease}))
+    emit({"layer": layer_id}, f"{layer_id} draws on over {dur:g}s" + (" and off at the end" if out else ""))
+
+
+@motion_app.command("morph")
+def motion_morph(layer_id: str, to: str = typer.Option(..., help="Shape kind to morph into"),
+                 at: float = typer.Option(0.0, help="Seconds after the layer starts"),
+                 dur: float = typer.Option(0.8, help="Seconds the morph takes"),
+                 ease: str = typer.Option("smooth", help="Easing"),
+                 loop: bool = typer.Option(False, "--loop", help="Morph there and back for ever (morph_loop) instead"),
+                 period: float = typer.Option(2.4, help="--loop: seconds per there-and-back")):
+    """Morph a shape into another kind (circle -> star, square -> heart ...)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"motion morph {layer_id} {to}") as tx:
+        l = tx.project.layer(layer_id)
+        if l.type != "shape":
+            raise VeditError("Only shapes morph")
+        motion_ops.set_fields(l, {"morph_to": to})
+        l.keyframes = [k for k in l.keyframes if k.morph is None]
+        l.presets = [x for x in l.presets if x.name != "morph_loop"]
+        if loop:
+            l.presets.append(Preset(name="morph_loop", params={"period": period}))
+        else:
+            anim.ease(ease, 0.5)
+            l.keyframes += [Keyframe(t=at, morph=0, ease=ease), Keyframe(t=at + dur, morph=1)]
+            l.keyframes.sort(key=lambda k: k.t)
+    emit({"layer": layer_id, "to": to}, f"{layer_id} morphs into a {to}" + (" and back" if loop else f" at +{at:g}s over {dur:g}s"))
+
+
+def _chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font, stagger, line_width, radius, gap) -> dict:
+    return {k: v for k, v in dict(colors=[c.strip() for c in colors.split(",")] if colors else None, prefix=prefix, suffix=suffix,
+                                     decimals=decimals, max=max_, show_values=values, show_labels=labels, text_color=text_color,
+                                     text_size=text_size, font=font, stagger=stagger, line_width=line_width, radius=radius,
+                                     gap=gap).items() if v is not None}
+
+
+@chart_app.command("add")
+def chart_add(
+    kind: str = typer.Argument(..., help="bar | hbar | line | donut"),
+    data: str = typer.Option(..., help="'Mon=12, Tue=30, Wed=18' (label=value, optional :#colour)"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    width: Optional[int] = None, height: Optional[int] = None,
+    dur: float = typer.Option(1.2, help="Seconds it grows in (0 = already there)"),
+    colors: Optional[str] = typer.Option(None, help="Palette '#22D3EE,#A78BFA' (items cycle through it)"),
+    prefix: Optional[str] = None, suffix: Optional[str] = None, decimals: Optional[int] = None,
+    max_: Optional[float] = typer.Option(None, "--max", help="Top of the value axis (default: the largest value)"),
+    values: Optional[bool] = typer.Option(None, help="Show the values"), labels: Optional[bool] = typer.Option(None, help="Show the labels"),
+    text_color: Optional[str] = None, text_size: Optional[int] = None, font: Optional[str] = None,
+    stagger: Optional[float] = typer.Option(None, help="0 = all bars together, 1 = one after another"),
+    line_width: Optional[int] = None, radius: Optional[int] = None, gap: Optional[float] = None,
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in"),
+):
+    """Add a chart that grows in (data stories: bars rise one by one, values roll up)."""
+    from .ops import chart as chart_ops, motion as motion_ops, scenes
+
+    with edit(f"chart add {kind}") as tx:
+        p = tx.project
+        l = motion_ops.add_chart(p, kind, chart_ops.parse_items(data), start, end, x, y, width, height, dur,
+                                 **_chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font,
+                                               stagger, line_width, radius, gap))
+        scenes.place_in_scene(p, l, scene)
+    emit({"layer": l.id}, f"Added {kind} chart {l.id} ({len(l.chart.items)} values)")
+
+
+@chart_app.command("set")
+def chart_set(
+    layer_id: str, kind: Optional[str] = None, data: Optional[str] = None,
+    colors: Optional[str] = None, prefix: Optional[str] = None, suffix: Optional[str] = None, decimals: Optional[int] = None,
+    max_: Optional[float] = typer.Option(None, "--max"), values: Optional[bool] = None, labels: Optional[bool] = None,
+    text_color: Optional[str] = None, text_size: Optional[int] = None, font: Optional[str] = None,
+    stagger: Optional[float] = None, line_width: Optional[int] = None, radius: Optional[int] = None, gap: Optional[float] = None,
+):
+    """Change a chart's data or look."""
+    from .ops import chart as chart_ops, motion as motion_ops
+
+    vals = _chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font, stagger, line_width, radius, gap)
+    if kind:
+        vals["kind"] = kind
+    if data:
+        vals["items"] = chart_ops.parse_items(data)
+    with edit(f"chart set {layer_id}") as tx:
+        motion_ops.set_fields(tx.project.layer(layer_id), {"chart": vals})
+    emit({"layer": layer_id, "changed": sorted(vals)}, f"{layer_id}: " + (", ".join(sorted(vals)) or "nothing changed"))
+
+
+@counter_app.command("add")
+def counter_add(
+    to: float = typer.Argument(..., help="The number it counts to"),
+    from_: float = typer.Option(0.0, "--from", help="The number it starts at"),
+    decimals: int = 0, prefix: str = typer.Option("", help="e.g. '$'"), suffix: str = typer.Option("", help="e.g. '+', '%', 'k'"),
+    sep: str = typer.Option(",", help="Thousands separator ('' = none)"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "40%",
+    dur: float = typer.Option(1.2, help="Seconds it counts for"),
+    ease: str = typer.Option("expo_out", help="Easing of the count (expo_out: fast, then settles)"),
+    size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
+    stroke: Optional[str] = None, stroke_width: Optional[int] = None, glow: Optional[str] = None,
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in"),
+):
+    """Add a number that counts up (stats, prices, followers)."""
+    from .ops import motion as motion_ops, scenes
+
+    style = {k: v for k, v in dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
+                                   glow_color=glow).items() if v is not None}
+    with edit(f"counter add {to:g}") as tx:
+        p = tx.project
+        l = motion_ops.add_counter(p, to, start, end, x, y, dur, ease, style, **{"from": from_, "decimals": decimals,
+                                                                                 "prefix": prefix, "suffix": suffix, "separator": sep})
+        scenes.place_in_scene(p, l, scene)
+    emit({"layer": l.id, "text": l.text}, f"Added counter {l.id}: counts to {l.text} over {dur:g}s")
+
+
+@counter_app.command("set")
+def counter_set(layer_id: str, to: Optional[float] = None, from_: Optional[float] = typer.Option(None, "--from"),
+                decimals: Optional[int] = None, prefix: Optional[str] = None, suffix: Optional[str] = None,
+                sep: Optional[str] = None, off: bool = typer.Option(False, "--off", help="Stop counting (plain text)")):
+    """Change a counter (or turn a counting text back into plain text with --off)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"counter set {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if off:
+            motion_ops.set_fields(l, {"counter": None})
+            l.presets = [x for x in l.presets if x.name != "count_up"]
+        else:
+            motion_ops.set_fields(l, {"counter": {"to": to, "from": from_, "decimals": decimals, "prefix": prefix,
+                                                  "suffix": suffix, "separator": sep}})
+            l.text = motion_ops.counter_text(l.counter, 1.0)
+            if not any(x.name == "count_up" for x in l.presets):
+                l.presets.append(Preset(name="count_up", duration=1.2))
+    emit({"layer": layer_id}, f"{layer_id}: " + ("plain text" if off else f"counts to {l.text}"))
 
 
 @layer_app.command("order")
@@ -2775,6 +2994,10 @@ def design_catalog():
             "looks": [x["name"] for x in text_looks.catalog()],
             "textures": [k for k, it in overlays.LIBRARY.items() if it.kind == "video"],
             "fonts": list(fonts.FONTS), "max_length": spec.MAX_LENGTH}
+    from .design import planner
+
+    cat = planner.catalog()
+    data.update(eases=cat["eases"], motion_styles=cat["motion_styles"], motion_elements=cat["motion_elements"])
     emit(data)
 
 

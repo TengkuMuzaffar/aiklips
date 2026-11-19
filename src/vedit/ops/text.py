@@ -138,8 +138,11 @@ def _gradient(colors: list[str], w: int, h: int, top: float, bottom: float) -> I
     return col.resize((w, h))
 
 
-def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int | None = None, reveal: float = 1.0) -> Image.Image:
-    """Render text to a tight RGBA sprite. `highlight` = word index drawn in highlight colour."""
+def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int | None = None, reveal: float = 1.0,
+                spans: list | None = None) -> Image.Image:
+    """Render text to a tight RGBA sprite. `highlight` = word index drawn in highlight colour. `spans`, when given,
+    is filled with where each word went (sprite px, before italic slant): {li, x0, x1, top, bottom, letters: [(x0, x1)]}
+    plus one {"meta": ...} entry (pad, line_h, ink height, italic shear), for kinetic text (ops/kinetic.py)."""
     if style.uppercase:
         text = text.upper()
     if style.list_style != "none":  # every paragraph (line of the source text) becomes a list item
@@ -219,6 +222,10 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
                         put(draw, (x, y), shown, fill=rgba(color), stroke_width=embolden,
                             stroke_fill=rgba(color) if embolden else None)
                     x_end = x + _wlen(font, shown, ls)
+                if spans is not None and mode == "fill":
+                    spans.append({"li": li, "x0": x, "x1": x + _wlen(font, word, ls), "top": y, "bottom": y + ascent + descent,
+                                  "letters": [(x + font.getlength(word[:i]) + i * ls, x + font.getlength(word[:i + 1]) + i * ls)
+                                              for i in range(len(word))]})
                 x += _wlen(font, word, ls) + space
             if mode == "fill" and x_end is not None:
                 deco.append((x0, x_end, y))
@@ -248,6 +255,8 @@ def render_text(text: str, style: TextStyle, scale: float = 1.0, highlight: int 
         box = mask.getbbox()  # span the letters themselves, not the line box, so both colours fully show
         if box:
             img.paste(_gradient(style.gradient, W, H, box[1], box[3] - 1), (0, 0), mask)
+    if spans is not None:
+        spans.append({"meta": True, "W": W, "H": H, "shear": 0.2 if style.italic else 0.0})
     if style.italic:  # slant: shift each row right by how far it is above the bottom
         k = 0.2
         extra = int(k * H) + 1

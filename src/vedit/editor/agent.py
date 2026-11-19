@@ -329,7 +329,7 @@ _VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts"
 _VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
                    "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
                    "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
-                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"}, "style": {"list", "show"},
                    "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
 _VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models", "platform"}  # read-only when given no options
 _VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them
@@ -565,7 +565,7 @@ def _attachment(p, n: int, a: dict) -> str:
                     f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s{', gap' if c.gap else ''})")
         if kind == "layer":
             l = p.layer(aid)
-            label = l.text or l.image or " ".join(w.text for w in l.words[:8]) or (l.shape if l.type == "shape" else "")
+            label = l.text or l.image or " ".join(w.text for w in l.words[:8]) or (l.shape if l.type == "shape" else f"{l.chart.kind} chart" if l.type == "chart" and l.chart else "")
             end = l.end if l.end is not None else p.duration
             return f"{n}. {l.type} layer {l.id} {l.start:.2f}-{end:.2f}s, track {l.track} \"{str(label)[:50]}\""
         if kind == "range":
@@ -938,6 +938,13 @@ class ChatSession:
             z = safezone.zone(p)
             lines.append(("platform: " + (p.platform or "not set (\"all apps\" zone)") + "; " if z.key != "title" else "")
                          + "keep text, captions, stickers, buttons and PiP inside the " + z.describe(p.canvas.width, p.canvas.height))
+            if p.motion_style:
+                from ..design import styles
+
+                try:
+                    lines.append("motion style (follow these numbers; the audit checks them): " + styles.brief(styles.get(p.motion_style)))
+                except VeditError:
+                    pass
             if ctx.get("playhead") is not None:
                 lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
             if p.kind == "design":

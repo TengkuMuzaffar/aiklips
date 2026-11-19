@@ -998,6 +998,10 @@ const ICONS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   sparkle: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  chart: '<path d="M4 20h16"/><rect x="5" y="11" width="3" height="7" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="16" y="9" width="3" height="9" rx="1"/>',
+  hash: '<path d="M5 9h14M5 15h14M10 4L8 20M16 4l-2 16"/>',
+  squiggle: '<path d="M3 15c3-8 5-8 7 0s4 8 7 0 3-6 4-4"/>',
+  morph: '<circle cx="8" cy="12" r="5"/><path d="M16 6l1.6 3.4 3.4.5-2.5 2.4.6 3.5-3.1-1.7-3.1 1.7.6-3.5-2.5-2.4 3.4-.5z"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
   gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   "zoom-in": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/>',
@@ -1218,18 +1222,25 @@ function contentKey(l) {
     k = JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, words: l.words, wpg: l.words_per_group,
       // frame styling / shape: drawn into the sprite
       radius: l.radius, bw: l.border_width, bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity,
-      shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner });
+      shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner,
+      // motion (ops/motion.py, ops/chart.py)
+      path: l.path, closed: l.closed, morph_to: l.morph_to, split: l.split, sa: l.split_anim, stg: l.stagger, sd: l.split_dur, se: l.split_ease,
+      counter: l.counter, chart: l.chart });
     CONTENT.set(l, k);
   }
   return k;
 }
+const KEND = new Map(); // kinetic text: content key -> seconds until it stops moving (X-Kinetic-End)
 function spriteFetch(l, opts) {
-  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.group ?? ""}|${opts.hi ?? ""}`;
+  const { ctext, ...rest } = opts; // ctext: a counter's text at this moment (animate.js counterText)
+  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.group ?? ""}|${opts.hi ?? ""}|${opts.motion ? JSON.stringify(opts.motion) : ""}|${ctext ?? ""}`;
   if (SPRITES.has(key) || SPR_WAIT.has(key)) return key;
   const layer = { ...l, keyframes: [], presets: [] }; // the transform is applied here, not baked into the sprite
+  if (ctext != null) { layer.text = ctext; layer.counter = null; }
+  const ck = contentKey(l);
   const pr = fetch("/api/sprite", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ layer, scale: SPR_SCALE, ...opts }) })
-    .then((r) => (r.ok ? r.blob() : null))
+    body: JSON.stringify({ layer, scale: SPR_SCALE, ...rest }) })
+    .then((r) => { const e = r.headers.get("X-Kinetic-End"); if (e) KEND.set(ck, +e); return r.ok ? r.blob() : null; })
     .then((b) => new Promise((res) => {
       if (!b) return res(null);
       const img = new Image();
@@ -1248,8 +1259,24 @@ function trimSprites() {
   for (const [k, sp] of SPRITES) { if (SPRITES.size < 600) break; if (!inUse.has(k)) { URL.revokeObjectURL(sp.url); SPRITES.delete(k); } }
 }
 // which sprite a layer needs at absolute time T, plus the extra caption "pop" scale (same as render/layers.py)
+const q2 = (v) => Math.round(v * 100) / 100; // draw / morph steps for the preview (the export uses exact values)
 function spriteFor(l, T, pr) {
-  if (l.type === "image" || l.type === "shape") return [spriteFetch(l, {}), 1];
+  if (l.type === "image") return [spriteFetch(l, {}), 1];
+  if (l.type === "shape") {
+    const m = {};
+    if (pr.draw < 0.9995) m.draw = q2(pr.draw);
+    if (l.morph_to && pr.morph > 0.0005) m.morph = q2(pr.morph);
+    return [spriteFetch(l, Object.keys(m).length ? { motion: m } : {}), 1];
+  }
+  if (l.type === "chart") return [spriteFetch(l, pr.draw < 0.9995 ? { motion: { draw: q2(pr.draw) } } : {}), 1];
+  if (l.type === "text" && l.split && l.split !== "none" && !l.counter) { // kinetic text: one sprite per 1/30 s while it moves
+    const t = T - l.start, end = KEND.get(contentKey(l)) ?? 10;
+    if (t >= end) return [spriteFetch(l, { motion: { kt: 600 } }), 1];
+    const f = Math.floor(Math.max(0, t) * 30);
+    for (let k = 1; k <= 4; k++) if ((f + k) / 30 < end) spriteFetch(l, { motion: { kt: (f + k) / 30 } }); // warm up the next frames
+    return [spriteFetch(l, { motion: { kt: f / 30 } }), 1];
+  }
+  if (l.type === "text" && l.counter) return [spriteFetch(l, { ctext: VAnim.counterText(l.counter, pr.count) }), 1];
   if (l.type === "text") {
     const total = (l.text || "").split(/\s+/).filter(Boolean).reduce((a, w) => a + w.length, 0);
     const k = VAnim.pyRound(total * pr.reveal);
@@ -1713,7 +1740,8 @@ function layerLabel(l) {
   if (l.type === "text") return l.text || "";
   if (l.type === "image") return (l.image || "").split(/[\\/]/).pop();
   if (l.type === "video") { const s = ST && P().sources[l.source]; return s ? sourceName(s) : l.source || ""; }
-  if (l.type === "shape") return l.shape;
+  if (l.type === "shape") return l.morph_to ? `${l.shape} → ${l.morph_to}` : l.shape;
+  if (l.type === "chart") return `${l.chart?.kind || "bar"} chart: ${(l.chart?.items || []).map((i) => i.label || i.value).slice(0, 4).join(", ")}`;
   if (l.type === "adjust") return [l.grade?.look, ...(l.effects || []).filter((e) => e.type === "fx").map((e) => e.params.key), l.grade && !l.grade.look ? "colour" : null].filter(Boolean).join(" + ") || "adjustment";
   return l.words.slice(0, 6).map((w) => w.text).join(" ");
 }
@@ -2212,6 +2240,29 @@ async function saveTemplate(l) {
   await loadTemplates(); toast(`Saved template “${name}” — find it in the Elements tab`);
 }
 fetch("/api/overlays").then((r) => r.json()).then((d) => { OVL = d.library; if (TAB === "elements") renderInspector(); }).catch(() => {});
+const EASES = ["ease_out", "ease_in_out", "snap", "smooth", "expo_out", "circ_out", "overshoot", "anticipate", "back_out", "bounce_out", "linear", "step"];
+const SHAPE_KIND_LABELS = { rect: "Box", ellipse: "Circle", triangle: "Triangle", diamond: "Diamond", polygon: "Hexagon", star: "Star", ring: "Ring",
+  heart: "Heart", bubble: "Speech bubble", blob: "Blob", line: "Line", arrow: "Arrow", path: "Path" };
+const MORPH_KINDS = Object.entries(SHAPE_KIND_LABELS).filter(([k]) => k !== "path");
+const MOTION_BG = { kinetic: "#151515", words: "#1E1B4B", counter: "#0B1020", bar: "#0B1A14", line: "#1A0B1C", donut: "#1A140B", draw: "#2A1020", morph: "#1D1440" };
+const MOTION_CARDS = [
+  { k: "kinetic", n: "Kinetic title", a: "Letters rise out of a mask one by one", icon: "type", bg: "linear-gradient(135deg,#111,#2b2b2b)",
+    op: "layer_add_text", args: { text: "BIG IDEA", split: "letter", split_anim: "mask_up", stagger: 0.03, split_ease: "snap", style: { size: 140, stroke_width: 0 } } },
+  { k: "words", n: "Word by word", a: "Each word rises in after the last", icon: "type", bg: "linear-gradient(135deg,#1e1b4b,#312e81)",
+    op: "layer_add_text", args: { text: "Make every second count", split: "word", split_anim: "rise", stagger: 0.08, style: { size: 90, stroke_width: 0 } } },
+  { k: "counter", n: "Counter", a: "A number that counts up (stats, prices)", icon: "hash", bg: "linear-gradient(135deg,#0b1020,#14304a)",
+    op: "counter_add", args: { to: 1000, suffix: "+" } },
+  { k: "bar", n: "Bar chart", a: "Bars rise one after another, values roll up", icon: "chart", bg: "linear-gradient(135deg,#0b1020,#173a2a)",
+    op: "chart_add", args: { kind: "bar", data: "Mon=12, Tue=30, Wed=18, Thu=42" } },
+  { k: "line", n: "Line chart", a: "A line that draws itself through the values", icon: "chart", bg: "linear-gradient(135deg,#0b1020,#3a1735)",
+    op: "chart_add", args: { kind: "line", data: "Jan=4, Feb=9, Mar=7, Apr=15, May=22" } },
+  { k: "donut", n: "Donut", a: "Shares that sweep round, total in the middle", icon: "chart", bg: "linear-gradient(135deg,#0b1020,#3a2a17)",
+    op: "chart_add", args: { kind: "donut", data: "Ads=45, Organic=35, Referral=20" } },
+  { k: "draw", n: "Draw-on line", a: "A line that draws itself (underline, journey, scribble)", icon: "squiggle", bg: "linear-gradient(135deg,#2a1020,#4a1d3a)",
+    op: "layer_add_shape", args: { shape: "path", draw: true, border_width: 12, border_color: "#F472B6", width: 700, height: 220 } },
+  { k: "morph", n: "Morphing shape", a: "A circle that turns into a star and back", icon: "morph", bg: "linear-gradient(135deg,#1d1440,#3b2a6b)",
+    op: "layer_add_shape", args: { shape: "ellipse", morph_to: "star", morph_loop: true, fill: "#A78BFA", width: 320, height: 320 } },
+];
 const SHAPES = [["rect", "Box", "Dark rounded box (behind a title)"], ["ellipse", "Ring", "Ring around a detail"], ["line", "Line", "Underline / divider"], ["arrow", "Arrow", "Point at something"]];
 function overlayAdd(args) { return op(args.op, { start: +video.currentTime.toFixed(3), ...args.a }).then((r) => r && toast(r.message)); }
 // full-canvas screens: plain shape rects (`full` = canvas size, square corners), recoloured in Properties
@@ -2239,6 +2290,18 @@ function renderElements() {
     const addSelect = (args) => addAndSelect("layer_add_shape", { start: +video.currentTime.toFixed(3), ...args });
     if (screens.length) grid.append(h("div", { class: "fx-cat" }, "Basics"), h("div", { class: "fx-grid" }, screens.map((x) =>
       card({ background: x.bg }, x.n, x.a, () => addSelect(x.args), null, null, { op: "layer_add_shape", a: x.args }))));
+    // motion graphics on the tracks, drawn by the export's renderer (ops/motion.py, ops/chart.py)
+    const at = () => +video.currentTime.toFixed(3);
+    const motionCards = MOTION_CARDS.filter((x) => match(`${x.n} ${x.a} motion animated kinetic graphic`));
+    // previews drawn by the export's renderer: the finished element, and it animating in while the pointer is on it
+    const still = (k) => `${MOTION_BG[k] || "#111"} url(/api/motion-thumb/${k}.png) center / cover no-repeat`;
+    if (motionCards.length) grid.append(h("div", { class: "fx-cat" }, "Motion"), h("div", { class: "fx-grid" }, motionCards.map((x) => {
+      const c = card({ background: still(x.k) }, x.n, x.a, () => addAndSelect(x.op, { start: at(), ...x.args }), x.badge || null, null, { op: x.op, a: x.args });
+      const th = c.querySelector(".fx-th");
+      c.addEventListener("mouseenter", () => { th.style.background = `${MOTION_BG[x.k] || "#111"} url(/api/motion-thumb/${x.k}.webp?${Date.now()}) center / cover no-repeat`; });
+      c.addEventListener("mouseleave", () => { th.style.background = still(x.k); });
+      return c;
+    })));
     const lib = OVL.filter((o) => o.kind !== "shape" && match(`${o.label} ${o.about} ${o.tags.join(" ")} ${o.blend}`));
     if (lib.length) grid.append(h("div", { class: "fx-cat" }, "Library"), h("div", { class: "fx-grid" }, lib.map((o) =>
       // stickers and frames are shown whole (contain); textures fill the card (cover)
@@ -2716,17 +2779,66 @@ function renderLayer(l) {
     return h("label", { title: has ? "Animated: changes here set the value at the playhead" : "" }, name, btn);
   };
   const lst = (k) => (v) => { l.style[k] = v; markDirty(l); };
-  const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "punch", "spin_in", "drop_in", "typewriter", "fade_out", "pop_out", "slide_out", "shake", "bob", "pulse", "wiggle", "spin"];
+  const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "rise_in", "wipe_in", "grow_in", "stretch_in", "punch", "spin_in", "drop_in", "typewriter",
+    "fade_out", "pop_out", "slide_out", "wipe_out", "shake", "bob", "pulse", "wiggle", "spin", "float", "breathe",
+    ...(l.type === "shape" || l.type === "chart" ? ["draw_in", "draw_out"] : []), ...(l.counter ? ["count_up"] : []), ...(l.morph_to ? ["morph_loop"] : [])];
+  const mset = (args) => op("motion_set", { layer: l.id, ...args });
+  const hasPreset = (n) => l.presets.some((x) => x.name === n);
+  const togglePreset = (n) => (hasPreset(n) ? op("preset_remove", { layer: l.id, name: n }) : op("preset_add", { layer: l.id, name: n }));
   const s = l.style;
   const lf = (k) => (v) => { l[k] = v; markDirty(l); }; // live frame / shape change (sprite redraws)
   const isText = l.type === "text" || l.type === "captions";
   const src = l.type === "video" ? P().sources[l.source] : null;
+  // motion graphics (ops/motion.py, ops/chart.py): kinetic text, counters, draw-on, morph, chart data
+  const ch = l.chart || {};
+  const chSet = (v) => mset({ chart: v });
+  const motionFields = l.type === "text" ? [
+    h("label", { class: "full sec" }, "Motion"),
+    field("Animate by", selectIn(l.split || "none", [["none", "Whole text"], ["word", "Word by word"], ["letter", "Letter by letter"], ["line", "Line by line"]], (v) => mset({ split: v }))),
+    l.split && l.split !== "none" ? field("Comes in", selectIn(l.split_anim, [["rise", "Rise"], ["mask_up", "Rise out of a mask"], ["drop", "Drop"], ["slide", "Slide"],
+      ["pop", "Pop"], ["fade", "Fade"], ["type", "Type"]], (v) => mset({ split_anim: v }))) : null,
+    l.split && l.split !== "none" ? field("Stagger · each", h("div", { class: "pair" },
+      numIn(l.stagger, (v) => mset({ stagger: v }), 0.01, { min: 0, max: 2, title: "Seconds between pieces" }),
+      numIn(l.split_dur, (v) => mset({ split_dur: v }), 0.05, { min: 0.05, max: 5, title: "Seconds each piece takes" }))) : null,
+    l.split && l.split !== "none" ? field("Easing", selectIn(EASES.includes(l.split_ease) ? l.split_ease : "", [...EASES.map((e) => [e, e]), ...(EASES.includes(l.split_ease) ? [] : [["", l.split_ease]])],
+      (v) => v && mset({ split_ease: v }))) : null,
+    l.counter ? field("Counts", h("div", { class: "pair" },
+      numIn(l.counter.from ?? 0, (v) => mset({ counter: { from: v } }), 1, { title: "From" }),
+      numIn(l.counter.to, (v) => mset({ counter: { to: v } }), 1, { title: "To" }),
+      numIn(l.counter.decimals, (v) => mset({ counter: { decimals: v } }), 1, { min: 0, max: 6, title: "Decimals" }))) : null,
+    l.counter ? field("Prefix / suffix", h("div", { class: "pair" },
+      textIn(l.counter.prefix, (v) => mset({ counter: { prefix: v } }), { placeholder: "$" }), textIn(l.counter.suffix, (v) => mset({ counter: { suffix: v } }), { placeholder: "+ % k" }))) : null,
+    field("Counter", h("button", { class: "ghost", title: l.counter ? "Back to plain text" : "Turn this into a number that counts up",
+      onclick: () => (l.counter ? mset({ counter: null }) : mset({ counter: { to: parseFloat((l.text || "").replace(/[^\d.-]/g, "")) || 100 } })) }, l.counter ? "Stop counting" : "Make it count")),
+  ] : l.type === "shape" ? [
+    h("label", { class: "full sec" }, "Motion"),
+    field("Draw on", h("button", { class: "ghost" + (hasPreset("draw_in") ? " on" : ""), title: "The outline draws itself on (draw_in)", onclick: () => togglePreset("draw_in") },
+      hasPreset("draw_in") ? "Drawing on ✓" : "Draw it on")),
+    field("Morph into", selectIn(l.morph_to || "", [["", "Nothing"], ...MORPH_KINDS], (v) => mset({ morph_to: v || null }))),
+    l.morph_to ? field("Morph", h("button", { class: "ghost" + (hasPreset("morph_loop") ? " on" : ""), title: "Morph there and back for as long as it's on screen (or keyframe Morph instead)",
+      onclick: () => togglePreset("morph_loop") }, hasPreset("morph_loop") ? "Looping ✓" : "Loop there and back")) : null,
+  ] : [];
+  const chartFields = l.type === "chart" ? [
+    field("Chart", selectIn(ch.kind || "bar", [["bar", "Bars"], ["hbar", "Horizontal bars"], ["line", "Line"], ["donut", "Donut"]], (v) => chSet({ kind: v }))),
+    [h("label", { class: "full" }, "Data (label=value, …)"), h("textarea", { class: "full", rows: 3, value: (ch.items || []).map((it) => `${it.label}=${it.value}`).join(", "),
+      onchange: (e) => op("motion_set", { layer: l.id, chart: { items: e.target.value.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean).map((x) => {
+        const [a, b] = x.includes("=") ? [x.slice(0, x.lastIndexOf("=")), x.slice(x.lastIndexOf("=") + 1)] : ["", x]; return { label: a.trim(), value: parseFloat(b) || 0 }; }) } }) })],
+    field("Size", h("div", { class: "pair" }, numIn(l.width ?? 900, (v) => set({ width: v }), 10, { title: "Width px" }), numIn(l.height ?? 640, (v) => set({ height: v }), 10, { title: "Height px" }))),
+    field("Colours", h("div", { class: "pair" }, ...[0, 1, 2].map((i) => colorIn((ch.colors || [])[i] || "#22D3EE", (v) => { const c = [...(ch.colors || [])]; c[i] = v; chSet({ colors: c }); })))),
+    field("Text", h("div", { class: "pair" }, colorIn(ch.text_color || "#FFFFFF", (v) => chSet({ text_color: v })),
+      numIn(ch.text_size ?? 40, (v) => chSet({ text_size: v }), 2, { min: 10, max: 120, title: "Text size" }))),
+    field("Values", h("div", { class: "pair" }, textIn(ch.prefix || "", (v) => chSet({ prefix: v }), { placeholder: "prefix" }), textIn(ch.suffix || "", (v) => chSet({ suffix: v }), { placeholder: "suffix" }),
+      h("input", { type: "checkbox", checked: ch.show_values !== false, title: "Show values", onchange: (e) => chSet({ show_values: e.target.checked }) }))),
+    field("Labels", h("input", { type: "checkbox", checked: ch.show_labels !== false, onchange: (e) => chSet({ show_labels: e.target.checked }) })),
+    field("One by one", rangeIn(ch.stagger ?? 0.5, 0, 1, 0.05, (v) => chSet({ stagger: v }))),
+    field("Grow in", h("button", { class: "ghost" + (hasPreset("draw_in") ? " on" : ""), onclick: () => togglePreset("draw_in") }, hasPreset("draw_in") ? "Growing in ✓" : "Grow it in")),
+  ] : [];
   const frameFields = [
-    h("label", { class: "full sec" }, isText ? "Blend" : "Frame & blend"),
+    h("label", { class: "full sec" }, isText || l.type === "chart" ? "Blend" : "Frame & blend"),
     field("Blend", selectIn(l.blend || "normal", [["normal", "Normal"], ["screen", "Screen (lighten: leaks, dust, glow)"], ["add", "Add (brighter)"],
       ["overlay", "Overlay (texture, contrast)"], ["multiply", "Multiply (darken: paper, shadows)"], ["lighten", "Lighten"], ["darken", "Darken"]], (v) => set({ blend: v }))),
-    !isText && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
-    !isText ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
+    !isText && l.type !== "chart" && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
+    !isText && l.type !== "chart" ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
       numIn(l.border_width || 0, (v) => set({ border_width: v }), 1, { min: 0, max: 60, title: "Border width px (inside the edge)" }))) : null,
     l.type === "image" || l.type === "video" ? field("Circle", h("input", { type: "checkbox", checked: l.mask === "circle", title: "Cut it out as a circle (face cam)",
       onchange: (e) => set({ mask: e.target.checked ? "circle" : "rect" }) })) : null,
@@ -2753,8 +2865,9 @@ function renderLayer(l) {
     field("Volume", rangeIn(l.volume || 0, 0, 2, 0.05, (v) => set({ volume: v }), lv("volume"))),
     field("Loop", h("input", { type: "checkbox", checked: l.loop, title: "Repeat the video when the layer is longer", onchange: (e) => set({ loop: e.target.checked }) })),
     ...fxStack(l),
-  ] : l.type === "shape" ? [
-    field("Shape", selectIn(l.shape, [["rect", "Box"], ["ellipse", "Ellipse / ring"], ["line", "Line"], ["arrow", "Arrow"]], (v) => set({ shape: v }))),
+  ] : l.type === "chart" ? chartFields : l.type === "shape" ? [
+    field("Shape", selectIn(l.shape, [["rect", "Box"], ["ellipse", "Ellipse / ring"], ["line", "Line"], ["arrow", "Arrow"],
+      ...(SHAPE_KIND_LABELS[l.shape] && !["rect", "ellipse", "line", "arrow"].includes(l.shape) ? [[l.shape, SHAPE_KIND_LABELS[l.shape]]] : [])], (v) => set({ shape: v }))),
     field("Size", h("div", { class: "pair" }, numIn(l.width ?? 400, (v) => set({ width: v }), 10, { title: "Width px" }),
       numIn(l.height ?? "", (v) => set({ height: v }), 2, { title: "Height px (line / arrow: thickness)", placeholder: "auto" }))),
     field("Fill", h("div", { class: "pair" }, colorIn(l.fill || "#FFFFFF", (v) => set({ fill: v }), l.fill ? lf("fill") : null),
@@ -2802,6 +2915,7 @@ function renderLayer(l) {
       [kfLabel("Rotation", ["rotation"]), rangeIn(kv("rotation"), -180, 180, 1, (v) => setP("rotation", v), liveP("rotation"))],
       [kfLabel("Opacity", ["opacity"]), rangeIn(kv("opacity"), 0, 1, 0.05, (v) => setP("opacity", v), liveP("opacity"))],
       ...styleFields,
+      ...motionFields,
       ...frameFields,
       field("Animation", h("div", { class: "chips" },
         l.presets.map((pr) => h("span", { class: "chip" }, pr.name, h("button", { onclick: () => op("preset_remove", { layer: l.id, name: pr.name }) }, "×"))),
@@ -3785,7 +3899,8 @@ function renderTimeline() {
   // height main_z (tracks under it show through its gaps, bars and keyed backgrounds). Layers share a track when their
   // times don't overlap; drag a block up / down to put it above or below others, or onto "New track"
   const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
-    video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"] };
+    video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"],
+    chart: ["chart", "Chart", "var(--shp-b)"] };
   const rowLayers = p.layers.filter((l) => !l.on_video); // the video track's own elements are drawn in its lane
   const nTracks = rowLayers.length ? Math.max(...rowLayers.map((l) => l.track ?? 0)) + 1 : 0;
   const trackLanes = [], MZ = Math.min(p.main_z || 0, nTracks);

@@ -80,6 +80,10 @@
   // the shape's area as a path, in a w x h box; k = screen px per canvas px (radius is in canvas px)
   function area(l, w, h, k) {
     const kind = l.shape || "rect";
+    if (kind === "path") { // thumbnails only: the studio and the editor draw paths with Python (ops/overlay_style.py)
+      const pts = (l.path || [[0, 0.5], [1, 0.5]]).map(([x, y]) => `${f(x * w)},${f(y * h)}`);
+      return "M" + pts.join("L") + (l.closed ? "Z" : "");
+    }
     if (kind === "rect") return rrect(w, h, (l.radius || 0) * k);
     if (kind === "ellipse") return ell(w / 2, h / 2, w / 2, h / 2);
     if (kind === "line") return rrect(w, h, h / 2);
@@ -116,6 +120,9 @@
     if (kind === "line") {
       const c = hex(col || l.border_color);
       body = `<path d="${d}" fill="${c.c}" fill-opacity="${c.o}"/>`;
+    } else if (kind === "path" && !l.closed) {
+      const c = hex(bw > 0 ? l.border_color : col || l.border_color), sw = bw > 0 ? bw : Math.max(2, Math.min(w, h) * 0.035);
+      body = `<path d="${d}" fill="none" stroke="${c.c}" stroke-opacity="${c.o}" stroke-width="${f(sw)}" stroke-linecap="round" stroke-linejoin="round"/>`;
     } else {
       if (grad) { defs += gradient(id + "g", l.fill_gradient, l.gradient_angle ?? 90, w, h); body += `<path d="${d}"${rule} fill="url(#${id}g)"/>`; }
       else if (col) { const c = hex(col); body += `<path d="${d}"${rule} fill="${c.c}" fill-opacity="${c.o}"/>`; }

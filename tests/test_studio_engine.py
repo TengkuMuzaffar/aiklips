@@ -118,7 +118,7 @@ def test_scene_ops_need_a_design(cli):
 
 
 def test_old_projects_migrate():
-    assert migrate({"version": 1, "name": "x"})["version"] == SCHEMA_VERSION == 3
+    assert migrate({"version": 1, "name": "x"})["version"] == SCHEMA_VERSION == 4
 
 
 # ---- shapes ---------------------------------------------------------------------------------------------------

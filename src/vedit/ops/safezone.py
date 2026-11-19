@@ -124,12 +124,16 @@ def layer_box(p: Project, pdir: Path | None, l: Layer) -> tuple[float, float, fl
 
         w, h = video_size(p, l, 1.0)
         return _rotated(cx, cy, w * k * l.sx, h * k * l.sy, l.rotation)
-    if l.type in ("shape", "image"):
+    if l.type in ("shape", "image", "chart"):
         from .overlay_style import render_shape, style_frame
         from .text import render_image
 
         try:
-            if l.type == "shape":
+            if l.type == "chart":
+                from .chart import render_chart
+
+                img = render_chart(l, MEASURE)
+            elif l.type == "shape":
                 img = render_shape(l, MEASURE)
             else:
                 if not l.image or pdir is None:

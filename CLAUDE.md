@@ -113,7 +113,7 @@ remove-clip <clip> | speed X [--clip ID | --from A --to B] | volume X [--clip ID
 fit cover|contain|blur [--clip ID --focus-x 0..1] | zoom Z [--clip ID --to Z2] | jumpcut-zoom [--zoom 1.12]
 silence-cut [--threshold -35 --min 0.5 --pad 0.12 --dry-run]
 overlay library | overlay add <video|source id|library key> [--start --end --x --y --width --src-in --volume --loop --blend --circle --radius --border --border-color --chroma #00FF00 --similarity]
-shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line|arrow [--full (whole canvas) --track N --new-track --start --end --x --y --width --height --fill --gradient '#a,#b' --gradient-angle --sides --points --inner --border --border-color --radius --rotation --blend --preset --scene ID]
+shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line|arrow|path [--path 'x,y ...' --closed --morph-to KIND --full (whole canvas) --track N --new-track --start --end --x --y --width --height --fill --gradient '#a,#b' --gradient-angle --sides --points --inner --border --border-color --radius --rotation --blend --preset --scene ID]
 layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
 text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --bold --italic --underline --strike --list bullet|number --align --line-spacing --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
@@ -140,6 +140,10 @@ undo [--steps N] | redo | history | checkout <step> | version save "NAME" | vers
 update status | update check | update apply | update rollback | update auto true|false   (installed app only)
 marker add --at T [--label L --color #hex] | marker list | marker set <id> | marker remove <id|all> | marker chapters
 sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
+style list | style show <key> | style set <key|none>
+motion set <id> [--split word|letter|line --anim --stagger --dur --ease --morph-to KIND --path 'x,y ...' --closed] | motion draw <id> [--dur --ease --out] | motion morph <id> --to KIND [--at --dur --ease | --loop --period]
+counter add <to> [--from --decimals --prefix --suffix --sep --dur --ease --x --y --size --color --font] | counter set <id> [... | --off]
+chart add bar|hbar|line|donut --data 'A=3, B=7' [--dur --colors --prefix --suffix --decimals --max --no-values --no-labels --stagger --width --height] | chart set <id> [...]
 platform [tiktok|reels|shorts|all|none] | safe check [--platform P] | safe fix [ids...] [--margin 12] | frame --at T --guides
 adjust add [--start --end --look NAME --intensity --saturation --brightness --contrast --temperature --fx vignette ...]  (then `fx add <f> --layer adjN`)
 template save NAME --layer ID [--layer ID2 ...] | template list | template apply NAME --at T | template delete NAME
@@ -182,9 +186,24 @@ tell the user the Design studio is coming later. The notes below describe it for
 - A whole video at once: ONE MotionPlan JSON with `vedit design build plan.json` (one undoable step per scene; it
   becomes a design project) instead of dozens of commands; then check with `vedit sheet` and fix with normal commands.
 - `vedit design split sheet.png --cutout` cuts a character / storyboard sheet into PNG pieces (background removed).
-- `vedit design catalog` lists what a plan may use (frames, presets, looks, textures, fonts).
+- `vedit design catalog` lists what a plan may use (frames, presets, looks, textures, fonts, motion styles).
 - In the studio the user can also ask the AI (any connected model) for a storyboard, a scene from its notes, or
   motion for the selection: 1 call each.
+
+**Motion graphics (any project, edit or design; drawn by our own renderer, no browser):**
+- **Pick a style first** for anything "motion graphics / animated / explainer / data / launch": `vedit style list`,
+  `vedit style set <key>` (swiss, flat-explainer, shape-morph, single-line, data-story, dark-keynote, ui-screencast,
+  hud, risograph, pixel, vhs, paper-cutout, vertical-captions). Its numbers (one easing curve, entrance length,
+  stagger, palette, fonts, what it never does) are in `vedit style show <key>` and the `<editor_context>`; follow
+  them exactly and the audit checks them. Not available yet: isometric / toy 3D, watercolour, line boil.
+- Kinetic type: `motion set <text> --split word|letter|line --anim rise|mask_up|drop|slide|pop|fade|type --stagger S
+  --ease snap`. Numbers that count: `counter add 1250000 --prefix '$' --suffix +`. Charts that grow:
+  `chart add bar|hbar|line|donut --data 'Mon=12, Tue=30'`. Lines that draw themselves: `shape add path --path
+  '0,1 0.3,0.2 1,0'` + `motion draw <id>` (any outline shape can draw on). Morphs: `motion morph <shape> --to star`.
+- Easing as numbers: keyframe / split eases take names (snap, smooth, expo_out, circ_out, overshoot, anticipate,
+  ease_out...) or `cubic-bezier(x1,y1,x2,y2)`. Keyframes also animate `draw`, `morph` and `count` (0..1).
+- Storyboard before building (scenes, seconds, what moves), build, then check with `vedit sheet` / `frame` stills
+  at the moments things move (read them), fix, and audit.
 
 ## Skills
 
@@ -248,6 +267,12 @@ Load the relevant one before doing that kind of edit.
     (`tests/test_live_preview.py` checks they agree). The "Final" toggle and `vedit frame` / audit use the full render.
     Video edits show at once via `render/frame.py` (`POST /api/frame`): the clip under the playhead rendered for two
     frames, with dragged-but-unsaved values; it sets `effects.CACHED_ONLY`, so it never starts mask / tracking work.
+  - Motion graphics (no browser): `ops/motion.py` (counters, kinetic text = `render_text(spans=)` pieces composed
+    per frame, field validation), `ops/chart.py` (charts), paths / trim / morph outlines in `ops/shapes.py`, drawn
+    in `overlay_style.render_shape(draw=, morph=)`; progress props `draw` / `morph` / `count` + cubic-bezier easing in
+    `ops/animate.py` **and** `static/animate.js` (parity tests). The export (render/layers.py) and both live previews
+    (sprites.py `motion` = {draw, morph, count, kt}; the studio draws path / draw-on / morph shapes as sprites, not
+    SVG) use the same Python drawing. Styles as numbers: `design/styles.py`, checked by `audit.check_style`.
   - Design studio: `Project.kind == "design"` + `Project.scenes` (`Scene`), scene ops `ops/scenes.py` (ripple layer
     times, scene backgrounds = bottom-track rect layers, main track = background clips; `reconcile` on every save keeps
     `Layer.scene` true to the layer's times), shape geometry `ops/shapes.py` **mirrored in `static/shapes.js`** (SVG in
