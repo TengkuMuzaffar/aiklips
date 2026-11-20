@@ -9,6 +9,9 @@ from . import __version__
 from .updater import parse_version
 
 NOTES: list[dict] = [
+    {"version": "0.2.3", "items": [
+        {"icon": "monitor", "title": "Windows opens again", "body": "aiklips 0.2.2 closed right after starting on Windows. Fixed."},
+    ]},
     {"version": "0.2.2", "items": [
         {"icon": "film", "title": "Media library", "body": "Every file you add is studied once (shots, motion, light, speech) and ready in any project or generation."},
         {"icon": "spark", "title": "References live in your Media", "body": "Any video in your Media can be a style reference, with no second upload. Your existing references were moved there, their style kept."},
