@@ -1038,6 +1038,16 @@ def _music_set(p: Project, a: dict) -> str:
     return f"{m.id}: update"
 
 
+@op("source_remove")
+def _source_remove(p: Project, a: dict) -> str:
+    from ..ops import tracks
+
+    ids = list(a.get("sources") or [a["source"]])
+    r = tracks.remove_sources(p, ids)
+    used = sum(len(r[k]) for k in ("clips", "layers", "music"))
+    return f"remove {', '.join(r['sources'])} from media" + (f" (+{used} on the timeline)" if used else "")
+
+
 @op("music_remove")
 def _music_remove(p: Project, a: dict) -> str:
     p.music = [m for m in p.music if m.id != a["music"]]

@@ -61,3 +61,26 @@ def test_a_bad_file_leaves_no_copy_behind(tmp_path):
     with pytest.raises(VeditError):
         actions.import_file(pdir, "broken.png", bad, append=False, index=None)
     assert not list((pdir / "media").glob("broken*"))
+
+
+def test_remove_media_with_what_uses_it_and_undo(tmp_path):
+    from vedit import history
+    from vedit.editor import actions
+    from vedit.generate.executor import create_project
+
+    pdir = tmp_path / "proj"
+    create_project(pdir, "t", "reels")
+    a = actions.import_file(pdir, "a.png", _png(tmp_path / "a.png"), append=False, index=None)["source"]
+    b = actions.import_file(pdir, "b.png", _png(tmp_path / "b.png"), append=False, index=None)["source"]
+    actions.apply(pdir, "insert_source", {"source": a})
+    actions.apply(pdir, "layer_add_media", {"source": b, "start": 0})
+    r = actions.apply(pdir, "source_remove", {"sources": [a, b]})  # several at once, one undo step
+    p = load(pdir)
+    assert a not in p.sources and b not in p.sources and not p.clips and not any(l.type == "image" for l in p.layers)
+    assert "+2 on the timeline" in r["message"]
+    assert (pdir / "media" / "a.png").exists()  # the file stays on disk
+    history.undo(pdir)
+    p = load(pdir)
+    assert a in p.sources and b in p.sources and p.clips
+    with pytest.raises(VeditError):
+        actions.apply(pdir, "source_remove", {"sources": ["s99"]})

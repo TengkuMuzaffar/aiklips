@@ -361,6 +361,18 @@ def remove_clip(clip: str):
     emit(r, f"Removed {clip}. {_summary(tx.project)}")
 
 
+@app.command("remove-source")
+def remove_source(sources: list[str] = typer.Argument(..., help="Source ids (s1 s2 ...) from `info`")):
+    """Take imported media out of the project, with every clip / layer / music track that uses it (undoable; the
+    file stays on disk)."""
+    from .ops import tracks
+
+    with edit("remove " + ", ".join(sources)) as tx:
+        r = tracks.remove_sources(tx.project, sources)
+    used = [*r["clips"], *r["layers"], *r["music"]]
+    emit(r, f"Removed {', '.join(r['sources'])}" + (f" and {', '.join(used)}" if used else "") + f". {_summary(tx.project)}")
+
+
 @app.command()
 def place(
     item: str = typer.Argument(..., help="A clip id (video track) or a layer id (any other track)"),

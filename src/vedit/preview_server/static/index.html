@@ -84,6 +84,10 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .src .dur { position: absolute; right: 5px; bottom: 5px; font: 10px ui-monospace, monospace; background: #000b; color: var(--text); padding: 1px 5px; border-radius: 4px; }
 .src .kind { position: absolute; left: 5px; top: 5px; background: #000b; border-radius: 4px; padding: 2px; color: var(--text); }
 .src .kind .ic { width: 12px; height: 12px; }
+.src .rm { position: absolute; right: 5px; top: 5px; padding: 3px; border-radius: 5px; background: #000b; border: 0; color: var(--text); opacity: 0; transition: opacity .12s; cursor: pointer; }
+.src:hover .rm, .src.sel .rm { opacity: 1; }
+.src .rm:hover { color: #ff7a7a; }
+.src .rm .ic { width: 12px; height: 12px; }
 .src .nm { font-size: 11px; padding: 5px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .dropzone { border: 1px dashed var(--line2); border-radius: 10px; padding: 26px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--faint); text-align: center; font-size: 12px; }
 .dropzone > .ic { width: 26px; height: 26px; color: var(--muted); }
@@ -898,7 +902,7 @@ header #status.error { color: var(--danger); }
       <svg id="pv-snap"></svg>
       <div id="pv-busy" hidden><div class="pv-card"><span class="spin big"></span><div><b id="pv-title">Updating preview</b><span id="pv-sub"></span></div><span id="pv-time"></span><div class="pv-bar"></div></div></div>
       <div id="pv-ai" hidden><i></i>AI is editing</div>
-      <div id="nomedia"><div class="nm-card"><span class="nm-ic"><span data-icon="film"></span></span><b>Add your footage</b><div class="nm-sub">Drop videos, music or images anywhere in this window, or import them. Then edit by hand, or ask the AI.</div><button id="b-import2" class="primary" data-icon="upload" title="Pick video, audio or image files to add">Import media</button></div></div>
+      <div id="nomedia"><div class="nm-card"><span class="nm-ic"><span data-icon="film"></span></span><b>Add your footage</b><div class="nm-sub">Drop videos, music or images anywhere in this window, or import them, then drag them onto the timeline. Or ask the AI.</div><button id="b-import2" class="primary" data-icon="upload" title="Pick video, audio or image files to add">Import media</button></div></div>
     </div>
     <div id="pv-scrub" title="Drag to scrub, click to jump (works while the AI is editing)"><div class="sb-track"><div class="sb-fill"></div><div class="sb-knob"></div></div><div class="sb-tip"></div></div>
     <div class="transport">
@@ -960,7 +964,7 @@ header #status.error { color: var(--danger); }
         <button class="ghost icon" id="b-split" data-icon="scissors" data-tip="Split|S|Cut the clip under the playhead in two"></button>
         <button class="ghost icon danger" id="b-del" data-icon="trash" data-tip="Delete|⌫|Remove the selected clip, layer or music (undoable)"></button>
         <span class="sep"></span>
-        <button class="ghost icon" id="b-import" data-icon="film-plus" data-tip="Add media||Import a video or image onto the timeline"></button>
+        <button class="ghost icon" id="b-import" data-icon="film-plus" data-tip="Add media||Import video, audio or images into Media"></button>
         <button class="ghost icon" id="b-addtext" data-icon="type" data-tip="Add text|T|Put a text layer at the playhead"></button>
         <button class="ghost icon" id="b-addmusic" data-icon="music" data-tip="Add music||Pick an audio file to play under the edit"></button>
         <span class="sep"></span>
@@ -991,7 +995,7 @@ header #status.error { color: var(--danger); }
 <div id="toast"></div>
 <dialog id="dlg-settings"><iframe title="Settings"></iframe></dialog>
 <dialog id="dlg-export"></dialog>
-<div id="dropveil">Drop to import</div>
+<div id="dropveil">Drop to add to Media</div>
 
 <script src="/static/animate.js"></script>
 <script>
@@ -1893,6 +1897,12 @@ async function refresh() {
   $("#canvas-info").textContent = `${P().canvas.width}×${P().canvas.height} · ${P().canvas.fps}fps · ${fmt(dur())}`;
   syncGuides();
   $("#nomedia").style.display = hasTimeline() ? "none" : "flex";
+  if (!hasTimeline()) { // imported files wait in Media until the user places them
+    const have = Object.values(P().sources).some((s) => !/\.gap-/.test(s.path) && !/[\\/]overlays[\\/]/.test(s.path));
+    $("#nomedia b").textContent = have ? "Your media is ready" : "Add your footage";
+    $("#nomedia .nm-sub").textContent = have ? "Drag files from Media onto the timeline, import more, or ask the AI."
+      : "Drop videos, music or images anywhere in this window, or import them, then drag them onto the timeline. Or ask the AI.";
+  }
   video.style.display = hasTimeline() ? "" : "none";
   setStatus(ST.render);
   const editing = $("#insp-body").contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
@@ -3089,24 +3099,64 @@ function renderLoops() {
   ].flat().filter((x) => x != null && x !== "");
 }
 
+// Media bin selection: click = this one, ⌘/Ctrl or Shift+click = several; stays in the Media tab (double-click = details)
+let BIN_SEL = new Set(), BIN_LAST = null;
+function binClick(e, id, ids) {
+  if (e.shiftKey && BIN_LAST && ids.includes(BIN_LAST)) {
+    const [a, b] = [ids.indexOf(BIN_LAST), ids.indexOf(id)].sort((x, y) => x - y);
+    ids.slice(a, b + 1).forEach((x) => BIN_SEL.add(x));
+  } else if (e.metaKey || e.ctrlKey) BIN_SEL.has(id) ? BIN_SEL.delete(id) : BIN_SEL.add(id);
+  else BIN_SEL = new Set([id]);
+  BIN_LAST = id;
+  renderInspector();
+}
+function sourceUses(id) {
+  const p = P(), s = p.sources[id];
+  return p.clips.filter((c) => c.source === id).length + p.layers.filter((l) => l.source === id || (l.type === "image" && l.image === s.path)).length
+    + p.music.filter((m) => m.source === id).length;
+}
+async function removeMedia(ids) {
+  ids = ids.filter((id) => id in P().sources);
+  if (!ids.length) return;
+  const used = ids.map((id) => [id, sourceUses(id)]).filter(([, n]) => n);
+  if (used.length) {
+    const what = used.map(([id, n]) => `“${sourceName(P().sources[id])}” (${n} on the timeline)`).join(", ");
+    if (!confirm(`${what} ${used.length > 1 ? "are" : "is"} in use. Remove ${ids.length > 1 ? "them" : "it"} from the timeline too?\n\nYou can undo this.`)) return;
+  }
+  const label = ids.length > 1 ? `${ids.length} files` : `“${sourceName(P().sources[ids[0]])}”`;
+  const r = await op("source_remove", { sources: ids });
+  if (!r) return;
+  ids.forEach((id) => BIN_SEL.delete(id));
+  if (SEL?.kind === "source" && ids.includes(SEL.id)) SEL = null;
+  toast(`Removed ${label} from Media · ⌘Z to undo`);
+  renderInspector();
+}
+
 function renderMedia() {
   const p = P(), srcs = Object.entries(p.sources).filter(([, s]) => !/(^|[\\/])\.gap-/.test(s.path)); // generated gap filler
-  const head = h("div", { class: "sec-h" }, h("h3", {}, `Media · ${srcs.length}`),
+  const ids = srcs.map(([id]) => id);
+  BIN_SEL = new Set([...BIN_SEL].filter((id) => ids.includes(id)));
+  const n = BIN_SEL.size;
+  const head = h("div", { class: "sec-h" }, h("h3", {}, n ? `Media · ${n} of ${srcs.length} selected` : `Media · ${srcs.length}`),
+    n ? h("button", { class: "ghost danger", title: "Remove the selected files from this project (Delete key). The files stay on disk; you can undo.",
+      onclick: () => removeMedia([...BIN_SEL]) }, icon("trash"), `Remove${n > 1 ? ` ${n}` : ""}`) : "",
     h("button", { class: "ghost", onclick: () => $("#file").click() }, icon("upload"), "Import"));
   if (!srcs.length) return [head, h("div", { class: "dropzone" }, icon("upload"),
     h("div", {}, "Drop video, audio or images anywhere,", h("br"), "then drag them onto the timeline."),
     h("button", { onclick: () => $("#file").click() }, "Import media"))];
   return [head, h("div", { class: "bin" }, srcs.map(([id, s]) => {
     const kind = /\.(png|jpe?g|webp|gif|bmp)$/i.test(s.path) ? "image" : s.has_video ? null : "music";
-    return h("div", { class: "src" + (SEL?.id === id ? " sel" : ""), draggable: true, title: `${sourceName(s)} · ${fmt(s.duration)} — drag onto the timeline`,
-      onclick: () => select({ kind: "source", id }),
+    return h("div", { class: "src" + (BIN_SEL.has(id) ? " sel" : ""), draggable: true, title: `${sourceName(s)} · ${fmt(s.duration)} — drag onto the timeline · double-click for details`,
+      onclick: (e) => binClick(e, id, ids),
+      ondblclick: () => select({ kind: "source", id }),
       ondragstart: (e) => { e.dataTransfer.setData("application/x-vedit-source", id); e.dataTransfer.effectAllowed = "copy"; } },
       h("div", { class: "th", style: s.has_video ? { backgroundImage: `url(${srcThumb(id)})` } : {} },
         s.has_video ? "" : icon("wave"),
         kind ? h("span", { class: "kind" }, icon(kind)) : "",
+        h("button", { class: "rm", title: "Remove from Media", onclick: (e) => { e.stopPropagation(); removeMedia(BIN_SEL.has(id) && BIN_SEL.size > 1 ? [...BIN_SEL] : [id]); } }, icon("trash")),
         s.duration > 0.05 ? h("span", { class: "dur" }, fmt(s.duration)) : ""),
       h("div", { class: "nm" }, sourceName(s)));
-  })), h("p", { class: "hint", style: { marginTop: "10px" } }, "Drag a clip onto the timeline to insert it at a position.")];
+  })), h("p", { class: "hint", style: { marginTop: "10px" } }, "Drag onto the timeline to use a file. ⌘/Shift+click selects several; Delete removes them.")];
 }
 
 function renderClip(c) {
@@ -3679,6 +3729,7 @@ function renderSource(id, s) {
       field("On timeline", h("span", {}, used ? `${used} clip(s)` : "not used"))),
     h("div", { class: "btnrow" },
       s.has_video ? h("button", { onclick: () => op("insert_source", { source: id }) }, "Add to end of timeline") : "",
+      h("button", { class: "ghost danger", title: "Take this file out of the project (it stays on disk; you can undo)", onclick: () => removeMedia([id]) }, icon("trash"), "Remove from Media"),
       s.has_video ? h("button", { title: "Put this video on top of the edit (picture-in-picture), from the playhead",
         onclick: () => overlayAdd({ op: "layer_add_video", a: { source: id } }) }, icon("layers"), "Add as overlay") : "",
       s.has_audio && !s.has_video ? h("button", { onclick: () => op("add_music", { source: id, start: 0 }) }, "Use as music") : ""),
@@ -5017,7 +5068,9 @@ function setupDrop(vl) {
     await uploadFiles([...e.dataTransfer.files], true, index);
   });
 }
-async function uploadFiles(files, append, index) {
+// append / index: put videos on the video track (only when dropped there); music: put audio on the music track.
+// Otherwise a file only goes into Media, and the user drags it where they want it.
+async function uploadFiles(files, append, index, music = append) {
   if (aiBlocked()) return;
   let i = index, ok = false;
   pvBegin(editLabel("/api/import"));
@@ -5029,21 +5082,21 @@ async function uploadFiles(files, append, index) {
     const r = await fetch("/api/import", { method: "POST", body: fd });
     if (!r.ok) { let d = "Import failed"; try { d = (await r.json()).detail; } catch {} toast(d, true); continue; }
     const res = await r.json();
-    if (!res.has_video) await api("/api/op", { op: "add_music", args: { source: res.source, start: 0 } });
+    if (!res.has_video && music) await api("/api/op", { op: "add_music", args: { source: res.source, start: 0 } });
     if (res.clip && i != null) i++;
     ok = true;
   }
   } finally { pvEnd(ok); }
-  await refresh(); if (ok) toast("Imported");
+  await refresh(); if (ok) toast(append || music ? "Imported" : "Added to Media: drag it onto the timeline");
 }
-// drop anywhere else in the window → import to the end of the timeline
+// drop anywhere else in the window → into Media only (dropping on a track places it there)
 window.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("Files") && !busy) { e.preventDefault(); $("#dropveil").style.display = "flex"; } });
 window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) $("#dropveil").style.display = "none"; });
-window.addEventListener("drop", (e) => { e.preventDefault(); $("#dropveil").style.display = "none"; if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files], true, null); });
-$("#file").onchange = (e) => { uploadFiles([...e.target.files], !P().clips.length, null); e.target.value = ""; };
+window.addEventListener("drop", (e) => { e.preventDefault(); $("#dropveil").style.display = "none"; if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files], false, null); });
+$("#file").onchange = (e) => { uploadFiles([...e.target.files], false, null); e.target.value = ""; };
 $("#b-import").onclick = $("#b-import2").onclick = () => $("#file").click();
 $("#b-addmusic").onclick = () => $("#file-music").click();
-$("#file-music").onchange = (e) => { uploadFiles([...e.target.files], false, null); e.target.value = ""; };
+$("#file-music").onchange = (e) => { uploadFiles([...e.target.files], false, null, true); e.target.value = ""; };
 
 function fitZoom(render = true) {
   const w = $("#tl-scroll").clientWidth - 40;
@@ -5068,6 +5121,7 @@ async function deleteSelected() {
   else if (SEL.kind === "clip") op("remove_clip", { clip: SEL.id });
   else if (SEL.kind === "layer") op("layer_remove", { layer: SEL.id });
   else if (SEL.kind === "music") op("music_remove", { music: SEL.id });
+  else if (SEL.kind === "source") removeMedia([SEL.id]);
   else if (SEL.kind === "fx") { const o = fxOwner(SEL.id); await op("fx_remove", { id: SEL.id }); if (o) select(o.holder.type ? { kind: "layer", id: o.holder.id } : { kind: "clip", id: o.holder.id }); }
 }
 async function addTextAtPlayhead() {
@@ -5643,6 +5697,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.key.toLowerCase() === "n") { toggleSnap(); renderTimeline(); }
   else if (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "c") op("split", { at: video.currentTime });
   else if (e.key.toLowerCase() === "t") addTextAtPlayhead();
+  else if ((e.key === "Delete" || e.key === "Backspace") && TAB === "media" && BIN_SEL.size) removeMedia([...BIN_SEL]);
   else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
   else if (e.key === "Escape" && EXPANDED) setExpanded(false);
   else if (e.key === "Escape") { MULTI.clear(); select(null); }

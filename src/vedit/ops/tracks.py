@@ -270,3 +270,34 @@ def track_rows(p: Project) -> list[dict]:
     if video not in out:
         out.append(video)
     return out
+
+
+def source_uses(p: Project, sid: str) -> dict[str, list[str]]:
+    """What on the timeline uses a source: its clips, video / image layers and music tracks."""
+    src = p.sources[sid]
+    return {"clips": [c.id for c in p.clips if c.source == sid],
+            "layers": [l.id for l in p.layers if l.source == sid or (l.type == "image" and l.image == src.path)],
+            "music": [m.id for m in p.music if m.source == sid]}
+
+
+def remove_sources(p: Project, ids: list[str]) -> dict:
+    """Take media out of the project (the Media bin): the sources and everything on the timeline using them (clips
+    ripple out like a normal clip delete). The files stay on disk, so undo brings it all back."""
+    from . import cut
+
+    missing = [i for i in ids if i not in p.sources]
+    if missing:
+        raise VeditError(f"No source {', '.join(missing)} (see `vedit info`)")
+    ids = list(dict.fromkeys(ids))
+    removed = {"sources": ids, "clips": [], "layers": [], "music": []}
+    for sid in ids:  # everything that uses them, found before anything moves
+        for k, v in source_uses(p, sid).items():
+            removed[k] += v
+    p.layers = [l for l in p.layers if l.id not in removed["layers"]]
+    p.music = [m for m in p.music if m.id not in removed["music"]]
+    for cid in reversed(removed["clips"]):
+        if any(c.id == cid for c in p.clips):
+            cut.remove_clip(p, cid)
+    for sid in ids:
+        del p.sources[sid]
+    return removed

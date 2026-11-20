@@ -131,7 +131,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 ## Command cheat-sheet
 
 ```
-projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | info
+projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | remove-source <sN...> | info
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
 move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --under-video --video-track --src-in]

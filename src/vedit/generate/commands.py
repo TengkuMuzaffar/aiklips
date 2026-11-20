@@ -37,7 +37,7 @@ ALLOWED = {
 DENIED = {
     **dict.fromkeys(["trim", "keep", "delete", "split", "move", "remove-clip", "trim-to", "speed", "silence-cut"],
                     "the clip ops decide the cuts (use clip ops: start / end / speed)"),
-    **dict.fromkeys(["init", "use", "import", "canvas", "projects", "export", "app", "serve"],
+    **dict.fromkeys(["init", "use", "import", "remove-source", "canvas", "projects", "export", "app", "serve"],
                     "the generator owns the project, its media and its format"),
     **dict.fromkeys(["info", "fonts", "audit", "frame", "sheet", "preview", "history"],
                     "read-only: nothing to see in a one-shot plan (the auditor reviews the render)"),

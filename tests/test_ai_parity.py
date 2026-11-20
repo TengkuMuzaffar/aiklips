@@ -20,7 +20,7 @@ CLI_FOR_OP = {
     "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide", "track_video": "track video", "motion_set": "motion set", "iso_add": "iso add", "iso_item_add": "iso item add", "iso_item_set": "iso item set", "iso_item_remove": "iso item remove", "iso_scene_set": "iso set", "group_make": "group make", "group_set": "group set", "group_move": "group move", "group_remove": "group remove", "group_ungroup": "group ungroup", "chart_add": "chart add", "counter_add": "counter add", "platform_set": "platform", "safe_fix": "safe fix",
     "marker_add": "marker add", "marker_set": "marker set", "marker_remove": "marker remove",
     "keyframe_set": "animate keyframes", "keyframe_remove": "animate keyframes", "keyframes_clear": "animate clear",
-    "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import",
+    "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import", "source_remove": "remove-source",
     "add_music": "music add", "sfx_add": "sfx add", "music_make": "music make", "music_set": "music set", "music_remove": "music remove",
     "layer_set": "layer set", "text_look": "text look apply", "layer_add_text": "text add", "layer_add_video": "overlay add",
     "layer_add_adjust": "adjust add", "layer_grade": "color set", "template_apply": "template apply",
