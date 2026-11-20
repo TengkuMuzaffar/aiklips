@@ -367,3 +367,21 @@ Where the code differs from the proposal, and why:
 - **Images** can be used only as overlays (logo / product), not as timeline clips: vedit sources must have a duration.
 
 A measured run on the real API (Sonnet + Opus, "balanced"): one reference studied in 7 s for about $0.05. A batch of 2 × 10 s variations with review took 82 s, 6 calls, about $0.14.
+
+## 13. References in the media library + brief tags (2026-11-20)
+
+- **Storage changed:** a reference is now a role on a video in the media library (`docs/design/media-library.md` §10):
+  the file is `uploads/<id>/file.*`, the study `uploads/<id>/style/`, `refs.media_id` links them. Older references
+  are migrated once, keeping their DNA. Generate's first step ("Style") lists Media videos; one not studied for style
+  yet is promoted when the batch is created (`BatchSpec.refs` takes reference ids or media ids).
+- **Brief tags** (`generate/brief_tags.py`, one registry for the wizard chips, `vedit gen run` flags / `gen tags`,
+  prompts and code): funnel stage, audience (age, who, region, what they know, own words), pace, tone (≤3) and must
+  do / avoid. `Brief` validates the ids; old briefs load with empty tags.
+  - Prompts: `brief_tags.prompt_block` replaces the raw brief JSON in creative, concepts, rank, editor and patch
+    prompts; `short()` goes into `Project.notes.brief`, which the auditor reads.
+  - Code: pace sets `avg_shot_s` (absolute target; the `pacing` axis still varies around it) and, for `build` /
+    `pulse`, a hook / middle / end `pace_curve` that `validate_plan` checks (`PACE_SLACK`); the funnel orders the
+    hook / structure axes (`assign_axes(prefer=)`) and gives a default CTA; rules: `no_music` drops music,
+    `captions_always` forces captions, `voiceover_room` lowers the music, `no_text_first_1s` is checked in
+    `validate_plan`. The rest (price early, product in 2 s, no faces, logo at end, brand colours) are told to the
+    editor and the auditor as a MUST list; code can't see them reliably.

@@ -24,7 +24,8 @@ study runs **at import, in the background**.
 
 - Files stay where they were: `~/.aiklips/uploads/<id>/` (id = first 16 hex chars of the content hash). Each folder
   holds `file.<ext>`, `meta.json`, `index.json` (segments), `measure.json`, `notes.json` (AI notes), `marks.json`
-  (reviewer marks), `digest.json` (new) and, when there is speech, `transcript.json`.
+  (reviewer marks), `digest.json` (new), `cuts.json` (raw cuts, reused by a style study) and, when there is speech,
+  `transcript.json`. A video used as a style reference also has `style/` (its Style DNA study, see §10).
 - New tables in `library.db` (`src/vedit/media_library.py`):
   - `media(id, name, kind, status, progress, measure_version, study_version, tags, overrides, size_bytes, error,
     created_at, updated_at, last_used_at)`
@@ -187,3 +188,25 @@ Also fixed along the way:
 - A per-batch `context.json` snapshot, so regenerate and improve reuse exactly the same context.
 - Matching sounds to variations by energy and BPM. `assign_sounds` still takes them in turn.
 - A `whats_new.py` entry for the Media tab.
+
+## 10. References are a role on a media video (2026-11-20)
+
+One file, two studies. The media study answers "what is in each shot" (content, for cutting); the style study
+(`references/store.py`, StyleDNA) answers "how is it made" (pacing, hook, text, motion, sound, design). Both stay, but
+the file lives once, in `uploads/<id>/`, and a reference is a video in the library with a style study added:
+
+- `refs.media_id` links the reference row (integer id kept: `Project.notes.refs`, `BatchSpec.refs`, `@ref<id>` and
+  old batches keep working) to the media item. Its study files are in `uploads/<id>/style/`.
+- `store.promote(media_id)` makes a video a reference (no copy; queues the `study` job); audio and images are refused.
+  `store.add(file)` = `footage.add` + `promote`. `store.resolve(token)` takes a ref id, media id, `sN` or a file.
+  `store.delete(rid)` removes only the role; `media_library.delete` removes the role with the file.
+- The style study reuses what the media study measured on the same file: raw cuts (`cuts.json`) and the transcript
+  (`transcript.json`, a better whisper model); motion, colour, palette and the three sheets stay its own.
+- `store.migrate_to_media()` (app start, and on the first `promote`) moves older references (own copy in
+  `~/.aiklips/references/<sha16>/`) into the library and their study into `style/`, keeping the DNA: no re-study.
+- Making a video a reference is explicit (a vision call): "Use as reference" in the Media tab, `vedit media ref`, or
+  picking a media video as the style in chat (@ → "style · name") or in Generate (step 1 lists Media videos;
+  `BatchSpec.refs` takes media ids, promoted by `batch.promote_refs` on create).
+- API: `POST/DELETE /api/media/{id}/reference`, `GET /api/media?role=reference`; `media` rows carry `ref_id`,
+  `ref_status`. Shared plumbing (JSON loading, the job / fail / quota-wait trio): `library_store.py`.
+- Tests: `tests/test_media_references.py`.

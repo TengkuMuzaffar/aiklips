@@ -145,7 +145,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 
 ```
 projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E --no-library --copy] | remove-source <sN...> | info
-media list [--kind video|audio|image --search Q] | media show <id|sN> | media add <files...> | media tag <id|sN> TAGS... | media note <id|sN> <k> [--text --quality 1-5 --clear] | media restudy <id|sN>
+media list [--kind video|audio|image --search Q] | media show <id|sN> | media add <files...> | media tag <id|sN> TAGS... | media note <id|sN> <k> [--text --quality 1-5 --clear] | media restudy <id|sN> | media ref <id|sN> [--off --wait]
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
 move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --under-video --video-track --src-in]
@@ -199,13 +199,17 @@ template save NAME --layer ID [--layer ID2 ...] | template list | template apply
 proxy make | proxy status | proxy clean
 preview [--open] | frame --at T[,T2,...] | sheet | serve
 export [path.mp4|.mov|.webm|.gif] [--format mp4|hevc|prores|webm|gif --fps 30 --scale 1 --quality high|standard|small --folder DIR --name N --no-audio]
-ref add <videos...> | ref list | ref show <id> | ref recipe <id> | ref set <id> <trait.path> <json> | ref remove <id>
+ref add <videos | media ids | sN...> | ref list | ref show <id> | ref recipe <id> | ref set <id> <trait.path> <json> | ref remove <id>
 design new <dir> [--format reels|square|landscape|portrait45 --dur 5 --background #hex] | design build plan.json [--new DIR --format reels] | design split <sheet.png> [--grid 2x3 --cutout --out DIR] | design catalog
 scene list | scene add [--dur 5 --after ID --name --background #hex --transition cut|fade|slide|zoom|pop|wipe --notes] | scene set <id> [--dur --name --background --transition --notes --why] | scene move <id> N | scene dup <id> | scene remove <id>
-gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ...] | gen list
+gen run --ref <ref id|media id|sN|file> [--ref ...] -f <footage/music/image>... [--model watcher|director|editor|auditor=<provider/model>] [--sound <audio or video: only its sound is used; repeatable, videos take turns> --count 3 --length 20 --about "..." --hook --cta --format reels --vary hook --vary pacing ... --funnel conversion --audience gen_z,students,malaysia --pace fast|pulse|... --tone playful,urgent --rule price_early --notes "..."] | gen tags | gen list
 ```
 
 **References / Generate:**
+- A reference is a video in the media library that is also studied for style: `vedit media ref sN` (or `ref add sN`)
+  makes one from footage the user already has, no second copy. A file used as a reference is in `media list` too.
+- When the user says who a generated video is for, its funnel stage, pace or must-dos, pass them as `gen run`
+  `--funnel / --audience / --pace / --tone / --rule` (ids: `vedit gen tags`) instead of burying them in `--notes`.
 - To edit the user's own footage like a reference by hand, run `vedit --json ref recipe <id>`: ordered vedit commands
   built from its Style DNA (fill in the `<...>` parts) plus `gaps`, what vedit can't do exactly, with the closest option.
 - To make something LOOK like a reference, Read its contact sheets first (`vedit ref show <id>` lists them: sheet-1 the
@@ -400,6 +404,11 @@ Load the relevant one before doing that kind of edit.
   - Text contrast: `ops/contrast.py` (WCAG ratio of the letters vs. what is behind them: structural walk down the
     layers, else the rendered pixels around the glyphs), used by `audit.check_contrast` and by the CLI's `edit()`
     wrapper, which adds `warnings` to the command's output when an edit makes text unreadable.
+  - References = a role on a media video: `refs.media_id`, study in `uploads/<id>/style/`, `store.promote` /
+    `resolve` / `migrate_to_media` (older references had their own copy), the style study reuses the media study's
+    `cuts.json` + `transcript.json`; shared plumbing `library_store.py`. Brief tags (funnel, audience, pace, tone,
+    rules): `generate/brief_tags.py`, one registry for the wizard chips, CLI flags, prompts (`prompt_block`) and code
+    (`directives` pace / `pace_curve` / rules, `assign_axes(prefer=)`, `validate_plan(d=)`). Notes: media-library.md §10.
   - Media library: `media_library.py` (SQLite `media` + `media_usage` in library.db; files stay in
     `~/.aiklips/uploads/<id>/`, id = content hash, so a source's library id comes from its path, `id_for_path`, no
     project.json field). Every import (`footage.add`, `vedit import`, `music add`, the editor's drop) registers the file

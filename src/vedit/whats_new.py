@@ -13,6 +13,8 @@ NOTES: list[dict] = [
         {"icon": "spark", "title": "Design studio", "body": "Make motion-design videos on a canvas: scenes of shapes, text and media you stretch, rotate and animate with presets or keyframes."},
         {"icon": "wand", "title": "Storyboard with any AI", "body": "Turn a brief into scenes, design a scene from its notes, or animate a selection, with whichever AI model you've connected."},
         {"icon": "film", "title": "Beta labels", "body": "References and Generate are marked beta while they keep improving."},
+        {"icon": "film", "title": "References live in your Media", "body": "Any video in your Media can be a style reference: no second upload. Your existing references were moved there, with their style kept."},
+        {"icon": "list", "title": "Tell Generate who it's for", "body": "Pick the funnel stage, the audience, a detailed pace, the tone and must-dos with one click each."},
     ]},
     {"version": "0.2.1", "items": [
         {"icon": "home", "title": "A new home", "body": "Start a project from a format or by dropping a video, and find recent work in a grid or list."},
