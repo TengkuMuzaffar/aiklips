@@ -1,12 +1,87 @@
 name: CI
+# How testing is split (each commit is tested in full once, not on every step):
+#   push to develop      quick: Ubuntu only, only the tests the change touches (pytest-testmon), a few minutes.
+#                        Falls back to the whole suite (Ubuntu, once) when testmon can't trace the change: tests/conftest,
+#                        dependencies, workflows, or non-Python files in src/ (HTML / JS), or no record yet.
+#   PR into main         full: every test on Ubuntu, macOS and Windows, in parallel. This is the release check.
+#   release (main)       release.yml skips its tests when this exact commit already passed the full check
+#                        (release by fast-forwarding main: `git push origin develop:main`).
 on:
   push:
-    branches: [develop]   # main is tested by release.yml, which calls this workflow before publishing
+    branches: [develop]
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
   pull_request:
-  workflow_call:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:      # run the full check by hand (Actions → CI → Run workflow)
+  workflow_call:          # release.yml, when the commit wasn't fully tested yet
+    inputs:
+      full:
+        type: boolean
+        default: true
+
+# a newer push stops the run for the previous commit of the same branch / PR
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  quick:
+    if: github.event_name == 'push' && !inputs.full
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # libegl1 + libgles2: MediaPipe (fast background removal) loads libEGL even on CPU
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg libegl1 libgles2
+      - run: uv sync --extra ai
+      - name: Restore the testmon record (which tests touch which code)
+        id: tm
+        uses: actions/cache/restore@v4
+        with:
+          path: .testmondata
+          key: testmon-v1-${{ github.sha }}
+          restore-keys: testmon-v1-
+      - name: Pick the tests
+        id: pick
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          mode=testmon
+          if [ "${{ steps.tm.outputs.cache-matched-key }}" = "" ]; then
+            mode=full; why="no testmon record yet"
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            mode=full; why="no previous commit to compare with"
+          else
+            changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            echo "$changed"
+            if echo "$changed" | grep -qE '^(tests/conftest\.py|pyproject\.toml|uv\.lock|\.github/)' \
+               || echo "$changed" | grep -E '^src/' | grep -qvE '\.py$'; then
+              mode=full; why="the change touches something testmon can't trace"
+            fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "### Tests: $mode ${why:+($why)}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Affected tests only
+        if: steps.pick.outputs.mode == 'testmon'
+        run: uv run pytest -q --testmon
+      # one serial run that also records which tests touch which code (testmon can't record under pytest -n)
+      - name: Whole suite, recording the testmon record
+        if: steps.pick.outputs.mode == 'full'
+        run: uv run pytest -q --testmon --testmon-noselect
+      - name: Save the testmon record
+        if: always() && hashFiles('.testmondata') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .testmondata
+          key: testmon-v1-${{ github.sha }}
+
+  full:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || inputs.full
     strategy:
       fail-fast: false
       matrix:
@@ -15,21 +90,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
       # FFmpeg from each OS's own package manager (a third-party setup action failed on GitHub API hiccups)
-      # libegl1 + libgles2: MediaPipe (fast background removal) loads libEGL even on CPU
       - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg libegl1 libgles2
         if: runner.os == 'Linux'
-      # choco's bin\ffmpeg.exe is a shim that starts the real one as a child; put the real binaries first on PATH
-      - run: |
-          choco install ffmpeg -y --no-progress
-          "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # Windows: choco is slow, so its FFmpeg folder is cached; choco's bin\ffmpeg.exe is a shim that starts the real
+      # one as a child, so the real binaries go first on PATH
+      - id: ffwin
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\ProgramData\chocolatey\lib\ffmpeg
+          key: ffmpeg-choco-windows-v1
+      - run: choco install ffmpeg -y --no-progress
+        if: runner.os == 'Windows' && steps.ffwin.outputs.cache-hit != 'true'
+      - run: '"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8'
         if: runner.os == 'Windows'
       - run: brew install ffmpeg
         if: runner.os == 'macOS'
       - run: ffmpeg -hide_banner -version && (command -v ffmpeg || where ffmpeg)
         shell: bash
       - run: uv sync --extra ai
-      - run: uv run pytest -q
+      - run: uv run pytest -q -n auto -p no:testmon
 
   launcher:
     runs-on: ubuntu-latest
