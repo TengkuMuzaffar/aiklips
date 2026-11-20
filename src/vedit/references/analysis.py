@@ -84,6 +84,61 @@ def color_profile(path: Path, duration: float | None = None, samples: int = 12) 
         return None
 
 
+def palette(path: Path, duration: float | None = None, samples: int = 16) -> dict | None:
+    """The reference's colours as a designer would name them: the canvas (when one flat colour fills much of the
+    frame, as in motion design), the ink (darkest real colour, for text) and up to 3 saturated accents.
+    {"background": hex|None, "bg_share": 0..1, "surface": hex|None, "ink": hex|None, "accents": [hex],
+     "colors": [[hex, share], ...]}"""
+    from ..ops import color
+
+    dur = duration or media.probe(path)["duration"]
+    frames = [f for f in (color._grab(path, dur * (i + 0.5) / samples) for i in range(samples)) if f is not None]
+    if not frames:
+        return None
+    px = np.concatenate([f.reshape(-1, 3) for f in frames])
+    keys = (px * 15.999).astype(np.int32)
+    keys = keys[:, 0] * 256 + keys[:, 1] * 16 + keys[:, 2]
+    uniq, inv, counts = np.unique(keys, return_inverse=True, return_counts=True)
+    means = np.stack([np.bincount(inv, weights=px[:, c], minlength=len(uniq)) for c in range(3)], 1) / counts[:, None]
+    clusters: list[list] = []  # [rgb, count]
+    for i in np.argsort(-counts):
+        rgb, n = means[i], int(counts[i])
+        for cl in clusters:
+            if np.linalg.norm(cl[0] - rgb) < 0.14:
+                cl[0] = (cl[0] * cl[1] + rgb * n) / (cl[1] + n)
+                cl[1] += n
+                break
+        else:
+            clusters.append([rgb, n])
+    total = float(len(px))
+    # small but strongly saturated colours count as accents (orange keyword text is well under 1% of the frame)
+    small = sorted(([c, n / total] for c, n in clusters if 0.002 <= n / total < 0.01), key=lambda x: -x[1])
+    clusters = sorted(([c, n / total] for c, n in clusters if n / total >= 0.01), key=lambda x: -x[1])
+
+    def hexc(c) -> str:
+        return "#" + "".join(f"{int(round(float(v) * 255)):02X}" for v in c)
+
+    def sat(c) -> float:
+        return float((c.max() - c.min()) / max(c.max(), 1e-6))
+
+    def luma(c) -> float:
+        return float(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+
+    top = clusters[0] if clusters else None
+    background = hexc(top[0]) if top and top[1] >= 0.25 else None
+    accents: list = []
+    for c, s in clusters + small:  # saturated, and clearly different from the accents already picked
+        if sat(c) >= (0.35 if s >= 0.01 else 0.6) and c.max() >= (0.3 if s >= 0.01 else 0.45) \
+                and all(np.linalg.norm(c - a) > 0.3 for a in accents):
+            accents.append(c)
+    surfaces = [c for c, s in clusters[1:] if s >= 0.05 and sat(c) < 0.35 and luma(c) > 0.6]  # a second light panel colour
+    inks = [c for c, _s in clusters if luma(c) < 0.3]
+    return {"background": background, "bg_share": round(top[1], 3) if top else 0.0,
+            "surface": hexc(surfaces[0]) if background and surfaces else None,
+            "ink": hexc(min(inks, key=luma)) if inks else None, "accents": [hexc(c) for c in accents[:3]],
+            "colors": [[hexc(c), round(s, 3)] for c, s in clusters[:8]]}
+
+
 # ---- sound ----------------------------------------------------------------------------------
 
 def load_audio(path: Path, start: float = 0.0, duration: float | None = None) -> np.ndarray | None:

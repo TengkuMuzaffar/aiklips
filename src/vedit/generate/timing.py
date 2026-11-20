@@ -12,10 +12,18 @@ import bisect
 from .spec import EditPlan, Op
 
 MIN_CLIP = 0.35
+SCENE_RANGE = (0.6, 6.0)  # a graphic scene's length, seconds
 
 
 def _clip_len(o: Op) -> float:
+    if o.op == "scene":
+        return float(o.duration or 0)
     return ((o.end or 0) - (o.start or 0)) / (o.speed or 1.0)
+
+
+def sequence(plan: EditPlan) -> list[Op]:
+    """What plays on the video track, in order: footage clips and graphic scenes."""
+    return [o for o in plan.ops if o.op in ("clip", "scene")]
 
 
 def resolve(plan: EditPlan, files: dict[str, dict], target_s: float) -> tuple[EditPlan, list[str]]:
@@ -39,6 +47,8 @@ def resolve(plan: EditPlan, files: dict[str, dict], target_s: float) -> tuple[Ed
                 o.zoom = min(2.0, max(1.0, o.zoom))
             if o.zoom_to is not None:
                 o.zoom_to = min(2.0, max(1.0, o.zoom_to))
+        if o.op == "scene":
+            o.duration = round(min(SCENE_RANGE[1], max(SCENE_RANGE[0], o.duration or 1.8)), 3)
         if o.op == "image" and files[o.file]["kind"] != "image":
             notes.append(f"dropped image: {o.file} is not an image")
             continue
@@ -47,9 +57,9 @@ def resolve(plan: EditPlan, files: dict[str, dict], target_s: float) -> tuple[Ed
             continue
         ops.append(o)
     plan.ops = ops
-    clips = [o for o in ops if o.op == "clip"]
-    if not clips:
+    if not any(o.op == "clip" for o in ops):
         raise ValueError("The plan has no usable clips")
+    clips = sequence(plan)
 
     music = next((o for o in ops if o.op == "music"), None)
     beats: list[float] = []
@@ -70,7 +80,7 @@ def resolve(plan: EditPlan, files: dict[str, dict], target_s: float) -> tuple[Ed
         notes.append(f"snapped {len(clips)} cuts to the beat")
 
     _fit(plan, clips, target_s, beats, notes)
-    total = sum(_clip_len(o) for o in plan.ops if o.op == "clip")
+    total = sum(_clip_len(o) for o in sequence(plan))
 
     for o in plan.ops:
         if o.op in ("text", "image"):
@@ -80,7 +90,7 @@ def resolve(plan: EditPlan, files: dict[str, dict], target_s: float) -> tuple[Ed
             if o.end is not None:
                 o.end = min(total, max(o.start + 0.3, o.end))
         if o.op == "transition":
-            n = len([c for c in plan.ops if c.op == "clip"])
+            n = len(sequence(plan))
             if (o.into is not None and not (1 <= o.into < n)) or n < 2:
                 o.into = -1  # points at no cut: drop it
             o.duration = max(0.1, min(o.duration or 0.3, 0.8))
@@ -97,6 +107,13 @@ def _nearest(beats: list[float], t: float) -> float:
 def _snap(clips: list[Op], files: dict[str, dict], beats: list[float]) -> None:
     t = 0.0
     for o in clips:
+        if o.op == "scene":  # a graphic scene: its length lands on the beat nearest to the planned one
+            want = t + _clip_len(o)
+            later = [b for b in beats if SCENE_RANGE[0] <= b - t <= SCENE_RANGE[1]]
+            if later:
+                o.duration = round(min(later, key=lambda b: abs(b - want)) - t, 3)
+            t += _clip_len(o)
+            continue
         dur = float(files[o.file]["duration"])
         sp = o.speed or 1.0
         want = t + _clip_len(o)
@@ -117,13 +134,22 @@ def _snap(clips: list[Op], files: dict[str, dict], beats: list[float]) -> None:
 
 
 def _fit(plan: EditPlan, clips: list[Op], target: float, beats: list[float], notes: list[str]) -> None:
+    """Fit the length by dropping / shortening footage from the end. Scenes (title cards, the end card) stay."""
     tol = max(1.0, 0.1 * target)
     total = sum(_clip_len(o) for o in clips)
-    while len(clips) > 1 and total - _clip_len(clips[-1]) >= target - tol / 2 and total > target + tol:
-        last = clips.pop()
+    foot = [o for o in clips if o.op == "clip"]
+    while len(foot) > 1 and total - _clip_len(foot[-1]) >= target - tol / 2 and total > target + tol:
+        last = foot.pop()
         plan.ops.remove(last)
+        clips.remove(last)
         total -= _clip_len(last)
         notes.append("dropped a clip to fit the length")
+    if total > target + tol and clips[-1].op == "scene":  # scenes after it: just take the excess off the last footage
+        last = foot[-1]
+        new = max(MIN_CLIP, _clip_len(last) - (total - target))
+        last.end = round((last.start or 0) + new * (last.speed or 1.0), 3)
+        notes.append(f"shortened clip {len(foot)} to fit the length")
+        return
     if total > target + tol:
         last = clips[-1]
         start_t = total - _clip_len(last)

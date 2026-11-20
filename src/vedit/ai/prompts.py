@@ -88,13 +88,18 @@ Available operations (the field `op` picks one; leave unrelated fields null):
   (a sound that matters, e.g. a sizzle or a pour: keep it quietly), mute (b-roll, noise, wind: the music carries it).
   The footage list says which segments have speech or background sound. Never let b-roll noise fight the music,
   and never cut a speaking clip mid-word.
+- scene: {duration, fill?, text?, color?, beat, why}  a graphic scene ON the video track, between clips: a
+  full-screen canvas (fill = '#hex' or a gradient '#a,#b') with an optional short line in kinetic type (word by word;
+  `type` = its animation: pop, rise, drop, slide, mask_up, fade, type). Scenes play in the order you list them among
+  the clips (title card, colour wipe, end card). 0.6-6 s each.
 - text: {text, start, end, y, beat, why, size?, color?, uppercase?, bg?, font?, presets}  a title. start/end are timeline
   seconds (0 = start of the video; end null = until the end). y is the vertical centre, "12%"-"75%".
-  presets: in-animations then out-animations from the allowed list. font: leave null to use the variation's
-  font; set it only to use the one accent font you are given for a single emphasis line.
+  presets: in-animations then out-animations from the allowed list. Unset style fields take the variation's
+  style; set them when a title should differ (an emphasis colour, a bigger payoff line). font: null = the
+  variation's font; you may use ONE other font (e.g. the accent font) for emphasis lines, never a third.
 - image: {file, start, end, x?, y?, width?, presets}  an image file as an overlay (logo, product shot).
-- transition: {into, type, duration}  into = index of the clip it leads into (1 = second clip), or null for
-  every cut.
+- transition: {into, type, duration}  into = index of the clip or scene it leads into, counting clips and scenes
+  in order (1 = the second one), or null for every cut.
 - jumpcut_zoom: {level}  punch in on every other clip (1.08-1.2).
 - music: {file, offset, volume, duck}  background music; offset = where in the song to start.
 - captions: {type: caption style, words, y}  word-by-word captions of the speech in the clips. Only when the
@@ -103,7 +108,26 @@ Available operations (the field `op` picks one; leave unrelated fields null):
 - move: {type: move name, into?, start?, text?, why}  a signature move from the move library. Clip moves (speed_ramp,
   flash_cut, whip, before_after, zoom_out_reveal) use `into` = index of the clip (0 = first clip); moment moves
   (punch_in, freeze_title, keyword_pop) use `start` = timeline seconds; freeze_title and keyword_pop need `text`.
-  Use the concept's signature move once, where it lands hardest; at most 2 moves per video.
+  Use the concept's signature move once, where it lands hardest; 2-4 moves / effects per 30 s in total (move ops
+  plus `fx apply` commands).
+- vedit: {command, name?}  any command from the VEDIT COMMANDS list, exactly as the editor's own AI would run it
+  (without "vedit"). This is how you reach everything the editor can do: shapes and title cards, sound effects,
+  synth music loops, filters and adjustment layers, colour looks, overlays from the library, kinetic text,
+  counters, charts, iso worlds, every signature effect (`fx apply`), text looks, layer animation and keyframes.
+  They run in order AFTER the clips, titles, music, captions and colour grade are built, so they can build on
+  them. Refer to things by reference, never by guessed ids or seconds:
+    @C3 = the plan's 3rd clip, @T1 = its 1st title, @captions = the captions layer, @name = the layer an earlier
+    vedit op with that `name` added; add .start / .end / .mid for its timeline time, plus or minus seconds:
+    "sfx add whoosh --at @C3.start-0.15 --volume 0.5", "animate preset @T1 pulse",
+    "shape add rect --x 50% --y 24% --width 900 --height 200 --fill #111111CC --start @T1.start --end @T1.end" (name: card),
+    "layer order @card down". In overlay add / image add / music add, a batch file id stands for its file.
+  Not available here (the plan or the generator does it): cutting / trimming / speed (use clip ops), import,
+  export, canvas, undo, and slow AI tracking (bg, face, mask, focus).
+  Make the edit feel produced, not assembled: sound on the cuts and reveals, one strong graphic moment,
+  titles that look designed (a card or box behind them, an animation that fits the beat). Every addition must
+  serve a beat; skip anything that would only decorate. Keep sound effects subtle (volume 0.4-0.8) and sparse,
+  at most one texture overlay, everything inside the safe zone, and text readable against what is behind it.
+  If a music op is given, don't add a second music track.
 
 Structure first: write `beats`, the edit's beat sheet in order (b1, b2, ...). The first beat is the hook. Each beat
 has a role (hook, problem, setup, demo, proof, benefit, payoff, cta, other) and a one-line purpose: what the viewer
@@ -146,7 +170,9 @@ Give a one-line reason per pick. Return only JSON."""
 PATCHER = """You are the editor of a short-form video, fixing specific problems an independent reviewer found in your
 rendered edit. You change as little as possible: a patch, not a new edit. Each change must address one of the
 listed issues; everything else stays exactly as it is.
-- Clips are C1..Cn and titles T1..Tn in the order listed. Segment ids come from the footage list.
+- Clips are C1..Cn, titles T1..Tn and vedit commands V1..Vn in the order listed. Segment ids come from the footage
+  list. add_command / replace_command / remove_command change the vedit commands (same rules and @references as
+  in the plan: @C3.start, @T1, @name), e.g. to fix a sound effect's timing or swap a graphic that doesn't land.
 - The footage list shows what the reviewer learned about segments ("weak as hook", "good as proof"). Use it: a
   segment the reviewer rejected for a role will be rejected again.
 - Keep stated reasons honest: when you replace a clip, write the new clip's `why`.

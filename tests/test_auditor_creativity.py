@@ -142,11 +142,11 @@ def test_revise_plan_hands_the_review_to_the_editor(fake):
     spec, dna, log, c, axes, d = _plan_args()
     rev = {"score": 55, "summary": "weak hook", "scores": {"hook": 2}, "findings": [
         {"id": "A1", "severity": "must-fix", "category": "hook", "at": 0.3, "message": "opening is static", "fix": "swap c1"},
-        {"id": "F2", "severity": "note", "category": "pacing", "at": None, "message": "a note", "fix": None}]}
+        {"id": "F2", "severity": "note", "category": "pacing", "at": None, "message": "a note only", "fix": None}]}
     plan, _ = planner.revise_plan(spec, dna, log, c, axes, d, _good(), rev, threshold=80)
     prompt = calls[0][1]
     assert "INDEPENDENT REVIEW" in prompt and "score 55/100, needs 80" in prompt and "weak hook" in prompt
-    assert "A1 [must-fix] hook @0.3s: opening is static -> swap c1" in prompt and "a note" not in prompt
+    assert "A1 [must-fix] hook @0.3s: opening is static -> swap c1" in prompt and "a note only" not in prompt
     assert '"segment":"f1.s1"' in prompt  # the editor sees its own current plan
     assert plan.beats and all(o.audio for o in plan.ops if o.op == "clip")  # audio modes filled in
 

@@ -114,7 +114,11 @@ class CreativePlan(_M):
 
 class Op(_M):
     """One edit operation. Flat on purpose (LLMs fill flat objects more reliably than unions)."""
-    op: Literal["clip", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit", "move"]
+    op: Literal["clip", "scene", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit", "move", "vedit"]
+    command: str | None = Field(None, description="vedit: one vedit CLI command without 'vedit', e.g. "
+                                                   "\"sfx add whoosh --at @C2.start-0.1 --volume 0.5\"")
+    name: str | None = Field(None, description="vedit: a name for the layer this command adds, to refer to it later as @name")
+    fill: str | None = Field(None, description="scene: canvas colour '#hex', or a gradient '#a,#b'")
     file: str | None = None
     start: float | None = None
     end: float | None = None
@@ -166,8 +170,13 @@ class EditPlan(_M):
 class PatchOp(_M):
     """One targeted change to the current plan. Clips are C1..Cn and titles T1..Tn as listed in the prompt."""
     op: Literal["replace_clip", "trim_clip", "move_clip", "remove_clip", "insert_clip", "set_audio",
-                "edit_text", "add_text", "remove_text", "set_music", "set_move"]
-    target: str | None = Field(None, description="C3 / T2: the clip or title it changes (insert_clip: insert BEFORE this clip; empty = at the end)")
+                "edit_text", "add_text", "remove_text", "set_music", "set_move", "add_command", "replace_command", "remove_command",
+                "edit_scene", "remove_scene"]
+    target: str | None = Field(None, description="C3 / T2 / V4 / S1: the clip, title, vedit command or scene it changes (insert_clip: insert BEFORE this clip; empty = at the end)")
+    duration: float | None = Field(None, description="edit_scene: new length in seconds")
+    fill: str | None = Field(None, description="edit_scene: new canvas colour")
+    command: str | None = Field(None, description="add_command / replace_command: a vedit CLI command, same rules as in the plan")
+    name: str | None = Field(None, description="add_command / replace_command: name for the layer it adds (@name)")
     segment: str | None = Field(None, description="replace_clip / insert_clip: footage segment id, e.g. f1.s4")
     start: float | None = Field(None, description="clips: seconds inside the file; titles: timeline seconds")
     end: float | None = None

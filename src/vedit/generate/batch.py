@@ -225,6 +225,10 @@ def _prepare_inner(job: jobs.Job, bid: str) -> dict:
         raise jobs.Retry(8, "waiting for references")
     _set("batches", bid, status="preparing", progress="Combining the reference styles", error=None)
     dna = refs.merged(spec.refs, spec.lead)
+    try:  # the lead reference's colours, for graphics (scenes, cards) when it is motion design
+        dna.color.palette = refs.palette_of(spec.lead if spec.lead in spec.refs else spec.refs[0])
+    except Exception:  # noqa: BLE001 - a palette is a nice-to-have; never fail the batch over it
+        dna.color.palette = {}
     _set("batches", bid, dna=dna.model_dump_json())
     files = _files(spec)
     job.check()

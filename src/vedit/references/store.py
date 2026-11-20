@@ -171,6 +171,21 @@ def color_of(rid: int) -> dict:
     return m["color"]
 
 
+def palette_of(rid: int) -> dict:
+    """The reference's palette (analysis.palette), measured once and saved with its metrics."""
+    row = _row(rid)
+    d = Path(row["dir"])
+    m = _load_json(d / "metrics.json") or {}
+    if "palette" not in m:
+        try:
+            m["palette"] = analysis.palette(source_path(row), float(m.get("duration") or 0) or None)
+        except (VeditError, OSError):
+            m["palette"] = None
+        if (d / "metrics.json").exists():
+            (d / "metrics.json").write_text(json.dumps(m))
+    return m["palette"] or {}
+
+
 def list_refs() -> list[dict]:
     with closing(_db()) as con:
         ids = [r["id"] for r in con.execute("SELECT id FROM refs ORDER BY created_at DESC")]

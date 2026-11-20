@@ -112,6 +112,7 @@ class ColorDNA(_M):
     look: ColorLook = Field("natural", description="The colour look closest to the reference's grade")
     intensity: float = Field(0.8, ge=0, le=1, description="How strong that look is in the reference")
     measured: SkipJsonSchema[dict[str, float]] = Field(default_factory=dict)  # filled by apply_measured(), not the model
+    palette: SkipJsonSchema[dict] = Field(default_factory=dict)  # analysis.palette() of the lead reference, set by Generate
 
 
 class SignatureMove(_M):
