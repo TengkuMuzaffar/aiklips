@@ -62,6 +62,10 @@ def mount(app: FastAPI, host, bad) -> None:
         jobs.ensure_workers()
     if jobs.AUTOSTART:  # references studied with an older study prompt: study them again (design pass, whole-video sheet)
         try:
+            store.migrate_to_media()  # older references kept their own copy: move them into the media library (once)
+        except Exception:
+            pass
+        try:
             store.restudy_stale()
         except Exception:
             pass
@@ -116,6 +120,8 @@ def mount(app: FastAPI, host, bad) -> None:
         except VeditError:
             raise HTTPException(404)
         f = Path(row["dir"]) / name
+        if not f.exists() and name == "thumb.jpg" and row.get("media_id"):
+            f = footage.thumb(row["media_id"])  # not studied yet: the media library's thumbnail
         if not f.exists():
             raise HTTPException(404)
         return FileResponse(f)
@@ -160,8 +166,23 @@ def mount(app: FastAPI, host, bad) -> None:
 
     # ---- media library: every file studied once, reused in any project or batch ---------------------
     @app.get("/api/media")
-    def media_list(kind: str | None = None, q: str | None = None, tag: str | None = None) -> dict:
-        return {"media": media_library.list_media(kind, q, tag), "bytes": media_library.disk_usage()}
+    def media_list(kind: str | None = None, q: str | None = None, tag: str | None = None, role: str | None = None) -> dict:
+        return {"media": media_library.list_media(kind, q, tag, role), "bytes": media_library.disk_usage()}
+
+    @app.post("/api/media/{uid}/reference")
+    def media_make_ref(uid: str) -> dict:
+        """Use this video as a style reference too (no copy; queues its style study)."""
+        try:
+            return store.promote(uid)
+        except VeditError as e:
+            raise bad(e)
+
+    @app.delete("/api/media/{uid}/reference")
+    def media_drop_ref(uid: str) -> dict:
+        rid = store.for_media(uid)
+        if rid is not None:
+            store.delete(rid)
+        return {"ok": True}
 
     @app.post("/api/media")
     async def media_add(files: list[UploadFile] = File(...)) -> dict:
