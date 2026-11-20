@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read     # plan: look up whether this commit already passed the full CI check
 
 concurrency:
   group: release
@@ -25,6 +26,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}
+      tested: ${{ steps.t.outputs.tested }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,14 +41,32 @@ jobs:
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
+      # main is released by fast-forwarding it to a develop commit whose PR passed the full check (all tests, three
+      # systems): then there is nothing new to test. A merge commit (or anything else) is tested here as before.
+      - id: t
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success&per_page=50" \
+                --jq '[.workflow_runs[] | select(.event == "pull_request" or .event == "workflow_dispatch")] | length')
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+            echo "### ${{ github.sha }} already passed the full CI check: not testing it again" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "tested=false" >> "$GITHUB_OUTPUT"
+          fi
 
   test:
     needs: plan
-    if: needs.plan.outputs.publish == 'true'
+    if: needs.plan.outputs.publish == 'true' && needs.plan.outputs.tested != 'true'
     uses: ./.github/workflows/ci.yml
+    with:
+      full: true
 
   build:
     needs: [plan, test]
+    # the tests passed here, or were skipped because the commit already passed the full CI check
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: macos-latest   # lipo for the universal macOS binary; Go cross-compiles the rest
     env:
       V: ${{ needs.plan.outputs.version }}
@@ -107,6 +127,7 @@ jobs:
   # "Contents: read and write" on the website repo only; the repo name can be changed with the variable WEBSITE_REPO.
   website:
     needs: [plan, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       V: ${{ needs.plan.outputs.version }}
