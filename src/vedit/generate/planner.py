@@ -24,7 +24,7 @@ from ..ops.motion import SPLIT_ANIMS
 from ..ops.color import LOOKS as COLOR_LOOKS
 from ..references.dna import StyleDNA
 from ..ops import moves as moves_lib
-from . import commands, context, executor, taste
+from . import brief_tags, commands, context, executor, taste
 from .spec import AXES, STRUCTURE_HINT, Brief, BatchSpec, ConceptSet, Creative, CreativePlan, EditPlan, Op, PlanPatch, Ranking
 
 TEXT_SIZE = {"small": 56, "medium": 72, "large": 92, "huge": 118}
@@ -38,13 +38,15 @@ ORDER_HINT = {
 }
 
 
-def assign_axes(count: int, enabled: list[str], seed: str) -> list[dict[str, str]]:
+def assign_axes(count: int, enabled: list[str], seed: str, prefer: dict[str, list[str]] | None = None) -> list[dict[str, str]]:
+    """`prefer`: per axis, values to try first after the reference's (the brief's funnel stage favours some hooks)."""
     rng = random.Random(seed)
     orders = {}
     for axis, values in AXES.items():
         rest = values[1:]
         rng.shuffle(rest)
-        orders[axis] = [values[0]] + rest
+        first = [v for v in (prefer or {}).get(axis, []) if v in rest]
+        orders[axis] = [values[0]] + first + [v for v in rest if v not in first]
     out = []
     for i in range(count):
         out.append({axis: (orders[axis][i % len(orders[axis])] if axis in enabled else AXES[axis][0]) for axis in AXES})
@@ -101,7 +103,7 @@ def creative(spec: BatchSpec, dna: StyleDNA, log: dict, axes: list[dict]) -> tup
     b = spec.brief
     prompt = (
         f"STYLE DNA (merged references):\n{json.dumps(_style_brief(dna), indent=1)}\n\n"
-        f"BRIEF:\n{b.model_dump_json(indent=1)}\n"
+        f"BRIEF:\n{brief_tags.prompt_block(b)}\n"
         + (f"The user wrote this hook line; variation 1 must use it verbatim, others may rephrase it for their hook type: {b.hook!r}\n" if b.hook else "")
         + f"\nFOOTAGE:\n{context.footage_block(log, b.length_s, context.CREATIVE_LINES)}\n\n"
         f"VARIATIONS ({spec.count}), with their fixed axes:\n"
@@ -122,6 +124,8 @@ def creative(spec: BatchSpec, dna: StyleDNA, log: dict, axes: list[dict]) -> tup
             c.hook_text = b.hook
         if b.cta and not c.cta_text:
             c.cta_text = b.cta
+        if not c.cta_text and brief_tags.funnel_bias(b).get("cta"):
+            c.cta_text = brief_tags.funnel_bias(b)["cta"]  # the funnel stage asks for a CTA of its kind
         out.append(c)
     return out, usage
 
@@ -137,7 +141,7 @@ def _moves_text(dna: StyleDNA) -> str:
 def concepts(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dict) -> tuple[ConceptSet, dict]:
     """Three clearly different concepts for one variation."""
     hint = STRUCTURE_HINT.get(axes.get("structure", "reference"), "")
-    prompt = (f"STYLE: {dna.summary}\nBRIEF:\n{spec.brief.model_dump_json(indent=1)}\n\n"
+    prompt = (f"STYLE: {dna.summary}\nBRIEF:\n{brief_tags.prompt_block(spec.brief)}\n\n"
               f"FOOTAGE:\n{context.footage_block(log, spec.brief.length_s, 60, c.structure)}\n\n"
               f"THIS VARIATION (#{c.index}): angle: {c.angle}\nhook line: {c.hook_text}\nCTA: {c.cta_text or '(none)'}\n"
               f"axes: {json.dumps({k: v for k, v in axes.items() if k != 'sound'})}\n" + (f"structure: {hint}\n" if hint else "")
@@ -153,7 +157,7 @@ def rank(spec: BatchSpec, creatives: list[Creative], sets: list[ConceptSet]) -> 
         lines.append(f"VARIATION {c.index} (angle: {c.angle}; hook: {c.hook_text})")
         for j, k in enumerate(cs.concepts, 1):
             lines.append(f"  {j}. {k.title} | arc: {k.arc} | motif: {k.motif} | move: {k.signature_move} | opening: {k.opening} | {k.why}")
-    prompt = (f"BRIEF:\n{spec.brief.model_dump_json(indent=1)}\n\n" + "\n".join(lines)
+    prompt = (f"BRIEF:\n{brief_tags.prompt_block(spec.brief)}\n\n" + "\n".join(lines)
               + (f"\n\n{taste.examples()}" if taste.examples() else "") + "\n\nPick one concept per variation.")
     return ai.call("rank", prompt, Ranking, system=prompts.RANK, quality=spec.quality)
 
@@ -273,7 +277,10 @@ def music_style(dna: StyleDNA) -> dict:
 
 
 def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, captions_available: bool) -> dict:
-    avg = max(0.4, min(6.0, dna.pacing.avg_shot_s * PACE[axes["pacing"]]))
+    base, curve = brief_tags.pace_target(brief, dna.pacing.avg_shot_s)  # the brief's pace, else the reference's
+    avg = max(0.4, min(6.0, base * PACE[axes["pacing"]]))  # the pacing axis varies around it
+    curve = [round(max(0.3, min(6.0, x * PACE[axes["pacing"]])), 2) for x in curve] if curve else None
+    rules = set(brief.rules)
     text_in = list(dna.text.animation_in) if axes.get("text_animation", "reference") == "reference" else [axes["text_animation"]]
     text_out = list(dna.text.animation_out)
     if axes["transitions"] == "reference":
@@ -285,7 +292,10 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
     music = axes.get("sound") if log.get(axes.get("sound") or "", {}).get("kind") == "audio" else None
     music = music or next((fid for fid, f in log.items() if f["kind"] == "audio"), None)
     talking = any(s.get("talking") for f in log.values() if f["kind"] == "video" for s in f["segments"])
-    want_caps = captions_available and (dna.captions.present or talking) and any(f.get("has_audio") for f in log.values() if f["kind"] == "video")
+    want_caps = captions_available and (dna.captions.present or talking or "captions_always" in rules) \
+        and any(f.get("has_audio") for f in log.values() if f["kind"] == "video")
+    if "no_music" in rules:
+        music = None
     music_offset = 0.0
     if music:
         mdur = float(log[music].get("duration") or 0)
@@ -296,8 +306,8 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
     text_color, text_bg = dna.text.color, (dna.text.bg_color or "#000000B0") if dna.text.bg_box else None
     if md and not text_bg:  # the reference's titles sit on its canvas; over footage they get that canvas as a card
         text_bg, text_color = md["canvas"] + "E6", md["ink"]
-    make = None if music else music_style(dna)
-    talking_vol = 0.22 if (dna.sound.voiceover or talking) else 0.5
+    make = None if music or "no_music" in rules else music_style(dna)
+    talking_vol = 0.22 if (dna.sound.voiceover or talking or "voiceover_room" in rules) else 0.5
     return {
         "structure": STRUCTURE_HINT.get(structure, "follow the reference's structure"),
         "length_s": brief.length_s,
@@ -322,6 +332,8 @@ def directives(dna: StyleDNA, brief: Brief, axes: dict[str, str], log: dict, cap
         "beat_sync": bool(music and dna.sound.cut_on_beat),
         "motion_design": md,
         "music_make": None if make is None else {**make, "volume": talking_vol},
+        "pace_curve": curve,  # hook / middle / end shot lengths (a shaped pace from the brief), or None
+        "rules": sorted(rules),  # the brief's must do / avoid ids (brief_tags.RULES)
     }
 
 
@@ -329,7 +341,7 @@ def _edit_prompt(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: d
     images = [fid for fid, f in log.items() if f["kind"] == "image"]
     return (
         f"STYLE DNA:\n{json.dumps(_style_brief(dna), indent=1)}\n\n"
-        f"BRIEF:\n{spec.brief.model_dump_json(indent=1)}\n\n"
+        f"BRIEF:\n{brief_tags.prompt_block(spec.brief)}\n\n"
         f"FOOTAGE (use these file ids; segment ids show good ranges):\n"
         f"{context.footage_block(log, spec.brief.length_s, context.PLAN_LINES, c.structure)}\n\n"
         f"THIS VARIATION (#{c.index}): angle: {c.angle}\nhook line: {c.hook_text}\nCTA: {c.cta_text or '(none)'}\n"
@@ -341,7 +353,11 @@ def _edit_prompt(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: d
         + f"\nVEDIT COMMANDS (for `vedit` ops; the same commands the editor's chat AI uses):\n{commands.reference()}\n"
         + f"\nDIRECTIVES (follow exactly):\n{json.dumps(d, indent=1)}\n"
         f"- About {d['clip_count']} clips of ~{d['avg_shot_s']}s each, total ≈ {d['length_s']}s. Order: {d['order']}\n"
-        f"- Hook text '{c.hook_text}' from 0s to ~{d['hook_duration_s']}s; CTA text near the end if there is one.\n"
+        + (f"- Shot lengths follow the pace curve: ~{d['pace_curve'][0]}s in the hook (first 20%), ~{d['pace_curve'][1]}s in the "
+           f"middle, ~{d['pace_curve'][2]}s at the end (last 20%).\n" if d.get("pace_curve") else "")
+        + f"- Hook text '{c.hook_text}' from {'1.0' if 'no_text_first_1s' in d.get('rules', []) else '0'}s to ~{d['hook_duration_s']}s; "
+          f"CTA text near the end if there is one.\n"
+        + (f"- The brief's MUST list is not optional: {'; '.join(brief_tags.RULES[r]['prompt'] for r in d['rules'])}.\n" if d.get("rules") else "")
         + (f"- Images you may overlay: {', '.join(images)}\n" if images else "")
         + (f"- Add a music op with file {d['music']['file']} and the given offset (other sound files belong to sibling videos).\n" if d["music"] else "")
         + (_music_make_line(d["music_make"]) if d.get("music_make") else "")
@@ -559,7 +575,7 @@ def patch_plan(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dic
     if attempts and len(attempts) > 1:
         hist = "\nEARLIER ROUNDS: " + "; ".join(f"r{a.get('round')} {a.get('score')}" + (f" ({a['verdict']})" if a.get("verdict") else "")
                                              + (f" fixed {', '.join(a['fixed'])}" if a.get("fixed") else "") for a in attempts)
-    prompt = (f"BRIEF:\n{spec.brief.model_dump_json(indent=1)}\nSTYLE: {dna.summary}\n"
+    prompt = (f"BRIEF:\n{brief_tags.prompt_block(spec.brief)}\nSTYLE: {dna.summary}\n"
               f"\nFOOTAGE SEGMENTS (id, range in file, quality, description, reviewer marks):\n"
               + "\n".join(_shot_line(sg) for f in log.values() if f.get("kind") == "video" for sg in f.get("segments", []))[:9000]
               + f"\n\nTHE CURRENT EDIT (the best version so far, audit {review.get('score')}/100, pass mark {threshold}):\n{plan_listing(plan)}"
@@ -576,7 +592,7 @@ def patch_plan(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dic
         return None, usage, {"note": "empty patch"}
     new, problems = apply_patch(plan, patch, log)
     fill_ranges(new, log)
-    errors = [e for e in validate_plan(new, log) if e not in validate_plan(plan, log)]  # only problems this patch created
+    errors = [e for e in validate_plan(new, log, d) if e not in validate_plan(plan, log, d)]  # only problems this patch created
     if errors or len(problems) == len(patch.ops):
         return None, usage, {"note": "patch rejected", "problems": problems + errors}
     new = enforce(new, d, c)
@@ -589,13 +605,13 @@ def patch_plan(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dic
 def _call_editor(prompt: str, spec: BatchSpec, log: dict, d: dict, c: Creative) -> tuple[EditPlan, dict]:
     plan, usage = ai.call("editor", prompt, EditPlan, system=prompts.EDITOR, quality=spec.quality)
     fill_ranges(plan, log)
-    errors = validate_plan(plan, log)
+    errors = validate_plan(plan, log, d)
     if errors:  # one corrective round, with the exact problems
         retry = prompt + "\n\nYOUR PREVIOUS PLAN HAD THESE PROBLEMS, fix all of them:\n- " + "\n- ".join(errors[:20])
         plan2, u2 = ai.call("editor", retry, EditPlan, system=prompts.EDITOR, quality=spec.quality)
         usage = _sum_usage(usage, u2)
         fill_ranges(plan2, log)
-        errors2 = validate_plan(plan2, log)
+        errors2 = validate_plan(plan2, log, d)
         if len(errors2) <= len(errors):
             plan, errors = plan2, errors2
     plan.problems = errors
@@ -650,9 +666,12 @@ def audio_defaults(plan: EditPlan, log: dict) -> None:
                 o.volume = min(o.volume if o.volume is not None else 0.45, 0.45)
 
 
-def validate_plan(plan: EditPlan, log: dict) -> list[str]:
-    """Concrete problems with a plan's structure and justification (code, not AI)."""
+def validate_plan(plan: EditPlan, log: dict, d: dict | None = None) -> list[str]:
+    """Concrete problems with a plan's structure and justification (code, not AI). With the directives `d`, also the
+    brief's checkable rules: the pace curve and no text in the first second."""
     errors: list[str] = []
+    if d:
+        errors += _brief_problems(plan, d)
     segs = {s["id"]: (fid, s) for fid, f in log.items() if f.get("kind") == "video" for s in f.get("segments", [])}
     beat_ids = [b.id for b in plan.beats]
     if not plan.beats:
@@ -713,6 +732,32 @@ def validate_plan(plan: EditPlan, log: dict) -> list[str]:
         if needs and "+text" in needs and not (o.text or "").strip():
             errors.append(f"move {o.type} needs `text`")
     return errors
+
+
+PACE_SLACK = 1.8  # a section's average shot may be this many times off the curve before it counts as wrong
+
+
+def _brief_problems(plan: EditPlan, d: dict) -> list[str]:
+    out: list[str] = []
+    clips = [o for o in plan.ops if o.op == "clip" and o.start is not None and o.end is not None]
+    lens = [max(0.0, (o.end - o.start) / (o.speed or 1.0)) for o in clips]
+    curve = d.get("pace_curve")
+    if curve and len(lens) >= 5:
+        total = sum(lens)
+        t, parts = 0.0, ([], [], [])
+        for n in lens:  # which part of the edit each clip starts in
+            parts[0 if t < total * 0.2 else 2 if t >= total * 0.8 else 1].append(n)
+            t += n
+        for name, want, got in zip(("hook", "middle", "end"), curve, parts):
+            if got:
+                avg = sum(got) / len(got)
+                if avg > want * PACE_SLACK or avg < want / PACE_SLACK:
+                    out.append(f"pace: the {name} averages {avg:.1f}s shots; the brief's pace curve wants ~{want}s there")
+    if "no_text_first_1s" in (d.get("rules") or []):
+        for o in plan.ops:
+            if o.op == "text" and o.start is not None and o.start < 1.0:
+                out.append(f"text '{(o.text or '')[:30]}' starts at {o.start}s: the brief says no text in the first second")
+    return out
 
 
 def _is_music_make(command: str | None) -> bool:

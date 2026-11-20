@@ -26,7 +26,7 @@ from ..ai import client as ai
 from ..project import PROJECT_FILE, VeditError, load
 from ..references import store as refs
 from ..references.dna import StyleDNA
-from . import executor, footage, planner, timing
+from . import brief_tags, executor, footage, planner, timing
 from .spec import AXES, BatchSpec, Creative, EditPlan
 
 SCHEMA = """
@@ -266,7 +266,8 @@ def _prepare_inner(job: jobs.Job, bid: str) -> dict:
     _add_usage(bid, "footage", u if u.get("calls") else None)
     log = footage.shot_log(files, _sound(spec))
     job.check()
-    axes = planner.assign_axes(spec.count, spec.axes, seed=bid)
+    bias = brief_tags.funnel_bias(spec.brief)
+    axes = planner.assign_axes(spec.count, spec.axes, seed=bid, prefer={"hook": bias.get("hooks", []), "structure": bias.get("structures", [])})
     planner.assign_sounds(axes, log)
     _set("batches", bid, progress=f"AI is planning {spec.count} variation(s)")
     creatives, usage = planner.creative(spec, dna, log, axes)
@@ -347,7 +348,7 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
     threshold = spec.audit_threshold if spec.audit_threshold is not None else cfg["threshold"]
     max_rounds = (spec.audit_rounds if spec.audit_rounds is not None else cfg["max_rounds"]) if spec.review else 0
     name = f"{b['name'].split(' · ')[0]} v{v['idx']} – {plan.title or c.angle}"[:80]
-    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    brief = " | ".join(x for x in (f"{spec.brief.goal}: {spec.brief.product}".strip(": "), brief_tags.short(spec.brief)) if x)
     usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
 
     def build(pl: EditPlan, where: Path) -> dict:
@@ -572,7 +573,7 @@ def run_improve(vid: str, rounds: int, job: jobs.Job | None = None) -> dict:
     bid = v["batch_id"]
     threshold = spec.audit_threshold if spec.audit_threshold is not None else review.settings()["threshold"]
     name = load(pdir).name
-    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    brief = " | ".join(x for x in (f"{spec.brief.goal}: {spec.brief.product}".strip(": "), brief_tags.short(spec.brief)) if x)
     usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
 
     def build(pl: EditPlan, where: Path) -> dict:

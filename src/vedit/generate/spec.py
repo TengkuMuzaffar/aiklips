@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from ..library import FORMATS
@@ -44,6 +44,15 @@ class _M(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class Audience(_M):
+    """Who the video is for (ids from generate.brief_tags.AUDIENCE)."""
+    age: list[str] = Field(default_factory=list)
+    who: list[str] = Field(default_factory=list)
+    region: list[str] = Field(default_factory=list)
+    awareness: str | None = None
+    custom: list[str] = Field(default_factory=list, max_length=8, description="The user's own audience words")
+
+
 class Brief(_M):
     goal: Literal["promo", "tutorial", "story", "ugc", "announcement", "other"] = "promo"
     product: str = Field("", max_length=300, description="What the video is about")
@@ -53,6 +62,20 @@ class Brief(_M):
     format: Literal[tuple(FORMATS)] = "reels"  # type: ignore[valid-type]
     language: str = Field("en", max_length=20)
     notes: str = Field("", max_length=1000)
+    # brief tags (generate.brief_tags): clickable choices the prompts and code both use
+    funnel: str | None = Field(None, description="awareness | consideration | conversion | retention")
+    audience: Audience = Field(default_factory=Audience)
+    pace: str = Field("reference", description="reference | very_slow | slow | medium | fast | very_fast | build | pulse")
+    tone: list[str] = Field(default_factory=list)
+    rules: list[str] = Field(default_factory=list, description="Must do / avoid ids")
+
+    @model_validator(mode="after")
+    def _known_tags(self):
+        from . import brief_tags
+
+        self.audience.custom = [c.strip()[:40] for c in self.audience.custom if c.strip()]
+        brief_tags.check(self)
+        return self
 
 
 class BatchSpec(_M):
