@@ -292,7 +292,7 @@ def remove_sources(p: Project, ids: list[str]) -> dict:
     removed = {"sources": ids, "clips": [], "layers": [], "music": []}
     for sid in ids:  # everything that uses them, found before anything moves
         for k, v in source_uses(p, sid).items():
-            removed[k] += v
+            removed[k] += [x for x in v if x not in removed[k]]  # sources sharing one file (an image layer) count once
     p.layers = [l for l in p.layers if l.id not in removed["layers"]]
     p.music = [m for m in p.music if m.id not in removed["music"]]
     for cid in reversed(removed["clips"]):

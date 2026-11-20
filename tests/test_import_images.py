@@ -78,7 +78,9 @@ def test_remove_media_with_what_uses_it_and_undo(tmp_path):
     p = load(pdir)
     assert a not in p.sources and b not in p.sources and not p.clips and not any(l.type == "image" for l in p.layers)
     assert "+2 on the timeline" in r["message"]
-    assert (pdir / "media" / "a.png").exists()  # the file stays on disk
+    from vedit.generate import footage
+
+    assert list(footage.root().glob("*/file.png"))  # the file stays on disk (in the media library)
     history.undo(pdir)
     p = load(pdir)
     assert a in p.sources and b in p.sources and p.clips

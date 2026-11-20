@@ -52,11 +52,11 @@ def test_proxy_is_used_by_previews_only(cli, big_clip):
     prev, _ = build(p, d, d / "a.mp4", 0.5, "preview")
     exp, _ = build(p, d, d / "b.mp4", 1.0, "export")
     assert str(px) in _inputs(prev)
-    assert str(px) not in _inputs(exp) and any(i.endswith("big.mp4") for i in _inputs(exp))
+    assert str(px) not in _inputs(exp) and orig in _inputs(exp)  # the export reads the original (the library copy)
 
     # a clip with a tracked effect keeps the original (its masks are in the original's pixels)
     p.clips[0].effects.append(Effect(type="mask", params={"id": "mk1"}))
-    assert proxies.media_for(d, p, p.clips[0], preview=True).name == "big.mp4"
+    assert str(proxies.media_for(d, p, p.clips[0], preview=True)) == orig
 
 
 @needs_ffmpeg

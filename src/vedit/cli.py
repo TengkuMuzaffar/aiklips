@@ -193,9 +193,13 @@ def import_(
     at: Optional[int] = typer.Option(None, help="Insert at clip index instead of appending"),
     start: float = typer.Option(0.0, help="Source in-point (seconds)"),
     end: Optional[float] = typer.Option(None, help="Source out-point (seconds)"),
-    copy: bool = typer.Option(False, help="Copy the file into the project's media/ folder"),
+    copy: bool = typer.Option(False, help="Copy the file into the project's media/ folder (not the media library)"),
+    library: bool = typer.Option(True, help="Add the file to the media library (copied in, studied once in the background, "
+                                            "reusable in any project). --no-library points the project at the original file"),
 ):
     """Import video/audio/image files as sources (and add them to the timeline)."""
+    from . import media_library
+
     d = pdir()
     with edit("import " + ", ".join(Path(f).name for f in files)) as tx:
         p = tx.project
@@ -208,6 +212,8 @@ def import_(
                 if not dest.exists():
                     shutil.copy2(path, dest)
                 path = dest
+            elif library:
+                path = media_library.store_for_project(d, path)
             sid = p.new_id("s")
             p.sources[sid] = Source(path=store_media_path(d, path), **info)
             clip = None
@@ -250,16 +256,21 @@ def info():
             row["effects"] = [_fx_label(e) for e in l.effects]
             row["grade"] = l.grade.model_dump(exclude_none=True) if l.grade else None
         layers.append(row)
+    from . import media_library
+
+    studied = media_library.project_media(d, p)  # what the media library's study found in each source
     data = {"project": str(d), "name": p.name, "canvas": p.canvas.model_dump(), "duration": round(p.duration, 3),
             **({"main_hidden": True} if p.main_hidden else {}),
             **({"video_track_height": p.main_z} if p.main_z else {}),
-            "sources": {k: v.model_dump() for k, v in p.sources.items()}, "clips": clips, "layers": layers,
+            "sources": {k: v.model_dump() | ({"study": studied[k]} if k in studied else {}) for k, v in p.sources.items()},
+            "clips": clips, "layers": layers,
             **({"groups": __import__("vedit.ops.groups", fromlist=["summary"]).summary(p)} if p.groups else {}),
             "music": [m.model_dump(by_alias=True) for m in p.music], "history_step": history.head(d)}
     if STATE["json"]:
         return emit(data)
     out = [f"Project {p.name}  ({d})", f"Canvas {p.canvas.width}x{p.canvas.height} @{p.canvas.fps:g}fps   Duration {fmt_t(p.duration)}", "", "Sources:"]
-    out += [f"  {k}: {v.path}  {v.duration}s" + (f" {v.width}x{v.height}" if v.has_video else " audio") for k, v in p.sources.items()] or ["  (none)"]
+    out += [f"  {k}: {v.path}  {v.duration}s" + (f" {v.width}x{v.height}" if v.has_video else " audio")
+            + (f"\n  {media_library.media_line(k, '', studied[k]).strip()}" if k in studied else "") for k, v in p.sources.items()] or ["  (none)"]
     out += ["", "Timeline:"]
     out += [f"  {c['id']:>4}  {fmt_t(c['timeline'][0])} - {fmt_t(c['timeline'][1])}   " + ("(gap)" if c.get("gap") else f"src {c['source']} {c['source_range'][0]:.2f}-{c['source_range'][1]:.2f}s") +
             f"{'  x' + str(c['speed']) if c['speed'] != 1 else ''}{'  zoom ' + str(c['zoom']) if c['zoom'] != 1 or c['zoom_to'] else ''}{' -> ' + str(c['zoom_to']) if c['zoom_to'] else ''}"
@@ -2756,15 +2767,18 @@ def music_add(file: str, volume: float = 0.2, start: float = 0.0, offset: float 
               duck: bool = typer.Option(True, help="Lower music automatically while someone talks"),
               loop: bool = True, fade_in: float = 0.5, fade_out: float = 1.5):
     """Add background music."""
+    from . import media_library
+
     d = pdir()
     path = Path(file).expanduser().resolve()
     info = media.probe(path)
     if not info["has_audio"]:
         raise VeditError(f"{path.name} has no audio")
+    stored = media_library.store_for_project(d, path)  # beats / tempo measured once, reusable in other projects
     with edit(f"add music {path.name}") as tx:
         p = tx.project
         sid = p.new_id("s")
-        p.sources[sid] = Source(path=store_media_path(d, path), **info)
+        p.sources[sid] = Source(path=store_media_path(d, stored), **info)
         m = MusicTrack(id=p.new_id("m"), source=sid, start=start, in_=offset, volume=volume, duck=duck, loop=loop,
                        fade_in=fade_in, fade_out=fade_out)
         p.music.append(m)
@@ -3166,6 +3180,111 @@ def serve(
     except VeditError:
         d = None  # no active project: start on the home screen
     run(d, host, port, browser, dev)
+
+
+# ---- media library ----------------------------------------------------------------------
+
+media_app = typer.Typer(help="Media library: every imported file studied once (cuts, motion, light, speech, what is in "
+                             "each shot) and reusable in any project. Look a source up before choosing its shots")
+app.add_typer(media_app, name="media")
+
+
+def _media_id(ref: str) -> str:
+    """A library id, or a source id of the current project (s1) whose file is in the library."""
+    import re
+
+    from . import media_library
+    from .project import resolve_media
+
+    if re.fullmatch(r"s\d+", ref):
+        d = pdir()
+        p = load(d)
+        if ref not in p.sources:
+            raise VeditError(f"No source {ref}")
+        uid = media_library.id_for_path(resolve_media(d, p.sources[ref].path))
+        if not uid:
+            raise VeditError(f"{ref} is not in the media library (imported with --no-library or --copy). "
+                             f"Add it with `vedit media add {p.sources[ref].path}`")
+        return uid
+    return ref
+
+
+@media_app.command("list")
+def media_list(kind: Optional[str] = typer.Option(None, help="video | audio | image"),
+               search: Optional[str] = typer.Option(None, "--search", "-q", help="Find in names, tags and shot notes")):
+    """Everything in the media library, most recently used first."""
+    from . import media_library
+
+    rows = media_library.list_media(kind, search)
+    slim = [{k: r.get(k) for k in ("id", "name", "kind", "duration", "status", "tags", "uses")} | {"digest": r.get("digest")} for r in rows]
+    emit({"media": slim}, "\n".join(f"  {r['id']}  {r['kind']:<5} {r['status']:<8} {r['name']}" + (f"  [{', '.join(r['tags'])}]" if r["tags"] else "")
+                                     for r in rows) or "  (no media yet)")
+
+
+@media_app.command("add")
+def media_add(files: list[str]):
+    """Add files to the library (copied in) and study them in the background, without putting them in a project."""
+    from . import media_library
+
+    rows = [media_library.add(Path(f)) for f in files]
+    emit({"added": [{k: r.get(k) for k in ("id", "name", "kind", "status")} for r in rows]},
+         "\n".join(f"+ {r['id']} {r['name']} ({r['status']})" for r in rows))
+
+
+@media_app.command("show")
+def media_show(ref: str = typer.Argument(..., help="Library id, or a source of this project (s1)")):
+    """What the study found: the digest and every shot (time range, description, quality 1-5, what it is good for,
+    measured motion / light / speech, reviewer marks). Use it to pick shots by content instead of guessing."""
+    from . import media_library
+    from .generate import planner
+
+    uid = _media_id(ref)
+    note = media_library.study_now(uid)  # not studied yet (e.g. imported with the app closed): study it here
+    m = media_library.get(uid, full=True)
+    out = {k: m.get(k) for k in ("id", "name", "kind", "duration", "status", "error", "tags", "digest", "used_in")}
+    if note:
+        out["note"] = note
+    if m.get("segments"):
+        out["segments"] = [{k: v for k, v in sg.items() if k != "id"} | {"k": int(sg["id"].split(".s")[1])} for sg in m["segments"]]
+    human = [f"{m['name']}  ({m['kind']}, {m['status']})"]
+    if m.get("digest"):
+        human.append("  " + json.dumps({k: v for k, v in m["digest"].items() if k not in ("kind", "name")}))
+    human += ["  " + planner._shot_line(sg | {"id": f"s{sg['id'].split('.s')[1]}"}) for sg in m.get("segments") or []]
+    emit(out, "\n".join(human))
+
+
+@media_app.command("restudy")
+def media_restudy(ref: str):
+    """Measure and log the file again from scratch (your notes and tags are kept)."""
+    from . import media_library
+
+    m = media_library.restudy(_media_id(ref))
+    emit({"id": m["id"], "status": m["status"]}, f"Studying {m['name']} again")
+
+
+@media_app.command("tag")
+def media_tag(ref: str, tags: list[str] = typer.Argument(..., help="Tags (replace the current ones); '' clears")):
+    """Tag a file so it can be found later (product, b-roll, a client's name...)."""
+    from . import media_library
+
+    m = media_library.update(_media_id(ref), tags=[t for t in tags if t])
+    emit({"id": m["id"], "tags": m["tags"]}, f"{m['name']}: {', '.join(m['tags']) or 'no tags'}")
+
+
+@media_app.command("note")
+def media_note(ref: str, segment: int = typer.Argument(..., help="Segment number (k in `media show`)"),
+               text: Optional[str] = typer.Option(None, "--text", help="What is really in the shot"),
+               quality: Optional[int] = typer.Option(None, min=1, max=5, help="1 = unusable ... 5 = a strong opening shot"),
+               clear: bool = typer.Option(False, help="Go back to the AI's note")):
+    """Correct what the study says about one shot. Your note wins over the AI's and survives a re-study."""
+    from . import media_library
+
+    patch = None if clear else {k: v for k, v in (("description", text), ("quality", quality)) if v is not None}
+    if patch == {}:
+        raise VeditError("Give --text and/or --quality (or --clear)")
+    m = media_library.update(_media_id(ref), segment_overrides={str(segment): patch})
+    emit({"id": m["id"], "segment": segment, "override": m["overrides"].get(str(segment))},
+         f"{m['name']} segment {segment}: " + ("back to the AI's note" if clear else json.dumps(patch)))
 
 
 # ---- references + generation ------------------------------------------------------------

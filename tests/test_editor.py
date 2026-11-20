@@ -116,7 +116,9 @@ def test_editor_api_ops_and_import(cli, test_clip):
     assert r.status_code == 200, r.text
     st = client.get("/api/state").json()
     assert st["project"]["clips"][0]["id"] == r.json()["clip"]
-    assert (cli.project / "media" / "dropped.mp4").exists()
+    from vedit import media_library
+
+    assert media_library.id_for_path(st["project"]["sources"][r.json()["source"]]["path"])  # stored in the media library
     assert client.get(f"/api/source/{r.json()['source']}/thumb.jpg").status_code == 200
 
     # GUI edits share the undo history

@@ -12,6 +12,10 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
    - If no project exists: `uv run vedit init projects/<name>`, then `uv run vedit import <video files...>`.
    - Projects live in `projects/` (git-ignored).
 2. **Understand before cutting.** Read the clip list, durations and layers from `info`. For talking-head videos, run `silence-cut --dry-run` first.
+   Imported files go into the media library and are studied once in the background (cuts, motion, light, speech, what
+   is in every shot). `info` (`study` per source) and `<editor_context>` give a one-line summary; run
+   `uv run vedit --json media show sN` to pick shots by content (description, quality 1-5, `good_for` roles, speech)
+   instead of guessing from times. If the user says a note is wrong, fix it with `media note` (it wins over the AI's).
 3. **One intent per command.** Chain several small commands rather than hand-editing JSON.
 4. **Look at your work.**
    - After visual changes, run `uv run vedit --json frame --at <sec>` or `uv run vedit --json sheet`.
@@ -140,7 +144,8 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 ## Command cheat-sheet
 
 ```
-projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E] | remove-source <sN...> | info
+projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E --no-library --copy] | remove-source <sN...> | info
+media list [--kind video|audio|image --search Q] | media show <id|sN> | media add <files...> | media tag <id|sN> TAGS... | media note <id|sN> <k> [--text --quality 1-5 --clear] | media restudy <id|sN>
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T
 move <clip> --to N | place <clip> --at T (gap before it) | place <layer> [--at --end --track N --new-track --under-video --video-track --src-in]
@@ -395,6 +400,17 @@ Load the relevant one before doing that kind of edit.
   - Text contrast: `ops/contrast.py` (WCAG ratio of the letters vs. what is behind them: structural walk down the
     layers, else the rendered pixels around the glyphs), used by `audit.check_contrast` and by the CLI's `edit()`
     wrapper, which adds `warnings` to the command's output when an edit makes text unreadable.
+  - Media library: `media_library.py` (SQLite `media` + `media_usage` in library.db; files stay in
+    `~/.aiklips/uploads/<id>/`, id = content hash, so a source's library id comes from its path, `id_for_path`, no
+    project.json field). Every import (`footage.add`, `vedit import`, `music add`, the editor's drop) registers the file
+    and queues one `media_study` job: measure (`footage.segments/measure/_audio_stats`) -> AI notes
+    (`footage.describe`, at most `MAX_AI_SEGMENTS` sampled) -> role -> transcript (only if faster-whisper is installed)
+    -> `digest.json` (code). Status ready | partial (AI notes missing, still usable) | failed. Re-studied at app start
+    when `MEASURE_VERSION` / `prompts.FOOTAGE_VERSION` is newer (`restudy_stale`). User corrections are `overrides`
+    per segment, applied in `footage.shot_log`. Generate waits for studies (`batch._prepare_inner`, `wait_list`).
+    Planner prompts get layered context from `generate/context.py`: a code-made situation + recipe, one line per file,
+    and a ranked segment shortlist within a line budget. UI: the Media tab in `home.html` (+ "pick from your media" in
+    the wizard), API `/api/media*` in `gen_routes.py`, CLI `vedit media`. Design + open items: `docs/design/media-library.md`.
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
 - **Before committing:** keep the tests green. Add a test for each new op.

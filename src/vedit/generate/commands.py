@@ -42,7 +42,7 @@ DENIED = {
     **dict.fromkeys(["info", "fonts", "audit", "frame", "sheet", "preview", "history"],
                     "read-only: nothing to see in a one-shot plan (the auditor reviews the render)"),
     **dict.fromkeys(["undo", "redo", "checkout", "version"], "history is managed by the generator"),
-    **dict.fromkeys(["audit-settings", "taste", "ai-models", "template", "update", "ref", "gen", "design", "scene", "proxy"],
+    **dict.fromkeys(["audit-settings", "taste", "ai-models", "template", "update", "ref", "gen", "design", "scene", "proxy", "media"],
                     "app-wide settings or another tool, not part of one edit"),
     **dict.fromkeys(["bg", "face", "mask", "focus"], "slow AI tracking / segmentation: too slow for a batch, use it in the editor"),
 }

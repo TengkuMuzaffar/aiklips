@@ -509,14 +509,46 @@ body.selecting .card .thumb .hov { display: none; }
 @media (max-width: 900px) { .intro, .intro.compact { grid-template-columns: 1fr; } .intro.compact .intro-steps { flex-wrap: wrap; } }
 @media (max-width: 1100px) { .starts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 860px) {
-  .app { grid-template-columns: 1fr; }
-  .side { position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .side .tabs { flex-direction: row; } .side .tab[aria-selected=true]::before { display: none; }
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { min-width: 0; position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .side .tabs { flex-direction: row; flex: 1 1 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; } .side .tabs .tab { flex: none; width: auto; } .side .tab[aria-selected=true]::before { display: none; }
   .brand { padding: 0 8px 0 0; } .side-new, .side-sec, .side-ver, .side .spacer { display: none; }
   header, main { padding-left: 16px; padding-right: 16px; }
   .rows .rh, .rows .row { grid-template-columns: 64px minmax(0, 1fr) 36px; } .rows .c, .rows .rp, .rows .rh .c { display: none; }
 }
 @media (max-width: 560px) { .starts { grid-template-columns: 1fr; } .searchbox input { width: 150px; } }
+/* ================= media library ================= */
+.grid.media { grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); }
+.grid.media .thumb { aspect-ratio: 16 / 11; }
+.thumb .kindic { position: relative; color: var(--accent); opacity: .8; }
+.media-foot { color: var(--faint); font-size: 12.5px; margin-top: 18px; }
+.md-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.md-player { background: #000; border-radius: 12px; overflow: hidden; display: grid; place-items: center; min-height: 160px; }
+.md-player video, .md-player img { max-width: 100%; max-height: 340px; display: block; }
+.md-player audio { width: calc(100% - 40px); margin: 20px; }
+.md-side { display: flex; flex-direction: column; gap: 10px; }
+.md-side label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.md-facts { display: flex; flex-wrap: wrap; gap: 5px; }
+.md-status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.md-say { font-size: 12.5px; color: var(--muted); background: var(--pane2); border-radius: 10px; padding: 8px 10px; font-style: italic; }
+.md-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.md-acts .spacer { flex: 1; }
+.md-segs { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.md-seg { display: grid; grid-template-columns: 92px 64px minmax(0, 1fr); gap: 8px; align-items: center; background: var(--pane2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.md-seg.edited { border-color: #c5f46755; }
+.md-seg .t { font-variant-numeric: tabular-nums; font-size: 12px; }
+.md-seg input { width: 100%; }
+.md-seg small { grid-column: 3; color: var(--faint); font-size: 11.5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.md-used { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
+#pick-body input[type=search] { width: 100%; }
+.pick-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; max-height: 56vh; overflow: auto; padding: 2px; margin-top: 12px; }
+.pick { border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--pane2); text-align: left; padding: 0; color: inherit; font: inherit; }
+.pick.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pick .pt { aspect-ratio: 16 / 10; background: #000; display: grid; place-items: center; overflow: hidden; position: relative; }
+.pick .pt .bgblur { display: none; }
+.pick .pt img { max-width: 100%; max-height: 100%; }
+.pick .pn { padding: 6px 8px; font-size: 12px; } .pick .pn small { display: block; color: var(--faint); }
+@media (max-width: 760px) { .md-head { grid-template-columns: 1fr; } .md-seg { grid-template-columns: auto auto minmax(0, 1fr); } .md-seg input, .md-seg small { grid-column: 1 / -1; } }
 </style>
 <link rel="stylesheet" href="/static/ui.css">
 <script src="/static/shell.js"></script>
@@ -528,6 +560,7 @@ body.selecting .card .thumb .hov { display: none; }
   <button class="primary side-new" id="b-new-side" title="Create a new video project (N)"></button>
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="projects" data-ic="home" title="Your editing projects (1)">Home<span class="n" id="n-proj"></span></button>
+    <button class="tab" role="tab" data-tab="media" data-ic="layers" title="Your footage, sounds and images: studied once by the AI, used in any project or generation (5)">Media<span class="n" id="n-media"></span></button>
     <div class="side-sec">AI studio</div>
     <button class="tab" role="tab" data-tab="references" data-ic="film" title="Videos the AI studies for style (2)">References<span class="beta">Beta</span><span class="n" id="n-refs"></span></button>
     <button class="tab" role="tab" data-tab="generate" data-ic="wand" title="Generate videos in a reference style (3)">Generate<span class="beta">Beta</span><span class="n" id="n-gen"></span></button>
@@ -548,10 +581,12 @@ body.selecting .card .thumb .hov { display: none; }
   <button class="primary" id="b-new" data-for="projects" style="display:none" title="Create a new video project (N)">＋ New project</button>
   <button class="primary" id="b-ref-add" style="display:none" data-for="references" title="Add videos for the AI to study">＋ Add videos</button>
   <button class="primary" id="b-gen-new" style="display:none" data-for="generate" title="Start the generation wizard">＋ New generation</button>
+  <button class="primary" id="b-media-add" style="display:none" data-for="media" title="Add footage, sounds or images to your library">＋ Add media</button>
   <button class="primary" id="b-des-new" style="display:none" data-for="design" title="Start a new motion design">＋ New design</button>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
   <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
+  <input type="file" id="media-file" accept="video/*,audio/*,image/*" multiple hidden>
   <input type="file" id="imp-file" accept="video/*,image/*,audio/*" multiple hidden>
 </header>
 <main id="view-projects">
@@ -588,6 +623,18 @@ body.selecting .card .thumb .hov { display: none; }
   <div id="gen-list"></div>
 </main>
 
+<main id="view-media" hidden>
+  <div class="intro" id="media-intro"></div>
+  <div class="sec-h" id="media-head">
+    <h3>Your media</h3><span class="count" id="media-count"></span>
+    <div class="spacer"></div>
+    <label class="searchbox"><span data-ic-s="search"></span><input id="media-search" type="search" placeholder="Search what's in them  ( / )" aria-label="Search media"></label>
+    <select id="media-kind" aria-label="Kind"><option value="">All kinds</option><option value="video">Videos</option><option value="audio">Sounds</option><option value="image">Images</option></select>
+    <select id="media-use" aria-label="Use"><option value="">Used or not</option><option value="used">Used</option><option value="unused">Not used yet</option></select>
+  </div>
+  <div id="media-list"></div>
+  <div class="media-foot" id="media-foot"></div>
+</main>
 <main id="view-design" hidden>
   <div class="intro" id="des-intro"></div>
   <div class="sec-h" id="des-head"><h3>Designs</h3><span class="count" id="des-count"></span></div>
@@ -624,6 +671,8 @@ body.selecting .card .thumb .hov { display: none; }
 </div></div>
 
 <div class="veil" id="dlg-wiz"><div class="dialog wide" id="wiz-body"></div></div>
+<div class="veil" id="dlg-media"><div class="dialog wide" id="media-body"></div></div>
+<div class="veil" id="dlg-pick" style="z-index:40"><div class="dialog wide" id="pick-body"></div></div>
 <div class="veil" id="dlg-play"><div class="dialog wide" id="play-body"></div></div>
 
 <div id="toast"></div>
@@ -938,10 +987,10 @@ $("#imp-file").onchange = (e) => { const fs = [...e.target.files]; e.target.valu
 (() => {
   let depth = 0;
   const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
-  const active = () => (TAB === "projects" || (TAB === "references" && !REF_OPEN)) && $("#dlg-wiz").style.display !== "flex";
+  const active = () => (TAB === "projects" || TAB === "media" || (TAB === "references" && !REF_OPEN)) && $("#dlg-wiz").style.display !== "flex";
   window.addEventListener("dragenter", (e) => {
     if (!isFiles(e) || !active()) return; depth++;
-    $("#dropveil b").textContent = TAB === "references" ? "Drop to add references" : "Drop to start a new project";
+    $("#dropveil b").textContent = TAB === "references" ? "Drop to add references" : TAB === "media" ? "Drop to add to your media" : "Drop to start a new project";
     $("#dropveil").classList.add("on");
   });
   window.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; $("#dropveil").classList.remove("on"); } });
@@ -949,7 +998,7 @@ $("#imp-file").onchange = (e) => { const fs = [...e.target.files]; e.target.valu
   window.addEventListener("drop", (e) => {
     depth = 0; $("#dropveil").classList.remove("on");
     if (!isFiles(e) || !active()) return;
-    e.preventDefault(); TAB === "references" ? uploadRefs(e.dataTransfer.files) : importAsProject(e.dataTransfer.files);
+    e.preventDefault(); TAB === "references" ? uploadRefs(e.dataTransfer.files) : TAB === "media" ? uploadMedia(e.dataTransfer.files) : importAsProject(e.dataTransfer.files);
   });
 })();
 async function openProject(p) {
@@ -1048,7 +1097,7 @@ const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 const spinner = () => h("span", { class: "spin" });
 
 // ============================================================ tabs
-const TABS = ["projects", "references", "generate", "design"];
+const TABS = ["projects", "references", "generate", "design", "media"];
 const BETA_TABS = ["references", "generate"];
 const [HASH_TAB, HASH_REF] = location.hash.slice(1).split("/");
 let TAB = TABS.includes(HASH_TAB) ? HASH_TAB : "projects";
@@ -1057,7 +1106,7 @@ function setTab(t) {
   history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
   if (REF_OPEN) closeRef(false);
   for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
-  $("#page-title").replaceChildren({ projects: "Home", references: "References", generate: "Generate", design: "Design" }[t],
+  $("#page-title").replaceChildren({ projects: "Home", references: "References", generate: "Generate", design: "Design", media: "Media" }[t],
     ...(BETA_TABS.includes(t) ? [h("span", { class: "beta" }, "Beta")] : []));
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("header [data-for]").forEach((b) => (b.hidden = b.dataset.for !== t));
@@ -1065,6 +1114,7 @@ function setTab(t) {
   if (t === "references") loadRefs();
   if (t === "generate") loadBatches();
   if (t === "design") loadDesigns();
+  if (t === "media") loadMedia();
 }
 document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
 
@@ -1670,17 +1720,28 @@ async function uploadFootage(files, target = "footage") {
   let added = [];
   if (!r.ok) toast(d.detail || "Upload failed", true);
   else {
-    added = d.added.filter((f) => !W.footage.some((x) => x.id === f.id) && !W.sound.some((x) => x.id === f.id));
-    for (const f of added) {
-      if (target === "sound") {
-        if (!canSound(f)) { toast(`“${f.name}” has no sound to use`, true); continue; }
-        W.manual.add(f.id); placeAs(f, "sound");
-      } else placeAs(f, f.kind === "audio" ? "sound" : "footage", f.kind === "audio" ? `“${f.name}” is audio, so it went to Sound` : null);
-    }
+    added = addToWizard(d.added, target);
     if (d.errors.length) toast(d.errors.join("; "), true);
   }
   renderWizIfOpen();
   sortWithAI(added);
+}
+function addToWizard(files, target) {
+  // Put uploaded or library files in Footage / Sound (skipping ones already there); returns the ones added
+  const added = files.filter((f) => !W.footage.some((x) => x.id === f.id) && !W.sound.some((x) => x.id === f.id));
+  for (const f of added) {
+    if (target === "sound") {
+      if (!canSound(f)) { toast(`“${f.name}” has no sound to use`, true); continue; }
+      W.manual.add(f.id); placeAs(f, "sound");
+    } else placeAs(f, f.kind === "audio" ? "sound" : "footage", f.kind === "audio" ? `“${f.name}” is audio, so it went to Sound` : null);
+  }
+  return added;
+}
+function pickFromLibrary(target) {
+  pickMedia(target === "sound" ? ["audio", "video"] : ["video", "image"], (files) => {
+    const added = addToWizard(files, target);
+    renderWizIfOpen(); sortWithAI(added);
+  });
 }
 $("#foot-file").onchange = (e) => { uploadFootage(e.target.files); e.target.value = ""; };
 $("#snd-file").onchange = (e) => { uploadFootage(e.target.files, "sound"); e.target.value = ""; };
@@ -1709,8 +1770,9 @@ function fileRow(f, where, i) {
 }
 function wizFootage(el) {
   el.append(h("p", {}, "Your own material: the pictures that get cut into the video. Videos are required; add images (logo, product shots) if you like. Videos keep their own audio. The AI checks each video: one that is really just a sound (a song over a still image, a trending sound) moves to the Sound step."));
-  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos or images here, or ",
-    h("button", { class: "mini", onclick: () => $("#foot-file").click(), title: "Choose files" }, "choose files")]);
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop videos or images here, ",
+    h("button", { class: "mini", onclick: () => $("#foot-file").click(), title: "Choose files" }, "choose files"), " or ",
+    h("button", { class: "mini", onclick: () => pickFromLibrary("footage"), title: "Files already in your media library: studied, nothing to wait for" }, "pick from your media")]);
   dropTarget(zone, (files) => uploadFootage(files, "footage"));
   el.append(zone);
   el.append(h("div", { class: "files" }, W.footage.map((f) => fileRow(f, "footage"))));
@@ -1718,8 +1780,9 @@ function wizFootage(el) {
 }
 function wizSound(el) {
   el.append(h("p", {}, "Optional: music tracks or sounds. Drop audio files, or videos and only their sound is used (their pictures never appear). Each video gets one sound; with several, the videos take turns (video 1 gets the first, video 2 the second…). Cuts snap to the beat when the reference style does."));
-  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop songs, sounds or videos here, or ",
-    h("button", { class: "mini", onclick: () => $("#snd-file").click(), title: "Choose files" }, "choose files")]);
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Uploading and measuring…"] : ["Drop songs, sounds or videos here, ",
+    h("button", { class: "mini", onclick: () => $("#snd-file").click(), title: "Choose files" }, "choose files"), " or ",
+    h("button", { class: "mini", onclick: () => pickFromLibrary("sound"), title: "Sounds and videos already in your media library" }, "pick from your media")]);
   dropTarget(zone, (files) => uploadFootage(files, "sound"));
   el.append(zone);
   el.append(h("div", { class: "files" }, W.sound.map((f, i) => fileRow(f, "sound", i))));
@@ -1938,6 +2001,198 @@ function openNewDesign() {
 }
 $("#b-des-new").onclick = () => openNewDesign();
 
+// ============================================================ media library
+// Every file the user brings in is studied once (measured by code, logged by the AI) and reused in any project or
+// generation. API: /api/media (media_library.py).
+let MEDIA = [], MEDIA_BYTES = 0, mediaTimer = null, MEDIA_OPEN = null;
+const mediaBusy = (m) => !["ready", "partial", "failed"].includes(m.status);
+const KIND_LABEL = { video: "Video", audio: "Sound", image: "Image" };
+const bytes = (n) => n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+async function loadMedia() {
+  const d = await (await fetch("/api/media")).json();
+  MEDIA = d.media; MEDIA_BYTES = d.bytes;
+  $("#n-media").textContent = MEDIA.length ? String(MEDIA.length) : "";
+  if (TAB === "media") renderMedia();
+  if (MEDIA_OPEN && $("#dlg-media").style.display === "flex") {
+    const m = MEDIA.find((x) => x.id === MEDIA_OPEN);
+    if (m && m.status !== $("#media-body").dataset.status) openMedia(MEDIA_OPEN);  // its study just finished
+  }
+  clearTimeout(mediaTimer);
+  if (MEDIA.some(mediaBusy)) mediaTimer = setTimeout(loadMedia, 2000);
+  return MEDIA;
+}
+function mediaBadge(m) {
+  if (m.status === "ready") return null;
+  if (m.status === "partial") return h("span", { class: "badge warn2", title: m.error || "" }, "Measured only");
+  if (m.status === "failed") return h("span", { class: "badge warn", title: m.error || "" }, "Failed");
+  return h("span", { class: "badge busy" }, spinner(), m.progress || (m.status === "queued" ? "Queued" : "Studying…"));
+}
+function mediaSummary(m) {
+  const g = m.digest || {};
+  if (m.kind === "audio") return [g.bpm ? `${Math.round(g.bpm)} BPM` : null, g.beats ? `${g.beats} beats` : null].filter(Boolean).join(" · ");
+  if (m.kind === "image") return m.width ? `${m.width}×${m.height}` : "";
+  return [g.usable_s != null ? `${g.usable_s}s usable` : null, g.speech ? "speech" : null, (g.subjects || [])[0]].filter(Boolean).join(" · ");
+}
+function filteredMedia() {
+  const q = $("#media-search").value.trim().toLowerCase(), kind = $("#media-kind").value, use = $("#media-use").value;
+  return MEDIA.filter((m) => (!kind || m.kind === kind) && (!use || (use === "used" ? m.uses > 0 : !m.uses))
+    && (!q || [m.name, m.search, ...(m.tags || [])].some((x) => x && x.toLowerCase().includes(q))));
+}
+function renderMedia() {
+  intro($("#media-intro"), { kicker: "Library · Media", title: ["Study it ", h("em", {}, "once"), ", use it everywhere"],
+    body: "Footage, sounds and images you add here are studied in the background: cuts, motion, light, speech, and what is in every shot. Any project or generation can use them straight away.",
+    steps: [["upload", "Add your files", "Videos, songs, product shots."], ["eye", "The AI studies each one", "Once. Never again for the same file."], ["wand", "Use them anywhere", "Pick them in Generate; the planner already knows them."]],
+    cta: "Add media", ctaIcon: "plus", onCta: () => $("#media-file").click(), compact: MEDIA.length > 0 });
+  $("#media-head").hidden = !MEDIA.length;
+  $("#media-count").textContent = MEDIA.length ? String(MEDIA.length) : "";
+  $("#media-foot").textContent = MEDIA.length ? `${bytes(MEDIA_BYTES)} on this computer. Files are copied in, so your originals can move or be deleted safely.` : "";
+  const list = $("#media-list"); list.innerHTML = "";
+  if (!MEDIA.length) {
+    list.append(h("div", { class: "empty small" }, h("div", { class: "empty-drop" },
+      h("h2", {}, "Drop your ", h("em", {}, "footage"), " here"),
+      h("p", {}, "Videos, sounds and images. Each one is studied once in the background, then ready for every project."),
+      h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => $("#media-file").click() }, AK.icon("upload", 15), "Choose files")))));
+    return;
+  }
+  const ms = filteredMedia();
+  if (!ms.length) { list.append(h("div", { class: "empty small" }, h("h2", {}, "Nothing matches"))); return; }
+  const grid = h("div", { class: "grid media" });
+  grid.append(h("div", { class: "card new", tabindex: 0, onclick: () => $("#media-file").click(), onkeydown: (e) => e.key === "Enter" && $("#media-file").click() },
+    h("div", { class: "thumb" }, h("span", { class: "plus" }, AK.icon("plus", 22)), h("b", {}, "Add media"), h("small", {}, "or drop files here"))));
+  ms.forEach((m, i) => grid.append(mediaCard(m, i)));
+  list.append(grid);
+}
+function mediaThumb(m, cls = "thumb") {
+  const url = `/api/media/${m.id}/thumb.jpg?v=${Math.round(m.created_at)}`;
+  const t = h("div", { class: cls });
+  if (m.kind === "audio") t.append(h("span", { class: "kindic" }, AK.icon("play", 30)));
+  else t.append(h("div", { class: "bgblur", style: { backgroundImage: `url(${url})` } }), h("img", { src: url, alt: "", onerror: (e) => e.target.remove() }));
+  return t;
+}
+function mediaCard(m, i = 0) {
+  const thumb = mediaThumb(m);
+  const b = mediaBadge(m); if (b) thumb.append(b);
+  if (m.duration) thumb.append(h("span", { class: "dur" }, dur(m.duration)));
+  thumb.append(h("span", { class: "fmt" }, KIND_LABEL[m.kind] || m.kind));
+  if (mediaBusy(m)) thumb.append(h("div", { class: "studying" }, h("span", { class: "ak-spin" }), m.progress || "Studying…"));
+  else thumb.append(h("div", { class: "hov" }, h("span", {}, AK.icon("eye", 18))));
+  const sub = mediaBusy(m) ? "Being studied" : m.status === "failed" ? "Couldn't be studied" : mediaSummary(m) || `Added ${ago(m.created_at)}`;
+  return h("div", { class: "card", tabindex: 0, style: { "--d": Math.min(i, 12) * 35 + "ms" }, title: (m.digest && m.digest.summary) || m.name,
+    onclick: () => openMedia(m.id), onkeydown: (e) => e.key === "Enter" && openMedia(m.id) },
+    thumb, h("div", { class: "info" }, h("div", { class: "txt" }, h("div", { class: "name" }, m.name), h("div", { class: "meta" }, sub),
+      (m.tags || []).length ? h("div", { class: "chips" }, m.tags.slice(0, 3).map((t) => h("span", { class: "chip" }, t))) : m.uses ? h("div", { class: "chips" }, h("span", { class: "chip" }, `used ${m.uses}×`)) : null)));
+}
+async function uploadMedia(files) {
+  const fd = new FormData(); [...files].forEach((f) => fd.append("files", f));
+  toast(`Adding ${files.length} file(s)…`);
+  const r = await fetch("/api/media", { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(d.detail || "Upload failed", true); return; }
+  if (d.errors && d.errors.length) toast(d.errors.join("; "), true);
+  else toast(`${d.added.length} file(s) added. The AI is studying them in the background.`);
+  loadMedia();
+}
+$("#media-file").onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) uploadMedia(fs); };
+$("#b-media-add").onclick = () => $("#media-file").click();
+$("#media-search").oninput = debounce(renderMedia, 150);
+$("#media-kind").onchange = renderMedia;
+$("#media-use").onchange = renderMedia;
+
+async function openMedia(id) {
+  const r = await fetch(`/api/media/${id}`);
+  if (!r.ok) { toast("That file is no longer in your media", true); loadMedia(); return; }
+  const m = await r.json();
+  MEDIA_OPEN = id;
+  const body = $("#media-body"); body.dataset.status = m.status; body.innerHTML = "";
+  const src = `/api/media/${id}/file`;
+  const player = m.kind === "video" ? h("video", { src, controls: true, preload: "metadata", playsinline: true })
+    : m.kind === "audio" ? h("audio", { src, controls: true, preload: "metadata" }) : h("img", { src, alt: "" });
+  const g = m.digest || {};
+  const facts = [m.duration ? dur(m.duration) : null, m.width ? `${m.width}×${m.height}` : null, g.orientation, g.usable_s != null ? `${g.usable_s}s usable` : null,
+    g.energy ? `energy ${g.energy}` : null, g.speech ? "speech" : null, m.kind === "video" ? (m.has_audio ? "own sound" : "silent") : null,
+    g.bpm ? `${Math.round(g.bpm)} BPM` : null, g.role ? `best as ${g.role}` : null, ...(g.subjects || []), ...((g.roles || []).slice(0, 3).map((x) => `good for ${x}`))].filter(Boolean);
+  const status = mediaBusy(m) ? [spinner(), m.progress || "Being studied…"]
+    : m.status === "failed" ? [`Couldn't be studied: ${m.error || "unknown error"}`]
+    : m.status === "partial" ? [m.error || "Measured, but the AI notes are incomplete."] : ["Studied. Ready to use in any project or generation."];
+  const name = h("input", { value: m.name, "aria-label": "Name", onchange: async (e) => { if (await call("PATCH", `/api/media/${id}`, { name: e.target.value })) loadMedia(); } });
+  const tags = h("input", { value: (m.tags || []).join(", "), placeholder: "product, b-roll, client X", "aria-label": "Tags",
+    onchange: async (e) => { if (await call("PATCH", `/api/media/${id}`, { tags: e.target.value.split(",") })) loadMedia(); } });
+  body.append(
+    h("div", { class: "md-head" }, h("div", { class: "md-player" }, player),
+      h("div", { class: "md-side" },
+        h("label", {}, "Name", name), h("label", {}, "Tags (comma separated, searchable)", tags),
+        h("div", { class: "md-facts" }, facts.map((f) => h("span", { class: "chip" }, f))),
+        h("div", { class: "md-status" }, ...status),
+        g.transcript ? h("div", { class: "md-say" }, `“${g.transcript}”`) : null,
+        h("div", { class: "md-acts" },
+          h("button", { onclick: () => restudyMedia(m), disabled: mediaBusy(m), title: "Measure and log it again from scratch. Your corrections are kept." }, AK.icon("refresh", 14), " Study again"),
+          h("button", { class: "danger", onclick: () => deleteMedia(m) }, AK.icon("trash", 14), " Delete"),
+          h("div", { class: "spacer" }), h("button", { class: "primary", onclick: closeMedia }, "Done"))))
+  );
+  if (m.used_in && m.used_in.length)
+    body.append(h("div", { class: "md-used" }, `Used in ${m.used_in.length} place(s): `, m.used_in.slice(0, 6).map((u) => `${u.kind === "batch" ? "generation" : "project"} ${u.target.split("/").pop()} (${ago(u.used_at)})`).join(", ")));
+  if (m.kind === "video" && m.segments && m.segments.length) {
+    body.append(h("h3", { style: { margin: "18px 0 0", fontSize: "14px" } }, `What the AI saw, shot by shot (${m.segments.length})`),
+      h("p", { class: "hint", style: { margin: "4px 0 0" } }, "Fix anything it got wrong: your notes and scores win over the AI's and are kept if the file is studied again."),
+      h("div", { class: "md-segs" }, m.segments.map((sg) => segRow(m, sg, player))));
+  }
+  show("#dlg-media");
+}
+function segRow(m, sg, player) {
+  const k = sg.id.split(".s")[1];
+  const edited = !!(m.overrides || {})[k];
+  const save = async (patch) => { if (await call("PATCH", `/api/media/${m.id}`, { overrides: { [k]: patch } })) { openMedia(m.id); loadMedia(); } };
+  const q = h("select", { "aria-label": "Quality", title: "Quality 1-5 (5 = a strong opening shot)", onchange: (e) => save({ quality: +e.target.value }) },
+    [1, 2, 3, 4, 5].map((n) => h("option", { value: n, selected: n === (sg.quality || 3) }, `q${n}`)));
+  const desc = h("input", { value: sg.description || "", "aria-label": "What is in this shot", onchange: (e) => save({ description: e.target.value }) });
+  const extra = [sg.shot, (sg.good_for || []).length ? `good for ${sg.good_for.join(", ")}` : null,
+    sg.measured ? (sg.measured.motion < 0.01 ? "static" : sg.measured.motion > 0.06 ? "fast motion" : "moving") : null,
+    sg.measured && sg.measured.voice >= 0.4 ? "speech" : null, sg.marks ? "reviewer notes" : null].filter(Boolean);
+  return h("div", { class: "md-seg" + (edited ? " edited" : "") },
+    h("button", { class: "mini t", title: "Play from here", onclick: () => { if (player.tagName === "VIDEO") { player.currentTime = sg.from; player.play(); } } }, `${sg.from.toFixed(1)}–${sg.to.toFixed(1)}s`),
+    q, desc,
+    h("small", {}, ...extra.map((x) => h("span", {}, x)),
+      edited ? h("button", { class: "mini", title: "Go back to the AI's note", onclick: () => save(null) }, "Undo my edit") : null));
+}
+function closeMedia() { MEDIA_OPEN = null; $("#media-body").innerHTML = ""; hide("#dlg-media"); }
+async function restudyMedia(m) {
+  if (await call("POST", `/api/media/${m.id}/restudy`)) { toast(`Studying “${m.name}” again`); await loadMedia(); openMedia(m.id); }
+}
+function deleteMedia(m) {
+  const used = (m.used_in || []).length;
+  confirmDanger(`Delete “${m.name}”?`, used
+    ? `It is used in ${used} project(s) or generation(s). They keep their finished videos, but re-editing or regenerating them will no longer find this file.`
+    : "Removes the file and what the AI learned about it from your library. Your original file is not touched.", "Delete", async () => {
+    if (!(await call("DELETE", `/api/media/${m.id}${used ? "?force=true" : ""}`))) return;
+    toast("Deleted from your media"); closeMedia(); loadMedia();
+  });
+}
+
+// pick files that are already in the library (the generation wizard's Footage / Sound steps)
+async function pickMedia(kinds, onPick) {
+  const all = (await (await fetch("/api/media")).json()).media.filter((m) => kinds.includes(m.kind) && m.status !== "failed" && !m.missing);
+  const chosen = new Set();
+  const body = $("#pick-body"); body.innerHTML = "";
+  const q = h("input", { type: "search", placeholder: "Search names, tags and what's in them", "aria-label": "Search media" });
+  const grid = h("div", { class: "pick-list" });
+  const count = h("span", { class: "count" });
+  const ok = h("button", { class: "primary", disabled: true, onclick: () => { hide("#dlg-pick"); onPick(all.filter((m) => chosen.has(m.id))); } }, "Add");
+  const draw = () => {
+    const s = q.value.trim().toLowerCase();
+    grid.replaceChildren(...all.filter((m) => !s || [m.name, m.search, ...(m.tags || [])].some((x) => x && x.toLowerCase().includes(s)))
+      .map((m) => h("button", { class: "pick" + (chosen.has(m.id) ? " on" : ""), onclick: () => { chosen.has(m.id) ? chosen.delete(m.id) : chosen.add(m.id); draw(); } },
+        mediaThumb(m, "pt"), h("div", { class: "pn" }, h("b", {}, m.name), h("small", {}, [KIND_LABEL[m.kind], m.duration ? dur(m.duration) : null, mediaBusy(m) ? "still being studied" : mediaSummary(m)].filter(Boolean).join(" · "))))));
+    if (!all.length) grid.replaceChildren(h("p", { class: "hint" }, "Nothing in your media yet. Files you upload here are added to it automatically."));
+    count.textContent = chosen.size ? `${chosen.size} selected` : "";
+    ok.disabled = !chosen.size; ok.textContent = chosen.size ? `Add ${chosen.size}` : "Add";
+  };
+  q.oninput = draw;
+  body.append(h("h2", {}, "Pick from your media"), h("p", { class: "hint" }, "Already studied, so the AI knows what's in them and there's nothing to wait for."), q, grid,
+    h("div", { class: "row", style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "14px" } }, count, h("div", { class: "spacer", style: { flex: 1 } }),
+      h("button", { onclick: () => hide("#dlg-pick") }, "Cancel"), ok));
+  draw(); show("#dlg-pick"); q.focus();
+}
+
 // ============================================================ keys + start
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
@@ -1948,8 +2203,9 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && TAB === "projects" && picking()) { e.preventDefault(); pickAll(true); return; }
   if (e.key === "/" && TAB === "projects") { e.preventDefault(); $("#search").focus(); }
   if (e.key === "/" && TAB === "references" && !REF_OPEN) { e.preventDefault(); $("#ref-search").focus(); }
-  if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : TAB === "design" ? openNewDesign() : openWizard(); }
-  if (["1", "2", "3", "4"].includes(e.key)) setTab(TABS[+e.key - 1]);
+  if (e.key === "/" && TAB === "media") { e.preventDefault(); $("#media-search").focus(); }
+  if (e.key.toLowerCase() === "n") { e.preventDefault(); TAB === "projects" ? openNew() : TAB === "references" ? $("#ref-file").click() : TAB === "media" ? $("#media-file").click() : TAB === "design" ? openNewDesign() : openWizard(); }
+  if (["1", "2", "3", "4", "5"].includes(e.key)) setTab(TABS[+e.key - 1]);
 });
 function tourDone(a) { setTab("projects"); if (a === "new") openNew(); if (a === "import") $("#imp-file").click(); }
 // ---- shell: icons, view toggle, scroll shadow, menu bar, onboarding / what's new ----
@@ -1978,6 +2234,7 @@ if (TAB === "references" && HASH_REF) openRef(HASH_REF);
 loadRefs();
 loadBatches();
 loadDesigns();
+if (TAB !== "media") loadMedia();  // sidebar count
 fetch("/api/update").then((r) => (r.ok ? r.json() : null)).then((u) => {
   if (!(u?.enabled && (u.available || u.staged))) return;
   const b = $("#b-update"); b.hidden = false;

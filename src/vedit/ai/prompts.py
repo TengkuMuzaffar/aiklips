@@ -1,6 +1,7 @@
 """System prompts for every AI task. Bump PROMPT_VERSION when a prompt changes meaningfully:
 references record the version that studied them, so the UI can offer a re-study."""
 
+FOOTAGE_VERSION = 1  # the FOOTAGE logging prompt: bump to re-log every file in the media library (media_library.restudy_stale)
 PROMPT_VERSION = 5  # 2: colour look + bundled font; 3: signature moves; 4: gaps (what vedit can't rebuild); 5: design pass + whole-video sheet. Study prompt only.
 
 STUDY = """You are a senior short-form video editor AND a senior motion designer. You are studying a reference

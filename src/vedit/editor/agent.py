@@ -341,7 +341,7 @@ _VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts"
 _VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
                    "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
                    "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
-                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"}, "style": {"list", "show"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"}, "style": {"list", "show"}, "media": {"list", "show"},
                    "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
 _VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models", "platform"}  # read-only when given no options
 _VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them
@@ -967,6 +967,17 @@ class ChatSession:
                     pass
             if ctx.get("playhead") is not None:
                 lines.append(f"playhead: {float(ctx['playhead']):.2f}s")
+            try:  # what the media library's study found in the sources (one line each; every shot via `vedit media show sN`)
+                from .. import media_library
+
+                studied = media_library.project_media(self.pdir, p)
+                if studied:
+                    lines.append("media (studied once; `vedit media show sN` lists every shot with notes, quality and roles):")
+                    lines += [media_library.media_line(sid, Path(p.sources[sid].path).name, m) for sid, m in list(studied.items())[:8]]
+                    if len(studied) > 8:
+                        lines.append(f"  ... and {len(studied) - 8} more source(s)")
+            except Exception:  # noqa: BLE001 - context is a help, never a blocker
+                pass
             if p.kind == "design":
                 from ..ops import scenes as scene_ops
 

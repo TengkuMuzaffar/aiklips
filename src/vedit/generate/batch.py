@@ -231,7 +231,15 @@ def _prepare_inner(job: jobs.Job, bid: str) -> dict:
         dna.color.palette = {}
     _set("batches", bid, dna=dna.model_dump_json())
     files = _files(spec)
+    from .. import media_library
+
+    studying = media_library.wait_list([u for _, u in files] + [u for _, u in _sound(spec)])
+    if studying:  # studied in the background since import; usually done before the user gets here
+        _set("batches", bid, status="preparing", progress=f"Waiting for {len(studying)} file(s) to be studied")
+        raise jobs.Retry(3, "waiting for media")
+    media_library.record_use([u for _, u in files] + [u for _, u in _sound(spec)], "batch", bid)
     job.check()
+    # only segments the library study could not log (a partial file) cost an AI call here; usually none
     u = footage.describe(files, spec.quality, lambda s: _set("batches", bid, progress=s))
     _add_usage(bid, "footage", u if u.get("calls") else None)
     log = footage.shot_log(files, _sound(spec))

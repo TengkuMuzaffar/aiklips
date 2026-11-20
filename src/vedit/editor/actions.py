@@ -1165,21 +1165,32 @@ def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index:
 
     `fit_canvas`: when this is the project's first clip, switch the canvas to the format closest to the video's shape
     (a project made by dropping a landscape video becomes 16:9)."""
-    media_dir = pdir / "media"
-    media_dir.mkdir(exist_ok=True)
+    from .. import media_library
+    from ..generate import footage
+
     name = Path(filename).name or "upload.mp4"
-    dest = media_dir / name
-    n = 1
-    while dest.exists():
-        dest = media_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
-        n += 1
-    shutil.move(str(data_path), dest)
-    try:
+    if Path(name).suffix.lower() in footage.VIDEO | footage.AUDIO | footage.IMAGE:
+        # into the media library: studied once in the background, reusable in any project (moved, not copied twice)
+        tmp = data_path.with_suffix(Path(name).suffix.lower())
+        if tmp != data_path:
+            shutil.move(str(data_path), tmp)
+        dest = media_library.store_for_project(pdir, tmp, name, move=True)
         info = media.probe(dest)
-    except VeditError:
-        dest.unlink(missing_ok=True)  # not a usable file: don't leave a copy behind in media/
-        raise
-    with history.transaction(pdir, f"import {dest.name}") as tx:
+    else:
+        media_dir = pdir / "media"
+        media_dir.mkdir(exist_ok=True)
+        dest = media_dir / name
+        n = 1
+        while dest.exists():
+            dest = media_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
+            n += 1
+        shutil.move(str(data_path), dest)
+        try:
+            info = media.probe(dest)
+        except VeditError:
+            dest.unlink(missing_ok=True)  # not a usable file: don't leave a copy behind in media/
+            raise
+    with history.transaction(pdir, f"import {name}") as tx:
         p = tx.project
         sid = p.new_id("s")
         p.sources[sid] = Source(path=store_media_path(pdir, dest), **info)

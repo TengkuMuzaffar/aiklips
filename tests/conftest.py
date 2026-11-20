@@ -22,6 +22,11 @@ def pytest_configure(config):
     os.environ["VEDIT_HOME"] = str(root / "home")
     os.environ["VEDIT_PROJECTS_DIR"] = str(root / "projects")
     os.environ["AIKLIPS_DESIGN"] = "1"  # the Design studio is switched off for users (features.py), tested on
+    # no background job workers anywhere in the run, module / session fixtures included (they set up before the
+    # per-test fixture below): a worker thread outlives its test and takes the next test's jobs. Tests use drain().
+    from vedit import jobs
+
+    jobs.AUTOSTART = False
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +35,11 @@ def isolated_library(tmp_path_factory, monkeypatch):
     root = tmp_path_factory.mktemp("lib")
     monkeypatch.setenv("VEDIT_HOME", str(root / "home"))
     monkeypatch.setenv("VEDIT_PROJECTS_DIR", str(root / "projects"))
+    # no background worker threads in tests: they outlive the test and pick up the next test's jobs (adding footage
+    # queues a media-library study). Tests run jobs with jobs.drain().
+    from vedit import jobs
+
+    monkeypatch.setattr(jobs, "AUTOSTART", False)
     return root
 
 

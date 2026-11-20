@@ -46,6 +46,7 @@ def mount(app: FastAPI, host, bad) -> None:
     from ..ops.captions import CAPTION_STYLES
     from ..references import dna as dnamod
     from ..references import store
+    from .. import media_library
 
     def spec_from(body: dict) -> BatchSpec:
         try:
@@ -56,11 +57,18 @@ def mount(app: FastAPI, host, bad) -> None:
             msg = {"refs": "Pick at least one reference", "footage": "Add at least one video of your own footage"}.get(where, f"{where}: {first['msg']}")
             raise HTTPException(400, msg) from None
 
+    jobs.IN_APP = True  # this process runs the job queue (media studies queued by uploads start workers here)
     if jobs.AUTOSTART and jobs.pending():  # a batch was still running when the app closed: carry on
         jobs.ensure_workers()
     if jobs.AUTOSTART:  # references studied with an older study prompt: study them again (design pass, whole-video sheet)
         try:
             store.restudy_stale()
+        except Exception:
+            pass
+    if jobs.AUTOSTART:  # media library: register older uploads, re-study files measured / logged by an older version
+        try:
+            media_library.backfill()
+            media_library.restudy_stale()
         except Exception:
             pass
 
@@ -149,6 +157,59 @@ def mount(app: FastAPI, host, bad) -> None:
             return {"roles": footage.classify([str(u) for u in body.get("ids") or []], body.get("quality") or "balanced")}
         except VeditError as e:
             raise bad(e)
+
+    # ---- media library: every file studied once, reused in any project or batch ---------------------
+    @app.get("/api/media")
+    def media_list(kind: str | None = None, q: str | None = None, tag: str | None = None) -> dict:
+        return {"media": media_library.list_media(kind, q, tag), "bytes": media_library.disk_usage()}
+
+    @app.post("/api/media")
+    async def media_add(files: list[UploadFile] = File(...)) -> dict:
+        return await _save_uploads(files, lambda p, n: media_library.add(p, n, move=True))
+
+    @app.get("/api/media/{uid}")
+    def media_get(uid: str) -> dict:
+        try:
+            return media_library.get(uid, full=True)
+        except VeditError as e:
+            raise HTTPException(404, str(e))
+
+    @app.patch("/api/media/{uid}")
+    def media_update(uid: str, body: dict) -> dict:
+        try:
+            return media_library.update(uid, body.get("name"), body.get("tags"), body.get("overrides"))
+        except VeditError as e:
+            raise bad(e)
+
+    @app.post("/api/media/{uid}/restudy")
+    def media_restudy(uid: str) -> dict:
+        try:
+            return media_library.restudy(uid)
+        except VeditError as e:
+            raise bad(e)
+
+    @app.delete("/api/media/{uid}")
+    def media_delete(uid: str, force: bool = False) -> dict:
+        try:
+            media_library.delete(uid, force)
+        except VeditError as e:
+            raise bad(e)
+        return {"ok": True}
+
+    @app.get("/api/media/{uid}/thumb.jpg")
+    def media_thumb(uid: str):
+        return upload_thumb(uid)
+
+    @app.get("/api/media/{uid}/file")
+    def media_file(uid: str):
+        """The stored copy itself, for the media manager's player (seeks to a segment)."""
+        try:
+            p = Path(footage.meta_full(uid)["path"])
+        except VeditError:
+            raise HTTPException(404)
+        if not p.exists():
+            raise HTTPException(404)
+        return FileResponse(p)
 
     @app.get("/api/uploads/{uid}/thumb.jpg")
     def upload_thumb(uid: str):

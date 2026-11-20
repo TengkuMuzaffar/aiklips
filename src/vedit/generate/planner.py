@@ -24,7 +24,7 @@ from ..ops.motion import SPLIT_ANIMS
 from ..ops.color import LOOKS as COLOR_LOOKS
 from ..references.dna import StyleDNA
 from ..ops import moves as moves_lib
-from . import commands, executor, taste
+from . import commands, context, executor, taste
 from .spec import AXES, STRUCTURE_HINT, Brief, BatchSpec, ConceptSet, Creative, CreativePlan, EditPlan, Op, PlanPatch, Ranking
 
 TEXT_SIZE = {"small": 56, "medium": 72, "large": 92, "huge": 118}
@@ -66,17 +66,6 @@ def _style_brief(dna: StyleDNA) -> dict:
     return d
 
 
-def _footage_brief(log: dict) -> dict:
-    out = {}
-    for fid, f in log.items():
-        if f["kind"] == "video":
-            out[fid] = {"name": f["name"], "duration": f["duration"],
-                        "shots": [_shot_line(s) for s in f["segments"]][:60]}
-        else:
-            out[fid] = {k: v for k, v in f.items() if k != "segments"}
-    return out
-
-
 def _shot_line(s: dict) -> str:
     """One footage segment for the prompt: id, range, quality, what it is and what it is good for."""
     extra = []
@@ -114,7 +103,7 @@ def creative(spec: BatchSpec, dna: StyleDNA, log: dict, axes: list[dict]) -> tup
         f"STYLE DNA (merged references):\n{json.dumps(_style_brief(dna), indent=1)}\n\n"
         f"BRIEF:\n{b.model_dump_json(indent=1)}\n"
         + (f"The user wrote this hook line; variation 1 must use it verbatim, others may rephrase it for their hook type: {b.hook!r}\n" if b.hook else "")
-        + f"\nFOOTAGE:\n{json.dumps(_footage_brief(log), indent=1)}\n\n"
+        + f"\nFOOTAGE:\n{context.footage_block(log, b.length_s, context.CREATIVE_LINES)}\n\n"
         f"VARIATIONS ({spec.count}), with their fixed axes:\n"
         + "\n".join(f"{i + 1}. " + ", ".join(f"{k}={v}" for k, v in a.items()) for i, a in enumerate(axes))
         + _kind_note(dna)
@@ -149,7 +138,7 @@ def concepts(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: dict)
     """Three clearly different concepts for one variation."""
     hint = STRUCTURE_HINT.get(axes.get("structure", "reference"), "")
     prompt = (f"STYLE: {dna.summary}\nBRIEF:\n{spec.brief.model_dump_json(indent=1)}\n\n"
-              f"FOOTAGE:\n{json.dumps(_footage_brief(log), indent=1)}\n\n"
+              f"FOOTAGE:\n{context.footage_block(log, spec.brief.length_s, 60, c.structure)}\n\n"
               f"THIS VARIATION (#{c.index}): angle: {c.angle}\nhook line: {c.hook_text}\nCTA: {c.cta_text or '(none)'}\n"
               f"axes: {json.dumps({k: v for k, v in axes.items() if k != 'sound'})}\n" + (f"structure: {hint}\n" if hint else "")
               + f"\n{_moves_text(dna)}\n" + _kind_note(dna) + (f"\n{taste.examples()}\n" if taste.examples() else "")
@@ -341,7 +330,8 @@ def _edit_prompt(spec: BatchSpec, dna: StyleDNA, log: dict, c: Creative, axes: d
     return (
         f"STYLE DNA:\n{json.dumps(_style_brief(dna), indent=1)}\n\n"
         f"BRIEF:\n{spec.brief.model_dump_json(indent=1)}\n\n"
-        f"FOOTAGE (use these file ids; segment ids show good ranges):\n{json.dumps(_footage_brief(log), indent=1)}\n\n"
+        f"FOOTAGE (use these file ids; segment ids show good ranges):\n"
+        f"{context.footage_block(log, spec.brief.length_s, context.PLAN_LINES, c.structure)}\n\n"
         f"THIS VARIATION (#{c.index}): angle: {c.angle}\nhook line: {c.hook_text}\nCTA: {c.cta_text or '(none)'}\n"
         f"structure: {' → '.join(c.structure) or 'hook → content → cta'}\nnotes: {c.notes}\n"
         f"axes: {json.dumps(axes)}\n"
