@@ -16,7 +16,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       # FFmpeg from each OS's own package manager (a third-party setup action failed on GitHub API hiccups)
-      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      # libegl1 + libgles2: MediaPipe (fast background removal) loads libEGL even on CPU
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg libegl1 libgles2
         if: runner.os == 'Linux'
       # choco's bin\ffmpeg.exe is a shim that starts the real one as a child; put the real binaries first on PATH
       - run: |

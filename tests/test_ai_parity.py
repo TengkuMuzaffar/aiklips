@@ -17,19 +17,22 @@ CLI_FOR_OP = {
     "transition_set": "transition", "bg_remove": "bg remove", "bg_set": "bg tune", "mask_add": "mask add", "mask_set": "mask set", "focus_add": "focus add", "focus_set": "focus set",
     "remove_clip": "remove-clip", "remove_effect": "fx remove",
     "fx_add": "fx add", "fx_set": "fx set", "fx_reset": "fx set", "fx_remove": "fx remove", "fx_replace": "fx replace",
-    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide",
+    "fx_move": "fx move", "fx_copy": "fx copy", "move_apply": "fx apply", "track_visible": "track hide", "track_video": "track video", "motion_set": "motion set", "iso_add": "iso add", "iso_item_add": "iso item add", "iso_item_set": "iso item set", "iso_item_remove": "iso item remove", "iso_scene_set": "iso set", "obj3d_add": "3d add", "obj3d_set": "3d set", "obj3d_move": "3d move", "obj3d_spin": "3d spin", "group_make": "group make", "group_set": "group set", "group_move": "group move", "group_remove": "group remove", "group_ungroup": "group ungroup", "chart_add": "chart add", "counter_add": "counter add", "platform_set": "platform", "safe_fix": "safe fix",
     "marker_add": "marker add", "marker_set": "marker set", "marker_remove": "marker remove",
     "keyframe_set": "animate keyframes", "keyframe_remove": "animate keyframes", "keyframes_clear": "animate clear",
-    "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import",
-    "add_music": "music add", "music_set": "music set", "music_remove": "music remove",
+    "trim_to": "trim-to", "paste_attrs": "paste", "split": "split", "delete_range": "delete", "insert_source": "import", "source_remove": "remove-source",
+    "add_music": "music add", "sfx_add": "sfx add", "music_make": "music make", "music_set": "music set", "music_remove": "music remove",
     "layer_set": "layer set", "text_look": "text look apply", "layer_add_text": "text add", "layer_add_video": "overlay add",
     "layer_add_adjust": "adjust add", "layer_grade": "color set", "template_apply": "template apply",
     "layer_add_shape": "shape add", "overlay_add": "overlay add", "layer_place": "place", "layer_add_media": "overlay add",
     "clip_place": "place", "clip_to_overlay": "to-overlay", "overlay_to_clip": "to-clip", "layer_move": "layer order",
     "layer_remove": "layer remove", "preset_add": "animate preset", "preset_remove": "animate preset",
     "canvas_set": "canvas",
+    "scene_add": "scene add", "scene_set": "scene set", "scene_move": "scene move", "scene_dup": "scene dup",
+    "scene_remove": "scene remove", "layer_dup": "layer dup",
 }
 UI_ONLY = {
+    "batch": "groups other editor actions (each has its own CLI command) into one undo step",
     "rename": "project name in the home screen; not an edit the AI is asked for",
 }
 
@@ -118,7 +121,10 @@ def test_place_layer_on_track_and_hide_track(cli, test_clip):
     cli("track", "hide", "main")
     assert load(cli.project).main_hidden and cli("info")["main_hidden"]
     rows = cli("track", "list")["tracks"]
-    assert rows[0]["track"] == "main" and rows[0]["hidden"] and rows[2]["hidden"]
+    assert rows[0]["track"] == "video" and rows[0]["hidden"] and rows[2]["hidden"]  # video track at the bottom
+    assert cli("track", "video", "up")["height"] == 1
+    assert [r["track"] for r in cli("track", "list")["tracks"]] == [0, "video", 1]
+    cli("track", "video", "bottom")
     cli("track", "show", "main")
     cli("track", "show", "1")
     p = load(cli.project)
@@ -190,3 +196,24 @@ def test_editor_context_describes_effect_and_layer_track(tmp_path, test_clip, cl
     ctx = s.context_block({"selection": {"kind": "layer", "id": lid}})
     assert "track 0" in ctx
     assert json.dumps(ctx)  # plain text
+
+
+def test_editor_context_lists_attachments_and_platform(tmp_path, test_clip, cli):
+    """The chat composer can attach several clips / layers / ranges / moments / references to one message."""
+    from vedit.editor.agent import ChatSession
+
+    cli("import", str(test_clip))
+    cli("split", "--at", "3")
+    lid = cli("text", "add", "Hook", "--end", "2")["layer"]
+    cli("platform", "tiktok")
+    s = ChatSession.__new__(ChatSession)
+    s.pdir = cli.project
+    ctx = s.context_block({"attachments": [
+        {"kind": "clip", "id": "c2"}, {"kind": "layer", "id": lid}, {"kind": "range", "start": 1, "end": 2.5},
+        {"kind": "time", "t": 4.2}, {"kind": "ref", "id": 6, "name": "motion design 1"}, {"kind": "clip", "id": "gone"}]})
+    assert "attached by the user" in ctx
+    assert "1. clip c2 at timeline 3.00-6.00s" in ctx and f"2. text layer {lid}" in ctx and '"Hook"' in ctx
+    assert "3. timeline range 1.00-2.50s" in ctx and "4. the moment 4.20s" in ctx
+    assert '5. reference video 6 "motion design 1"' in ctx and "vedit ref recipe 6" in ctx
+    assert "6. clip gone (no longer in the project)" in ctx
+    assert "TikTok safe area" in ctx

@@ -1,6 +1,6 @@
 [project]
 name = "aiklips"
-version = "0.2.0"
+version = "0.2.2"
 description = "An open-source video editor you drive with Claude Code: cut, animate, remove backgrounds, face AR, undo/redo."
 readme = "README.md"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dependencies = [
     "pywebview>=6.2.1",
     "python-multipart>=0.0.33",
     "websockets>=12",
+    "fonttools>=4.40",  # 3D text: glyph outlines (ops/mesh3d.py)
 ]
 
 [project.optional-dependencies]
@@ -26,6 +27,8 @@ ai = ["mediapipe>=0.10.14", "trimesh>=4.0"]
 bg-quality = ["rembg[cpu]>=2.0.55"]
 # Offline auto-captions with word timestamps
 captions = ["faster-whisper>=1.0"]
+# Exact object outlines for masks / focus (SAM 2.1 tiny, Meta, Apache-2.0; PyTorch). Weights download on first use.
+mask-ai = ["sam2>=1.1.0", "torch>=2.5.1"]
 
 [project.scripts]
 vedit = "vedit.cli:main"

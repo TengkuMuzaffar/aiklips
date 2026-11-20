@@ -33,6 +33,18 @@ def _num(a: dict, key: str) -> float | None:
     return None if v is None or v == "" else float(v)
 
 
+def _drop_on_track(p: Project, l: Any, a: dict) -> None:
+    """An element dragged from the Elements tab onto a timeline track (`track`, `new_track`): put it there."""
+    from ..ops import overlays
+
+    if a.get("video_track"):  # onto the video track itself (a gap, or past the clips)
+        from ..ops import tracks
+
+        tracks.put_on_video_track(p, l.id)
+    elif a.get("track") not in (None, ""):
+        overlays.place_layer(p, l.id, int(a["track"]), new_track=bool(a.get("new_track")), under_video=bool(a.get("under_video")))
+
+
 @op("move_clip")
 def _move_clip(p: Project, a: dict) -> str:
     cut.move_clip(p, a["clip"], int(a["index"]))
@@ -166,7 +178,7 @@ def _mask_add(p: Project, a: dict) -> str:
     params.update({"id": track.new_mask_id(p), "style": style, "color": a.get("color") or "#000000",
                    "shape": "paint" if painted else (a.get("shape") or "rect"), "feather": float(a.get("feather") or 0.04),
                    "expand": float(a.get("expand") or (1.0 if painted else 1.1)), "track": bool(a.get("track", True)), "smooth": 0.6,
-                   "invert": bool(a.get("invert", False))})
+                   "invert": bool(a.get("invert", False)), "tracker": a.get("tracker") or "auto", "sam": a.get("sam") or "auto"})
     c.effects.append(Effect(type="mask", params=params))
     return f"{c.id}: mask {params['id']} ({style})"
 
@@ -177,7 +189,7 @@ def _mask_set(p: Project, a: dict) -> str:
     if not hits:
         raise VeditError(f"No mask {a['id']}")
     for e in hits:
-        for k in ("style", "strength", "color", "feather", "expand", "shape", "invert"):
+        for k in ("style", "strength", "color", "feather", "expand", "shape", "invert", "tracker", "sam"):
             if k in a and a[k] not in (None, ""):
                 e.params[k] = a[k]
     return f"mask {a['id']}: update"
@@ -196,13 +208,15 @@ def _bg_remove(p: Project, a: dict) -> str:
         return "background removal off"
     if mode not in ("chroma", "fast", "quality"):
         raise VeditError("mode must be chroma, fast, quality or off")
-    replace = a.get("replace") or "color:#00B140"
+    # keying a green screen and filling the hole with green looks like nothing happened: use the canvas colour
+    replace = a.get("replace") or (f"color:{p.canvas.background}" if mode == "chroma" else "color:#00B140")
     for c in targets:
         if mode == "chroma":
-            prm = chroma.clean({k: a[k] for k in chroma.PARAMS if a.get(k) not in (None, "")})
-            prm = {**chroma.DEFAULTS, **prm}
+            given = chroma.clean({k: a[k] for k in chroma.PARAMS if a.get(k) not in (None, "")})
+            prm = {**chroma.DEFAULTS, **given}
             if prm["key"] in ("", "auto") or "key" not in a:
                 prm["key"] = chroma.clip_key(_PDIR[0], p, c)
+            prm.update(chroma.fit_tolerance(prm["key"], given.get("similarity"), given.get("blend")))
         else:
             prm = {"smooth": float(a.get("smooth") or 0.5)}
         c.effects = [e for e in c.effects if e.type != "bg"] + [Effect(type="bg", params={**prm, "mode": mode, "replace": replace})]
@@ -223,6 +237,8 @@ def _bg_set(p: Project, a: dict) -> str:
         upd = {k: v for k, v in vals.items() if k == "replace" or e.params.get("mode") == "chroma"}
         if upd.get("key") == "auto":
             upd["key"] = chroma.clip_key(_PDIR[0], p, c)
+        if "key" in upd:  # a new key colour: re-fit the tolerance unless this same call sets it
+            upd.update(chroma.fit_tolerance(upd["key"], upd.get("similarity"), upd.get("blend")))
         e.params.update(upd)
     return f"background: {', '.join(f'{k}={v}' for k, v in vals.items())}"
 
@@ -236,6 +252,7 @@ def _focus_add(p: Project, a: dict) -> str:
     params = track.focus_params(params, a.get("mode") or "spotlight", a.get("style") or "spotlight",
                                 color=a.get("color") or None, width=_num(a, "width"), strength=_num(a, "strength"),
                                 track=bool(a.get("track", True)), zoom=_num(a, "zoom") or None)
+    params.update({"tracker": a.get("tracker") or "auto", "sam": a.get("sam") or "auto"})
     c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
     return f"{c.id}: focus ({params['mode']}, {params['style']})"
 
@@ -329,6 +346,33 @@ def _track_visible(p: Project, a: dict) -> str:
     return tracks.set_track_visible(p, a.get("track"), bool(a.get("visible", True)))
 
 
+@op("platform_set")
+def _platform_set(p: Project, a: dict) -> str:
+    """The editor's Guides menu: the social app this video is for (its safe zone). Shared with `vedit platform`."""
+    from ..ops import safezone
+
+    return f"platform {safezone.set_platform(p, a.get('platform')) or 'none'}"
+
+
+@op("safe_fix")
+def _safe_fix(p: Project, a: dict) -> str:
+    """"Fit in safe zone" in a layer's properties (or every layer): shared with `vedit safe fix`."""
+    from ..ops import safezone
+
+    todo = [p.layer(a["layer"])] if a.get("layer") else safezone.checked_layers(p)
+    done = [l.id for l in todo if safezone.fit(p, _PDIR[0], l)]
+    return f"fit in the safe zone: {', '.join(done)}" if done else "everything is inside the safe zone"
+
+
+@op("track_video")
+def _track_video(p: Project, a: dict) -> str:
+    """The video track's up / down arrows: move it among the other tracks (shared with `vedit track video`)."""
+    from ..ops import tracks
+
+    z = tracks.set_video_track(p, a.get("to", "up"))
+    return f"video track at height {z} ({z} track(s) under it)"
+
+
 @op("fx_move")
 def _fx_move(p: Project, a: dict) -> str:
     from ..ops import fx_filters
@@ -353,8 +397,10 @@ def _move_apply(p: Project, a: dict) -> str:
     from ..ops import moves
 
     at = a.get("at")
+    num = lambda k: None if a.get(k) in (None, "") else float(a[k])  # noqa: E731
     return moves.apply(p, a["name"], clip=a.get("clip") or None, at=None if at in (None, "") else float(at),
-                       text=a.get("text") or None)
+                       text=a.get("text") or None, source=a.get("source") or None, dur=num("dur"), amount=num("amount"),
+                       box=a.get("box") or None)
 
 
 # ---- markers, keyframes, trims, paste attributes (ops/editing.py) ------------------------------------------------
@@ -451,6 +497,30 @@ def _add_music(p: Project, a: dict) -> str:
     return f"add music {m.id}"
 
 
+@op("sfx_add")
+def _sfx_add(p: Project, a: dict) -> str:
+    from .. import sfx
+
+    prm = sfx.SfxParams(**(a.get("params") or {})) if a.get("params") else sfx.preset(a.get("preset") or "whoosh")
+    prm = sfx.adjust(prm, float(a.get("pitch") or 0), _num(a, "length"))
+    m = sfx.add_to_project(p, _PDIR[0], prm, float(a.get("start") or 0), float(a.get("volume") if a.get("volume") is not None else 0.8),
+                           _num(a, "hold") or None)
+    return f"add sound '{prm.name}' as {m.id} at {m.start:.2f}s"
+
+
+@op("music_make")
+def _music_make(p: Project, a: dict) -> str:
+    from .. import musicmaker as mm
+
+    prm = mm.MusicParams(**a["params"]) if a.get("params") else mm.style(a.get("style") or "lofi")
+    if a.get("replace"):
+        m = mm.replace_on_track(p, _PDIR[0], a["replace"], prm)
+        return f"update loop '{prm.name}' on {m.id}"
+    m = mm.add_to_project(p, _PDIR[0], prm, float(a.get("start") or 0), float(a.get("volume") if a.get("volume") is not None else 0.25),
+                          _num(a, "hold") or None, bool(a.get("duck", True)))
+    return f"make loop '{prm.name}' as {m.id}"
+
+
 _LAYER_FIELDS = ("start", "end", "x", "y", "scale", "rotation", "opacity", "text", "width", "words_per_group")
 
 
@@ -465,9 +535,12 @@ def _layer_set(p: Project, a: dict) -> str:
         if k in ("start", "end", "scale", "rotation", "opacity"):
             v = None if (v is None or v == "") and k == "end" else float(v)
         elif k in ("width", "words_per_group"):
-            v = None if v in (None, "") else int(v)
+            v = None if v in (None, "") else int(float(v))
         setattr(l, k, v)
         changed.append(k)
+    if "height" in a:
+        l.height = None if a["height"] in (None, "") else max(1, int(float(a["height"])))
+        changed.append("height")
     from ..ops import overlays
 
     changed += overlays.set_fields(l, a)
@@ -513,10 +586,25 @@ def _text_look(p: Project, a: dict) -> str:
 
 @op("layer_add_text")
 def _layer_add_text(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
     start = float(a.get("start") or 0)
     l = Layer(id=p.new_id("t"), type="text", text=a.get("text") or "New text", start=start,
-              end=_num(a, "end") or min(p.duration, start + 3), y=a.get("y") or "30%")
+              end=_num(a, "end") or min(p.duration, start + 3), y=a.get("y") or "30%", x=a.get("x") or "50%")
+    if isinstance(a.get("style"), dict):
+        data = l.style.model_dump()
+        data.update({k: v for k, v in a["style"].items() if k in data})
+        l.style = TextStyle(**data)
     p.layers.append(l)
+    if a.get("look"):
+        from ..ops import text_looks
+
+        text_looks.apply(l, a["look"], animation=a.get("animation", True))
+    if a.get("split"):  # Elements: kinetic title
+        from ..ops import motion
+
+        motion.set_fields(l, {k: a.get(k) for k in ("split", "split_anim", "stagger", "split_dur", "split_ease")})
+    scenes.place_in_scene(p, l, a.get("scene"))
     return f"add text {l.id}"
 
 
@@ -538,6 +626,7 @@ def _layer_add_adjust(p: Project, a: dict) -> str:
         end = min(p.duration, start + 3) if p.duration > start else None
     l = Layer(id=p.new_id("adj"), type="adjust", start=start, end=end)
     p.layers.append(l)
+    _drop_on_track(p, l, a)
     return f"add adjustment layer {l.id}"
 
 
@@ -561,10 +650,286 @@ def _template_apply(p: Project, a: dict) -> str:
 
 @op("layer_add_shape")
 def _layer_add_shape(p: Project, a: dict) -> str:
-    from ..ops import overlays
+    from ..ops import overlays, scenes
 
-    l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"))
+    kw = {k: a[k] for k in ("x", "y") if a.get(k) not in (None, "")}
+    if a.get("full"):  # a colour / gradient screen: the whole canvas, square corners
+        kw.update(width=p.canvas.width, height=p.canvas.height, radius=0, x="50%", y="50%")
+    l = overlays.add_shape(p, a.get("shape") or "rect", float(a.get("start") or 0), _num(a, "end"), **kw)
+    overlays.set_fields(l, {k: v for k, v in a.items() if k in overlays.FRAME_FIELDS})
+    from ..ops import motion
+    from ..project import Preset
+
+    motion.set_fields(l, {k: a[k] for k in ("path", "closed", "morph_to") if a.get(k) is not None})
+    if a.get("draw"):  # Elements: a line that draws itself on
+        l.presets.append(Preset(name="draw_in", duration=float(a.get("draw_dur", 1.0))))
+    if a.get("morph_loop"):
+        l.presets.append(Preset(name="morph_loop"))
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
     return f"add {l.shape} {l.id}"
+
+
+def _iso_layer(p: Project, lid: str):
+    l = p.layer(lid)
+    if l.type != "iso" or l.iso is None:
+        raise VeditError(f"{lid} is not an isometric world")
+    return l
+
+
+@op("iso_add")
+def _iso_add(p: Project, a: dict) -> str:
+    """Elements: an isometric world (a ready-made one or an empty plate) that builds itself (`vedit iso add`)."""
+    from ..ops import iso_items, scenes
+    from ..ops.iso import world
+    from ..project import IsoScene, Preset
+
+    theme = a.get("theme") or "pastel"
+    w = a.get("world") or "city"
+    sc = IsoScene(items=[iso_items.I("plate", 0, 0, params={"w": 5, "d": 5})], theme=theme) if w == "empty" else world(w, theme)
+    start = float(a.get("start") or 0)
+    l = Layer(id=p.new_id("iso"), type="iso", iso=sc, start=start, end=_num(a, "end") or round(start + 4, 3), x=a.get("x") or "50%",
+              y=a.get("y") or "55%", width=int(a.get("width") or round(p.canvas.width * 0.8)),
+              presets=[Preset(name="draw_in", duration=1.8, params={"ease": "linear"})])
+    p.layers.append(l)
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add iso world {l.id} ({w})"
+
+
+@op("iso_item_add")
+def _iso_item_add(p: Project, a: dict) -> str:
+    """The iso item picker (`vedit iso item add`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    i = iso_items.add_item(l.iso, a["kind"], _num(a, "x"), _num(a, "y"), **{k: a.get(k) for k in ("z", "rot", "size", "color", "color2", "label", "params")})
+    return f"{l.id}: add {a['kind']} #{i}"
+
+
+@op("iso_item_set")
+def _iso_item_set(p: Project, a: dict) -> str:
+    """Change / move / turn one item of an iso world (`vedit iso item set`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    it = iso_items.set_item(l.iso, int(a["index"]), a.get("params") if isinstance(a.get("params"), dict) else None,
+                            **{k: a.get(k) for k in (*iso_items.ITEM_FIELDS, "kind")})
+    return f"{l.id}: item #{a['index']} {it.kind}"
+
+
+@op("iso_item_remove")
+def _iso_item_remove(p: Project, a: dict) -> str:
+    """Delete one item of an iso world (`vedit iso item remove`)."""
+    from ..ops import iso_items
+
+    l = _iso_layer(p, a["layer"])
+    it = iso_items.remove_item(l.iso, int(a["index"]))
+    return f"{l.id}: remove {it.kind} #{a['index']}"
+
+
+@op("iso_scene_set")
+def _iso_scene_set(p: Project, a: dict) -> str:
+    """An iso world's theme / light / outlines / build style, or swap it for a ready-made world (`vedit iso set`)."""
+    from ..ops import iso_items
+    from ..ops.iso import world
+
+    l = _iso_layer(p, a["layer"])
+    if a.get("world"):
+        l.iso = world(a["world"], a.get("theme") or l.iso.theme)
+    iso_items.set_scene(l.iso, a.get("theme"), _num(a, "light"), a.get("outline"), a.get("build"))
+    return f"{l.id}: world settings"
+
+
+def _bool(v) -> bool | None:
+    if v is None or v == "":
+        return None
+    return v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+
+
+@op("obj3d_add")
+def _obj3d_add(p: Project, a: dict) -> str:
+    """3D tab: a 3D object (text, vehicle, animal, shape, or the user's model) at the playhead (`vedit 3d add`)."""
+    from ..ops import objects3d, scenes
+
+    l = objects3d.add_object(p, a.get("kind") or "cube", text=a.get("text"), font=a.get("font"), src=a.get("src"),
+                             color=a.get("color"), color2=a.get("color2"), params=a.get("params") if isinstance(a.get("params"), dict) else None,
+                             start=float(a.get("start") or 0), end=_num(a, "end"), x=a.get("x") or "50%", y=a.get("y") or "50%",
+                             width=int(a["width"]) if a.get("width") else None, spin=_num(a, "spin"),
+                             intro=_bool(a.get("intro")) is not False, **{k: _num(a, k) for k in ("yaw", "pitch", "roll", "depth")})
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add 3D {l.obj3d.kind} {l.id}"
+
+
+@op("obj3d_set")
+def _obj3d_set(p: Project, a: dict) -> str:
+    """Change a 3D object: kind, text, font, colours, resting turn, lens, light, settings (`vedit 3d set`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    fields = {k: a.get(k) for k in ("text", "font", "src", "color", "color2", "outline")}
+    fields.update({k: _num(a, k) for k in ("depth", "yaw", "pitch", "roll", "fov", "light")})
+    fields["gait"] = _bool(a.get("gait"))
+    objects3d.set_object(l, a.get("params") if isinstance(a.get("params"), dict) else None, a.get("kind"), **fields)
+    return f"{l.id}: 3D settings"
+
+
+@op("obj3d_move")
+def _obj3d_move(p: Project, a: dict) -> str:
+    """A 3D object travels from A to B (once / repeat / pingpong / continue), facing where it goes (`vedit 3d move`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    objects3d.move_object(l, a.get("from") or "15%,50%", a.get("to") or "85%,50%", _num(a, "dur"), a.get("loop") or "once",
+                          _bool(a.get("face")) is not False, _num(a, "hop") or 0.0, _num(a, "scale_from") or 1.0,
+                          _num(a, "scale_to") or 1.0, a.get("ease") or None, bool(a.get("off")))
+    return f"{l.id}: " + ("stop travelling" if a.get("off") else f"travel {a.get('from')} -> {a.get('to')}")
+
+
+@op("obj3d_spin")
+def _obj3d_spin(p: Project, a: dict) -> str:
+    """A 3D object turns round and round (or sways) on an axis (`vedit 3d spin`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    objects3d.spin_object(l, a.get("axis") or "y", _num(a, "period") if a.get("period") not in (None, "") else 3.0, bool(a.get("off")),
+                          _num(a, "sway"))
+    return f"{l.id}: " + ("no spin" if a.get("off") else "spin")
+
+
+@op("group_make")
+def _group_make(p: Project, a: dict) -> str:
+    """Group the selected layers (`vedit group make`)."""
+    from ..ops import groups
+
+    g = groups.make(p, list(a["layers"]), a.get("name") or "Group")
+    return f"group {g.id} ({g.name})"
+
+
+@op("group_set")
+def _group_set(p: Project, a: dict) -> str:
+    """Rename / collapse / expand a group (`vedit group set`)."""
+    from ..ops import groups
+
+    g = groups.set_group(p, a["group"], a.get("name"), a.get("collapsed"))
+    return f"group {g.id}: {g.name}" + ("" if a.get("collapsed") is None else (" collapsed" if g.collapsed else " expanded"))
+
+
+@op("group_move")
+def _group_move(p: Project, a: dict) -> str:
+    """Drag a collapsed group's block on the timeline (`vedit group move`)."""
+    from ..ops import groups
+
+    d = groups.move(p, a["group"], _num(a, "delta"), _num(a, "to"))
+    return f"move group {a['group']} by {d:+.2f}s"
+
+
+@op("group_remove")
+def _group_remove(p: Project, a: dict) -> str:
+    """Delete a group and its layers (`vedit group remove`)."""
+    from ..ops import groups
+
+    return f"remove group {a['group']} ({len(groups.remove(p, a['group']))} layers)"
+
+
+@op("group_ungroup")
+def _group_ungroup(p: Project, a: dict) -> str:
+    """Ungroup: keep the layers (`vedit group ungroup`)."""
+    from ..ops import groups
+
+    return f"ungroup {a['group']}: {', '.join(groups.ungroup(p, a['group']))}"
+
+
+@op("motion_set")
+def _motion_set(p: Project, a: dict) -> str:
+    """Kinetic text / counter / morph target / path / chart fields from the properties panel (`vedit motion set`,
+    `chart set`, `counter set`)."""
+    from ..ops import motion
+
+    l = p.layer(a["layer"])
+    if a.get("path") is not None and l.type == "shape":
+        l.shape = "path"
+    changed = motion.set_fields(l, a)
+    if "counter" in changed and l.counter:
+        l.text = motion.counter_text(l.counter, 1.0)
+        if not any(x.name == "count_up" for x in l.presets):
+            from ..project import Preset
+
+            l.presets.append(Preset(name="count_up", duration=1.2))
+    return f"{l.id}: " + ", ".join(changed)
+
+
+@op("chart_add")
+def _chart_add(p: Project, a: dict) -> str:
+    """The Elements tab's chart cards (`vedit chart add`)."""
+    from ..ops import chart, motion, scenes
+
+    items = a["items"] if isinstance(a.get("items"), list) else chart.parse_items(a.get("data") or "A=3, B=7, C=5, D=9")
+    l = motion.add_chart(p, a.get("kind") or "bar", items, float(a.get("start") or 0), _num(a, "end"),
+                         a.get("x") or "50%", a.get("y") or "50%", duration=float(a.get("dur", 1.2)))
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add {l.chart.kind} chart {l.id}"
+
+
+@op("counter_add")
+def _counter_add(p: Project, a: dict) -> str:
+    """The Elements tab's counter card (`vedit counter add`)."""
+    from ..ops import motion, scenes
+
+    l = motion.add_counter(p, float(a.get("to", 1000)), float(a.get("start") or 0), _num(a, "end"), a.get("x") or "50%",
+                           a.get("y") or "40%", float(a.get("dur", 1.2)), a.get("ease") or "expo_out",
+                           a.get("style") if isinstance(a.get("style"), dict) else None,
+                           **{k: a[k] for k in ("from", "decimals", "prefix", "suffix", "separator") if a.get(k) is not None})
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add counter {l.id}"
+
+
+# ---- design scenes (Design studio) -----------------------------------------------------------------------------
+
+@op("scene_add")
+def _scene_add(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    sc = scenes.add(p, _PDIR[0], float(a.get("dur") or 5), a.get("after"), a.get("name") or "",
+                    a.get("background") or None, a.get("transition") or "cut", a.get("notes") or "")
+    return f"add scene {sc.id}"
+
+
+@op("scene_set")
+def _scene_set(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    bg = (a["background"] or None) if "background" in a else False
+    scenes.set_scene(p, _PDIR[0], a["scene"], _num(a, "dur"), a.get("name"), bg, a.get("transition"), a.get("notes"),
+                     a.get("why"))
+    return f"{a['scene']}: " + ", ".join(k for k in a if k != "scene")
+
+
+@op("scene_move")
+def _scene_move(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    scenes.move(p, _PDIR[0], a["scene"], int(a["index"]))
+    return f"move scene {a['scene']} to {a['index']}"
+
+
+@op("scene_dup")
+def _scene_dup(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    sc = scenes.duplicate(p, _PDIR[0], a["scene"])
+    return f"duplicate scene {a['scene']} as {sc.id}"
+
+
+@op("scene_remove")
+def _scene_remove(p: Project, a: dict) -> str:
+    from ..ops import scenes
+
+    scenes.remove(p, _PDIR[0], a["scene"])
+    return f"remove scene {a['scene']}"
 
 
 @op("overlay_add")
@@ -572,6 +937,7 @@ def _overlay_add(p: Project, a: dict) -> str:
     from ..ops import overlays
 
     l = overlays.add_from_library(p, _PDIR[0], a["key"], float(a.get("start") or 0))
+    _drop_on_track(p, l, a)
     return f"add {overlays.LIBRARY[a['key']].label} ({l.id})"
 
 
@@ -581,8 +947,12 @@ def _layer_place(p: Project, a: dict) -> str:
     from ..ops import tracks
 
     end: Any = tracks._KEEP if "end" not in a else _num(a, "end")
+    if a.get("video_track"):
+        l = tracks.put_on_video_track(p, a["layer"], _num(a, "start"), end)
+        return f"{l.id}: video track, {l.start:.2f}-{l.end:.2f}s"
     track = int(a["track"]) if a.get("track") not in (None, "") else None
-    l = tracks.place_layer(p, a["layer"], _num(a, "start"), end, track, bool(a.get("new_track")), _num(a, "src_in"))
+    l = tracks.place_layer(p, a["layer"], _num(a, "start"), end, track, bool(a.get("new_track")), _num(a, "src_in"),
+                           bool(a.get("under_video")))
     return f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
 
 
@@ -591,8 +961,15 @@ def _layer_add_media(p: Project, a: dict) -> str:
     """A video or image from the Media bin dropped on an overlay track: picture-in-picture / b-roll / sticker."""
     from ..ops import tracks
 
+    from ..ops import scenes
+
     track = int(a["track"]) if a.get("track") not in (None, "") else None
-    l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")))
+    l = tracks.add_media_layer(p, a["source"], float(a.get("start") or 0), track, bool(a.get("new_track")),
+                               bool(a.get("under_video")))
+    for k in ("x", "y"):
+        if a.get(k) not in (None, ""):
+            setattr(l, k, a[k])
+    scenes.place_in_scene(p, l, a.get("scene"))
     return f"add {l.type} overlay {l.id}"
 
 
@@ -609,7 +986,8 @@ def _clip_to_overlay(p: Project, a: dict) -> str:
     from ..ops import tracks
 
     cid = a["clip"]
-    l = tracks.clip_to_overlay(p, cid, float(a.get("start") or 0), int(a.get("track") or 0), bool(a.get("new_track", True)))
+    l = tracks.clip_to_overlay(p, cid, float(a.get("start") or 0), int(a.get("track") or 0), bool(a.get("new_track", True)),
+                               _PDIR[0], bool(a.get("under_video")))
     return f"{cid} -> overlay {l.id} on track {l.track}"
 
 
@@ -618,7 +996,8 @@ def _overlay_to_clip(p: Project, a: dict) -> str:
     """A video overlay dragged down onto the main track (ops/tracks.py, shared with `vedit to-clip`)."""
     from ..ops import tracks
 
-    clip = tracks.overlay_to_clip(p, a["layer"], None if a.get("index") in (None, "") else int(a["index"]))
+    clip = tracks.overlay_to_clip(p, a["layer"], None if a.get("index") in (None, "") else int(a["index"]),
+                                  _num(a, "start"), _PDIR[0])
     return f"overlay {a['layer']} -> clip {clip.id}"
 
 
@@ -638,13 +1017,40 @@ def _layer_remove(p: Project, a: dict) -> str:
 
 @op("preset_add")
 def _preset_add(p: Project, a: dict) -> str:
+    """Add an animation preset. replace_phase: it replaces the layer's other preset of the same phase (in / out /
+    loop), as the Design studio's Animate panel does (one entrance, one exit, one loop)."""
     from ..project import Preset
 
-    pr = Preset(name=a["name"])
+    pr = Preset(name=a["name"], duration=_num(a, "duration"), params=a.get("params") or {})
     anim.validate_preset(pr)
     l = p.layer(a["layer"])
-    l.presets = [x for x in l.presets if x.name != pr.name] + [pr]
+    phase = anim.PRESETS[pr.name][0]
+    keep = [x for x in l.presets if x.name != pr.name
+            and not (a.get("replace_phase") and anim.PRESETS.get(x.name, ("",))[0] == phase)]
+    l.presets = keep + [pr]
     return f"{l.id}: animate {pr.name}"
+
+
+@op("layer_dup")
+def _layer_dup(p: Project, a: dict) -> str:
+    from ..ops import overlays
+
+    l = overlays.duplicate_layer(p, a["layer"], a.get("dx", 40), a.get("dy", 40))
+    return f"duplicate {a['layer']} as {l.id}"
+
+
+@op("batch")
+def _batch(p: Project, a: dict) -> str:
+    """Several actions as one undo step (a drag that moves three layers, a resize that sets size and position)."""
+    msgs = []
+    for item in a.get("ops") or []:
+        name = item.get("op")
+        if name == "batch" or name not in _OPS:
+            raise VeditError(f"Unknown action '{name}'")
+        msgs.append(_OPS[name](p, item.get("args") or {}))
+    if not msgs:
+        raise VeditError("Nothing to do")
+    return msgs[0] if len(msgs) == 1 else f"{len(msgs)} changes: " + "; ".join(msgs)[:200]
 
 
 @op("preset_remove")
@@ -689,13 +1095,23 @@ def _music_set(p: Project, a: dict) -> str:
     return f"{m.id}: update"
 
 
+@op("source_remove")
+def _source_remove(p: Project, a: dict) -> str:
+    from ..ops import tracks
+
+    ids = list(a.get("sources") or [a["source"]])
+    r = tracks.remove_sources(p, ids)
+    used = sum(len(r[k]) for k in ("clips", "layers", "music"))
+    return f"remove {', '.join(r['sources'])} from media" + (f" (+{used} on the timeline)" if used else "")
+
+
 @op("music_remove")
 def _music_remove(p: Project, a: dict) -> str:
     p.music = [m for m in p.music if m.id != a["music"]]
     return f"remove music {a['music']}"
 
 
-_ID_KEYS = {"clip", "layer", "music", "source", "id", "effect", "index"}
+_ID_KEYS = {"clip", "layer", "music", "source", "id", "effect", "index", "scene"}
 
 
 def _shape(v: Any, key: str = "") -> Any:
@@ -712,6 +1128,11 @@ def coalesce_key(name: str, args: dict[str, Any]) -> str | None:
     return f"{name}:{json.dumps(_shape(args), sort_keys=True)}"
 
 
+# timeline moves that must not leave 0s empty (equal tracks: something always starts the video)
+ZERO_GUARDED = {"layer_place", "clip_place", "clip_to_overlay", "overlay_to_clip", "layer_set", "retime_clip",
+                "insert_source", "batch"}
+
+
 def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     fn = _OPS.get(name)
     if not fn:
@@ -719,27 +1140,63 @@ def apply(pdir: Path, name: str, args: dict[str, Any]) -> dict:
     _PDIR[0] = pdir
     with history.transaction(pdir, name) as tx:
         tx.coalesce = coalesce_key(name, args)
-        tx.message = fn(tx.project, args)
+        if name in ZERO_GUARDED:
+            from ..ops import tracks
+
+            with tracks.zero_guard(tx.project):
+                tx.message = fn(tx.project, args)
+        else:
+            tx.message = fn(tx.project, args)
     return {"ok": True, "message": tx.message}
 
 
-def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index: int | None) -> dict:
-    """Store an uploaded / dropped file in media/ and add it as a source (and clip)."""
-    media_dir = pdir / "media"
-    media_dir.mkdir(exist_ok=True)
+FORMAT_SIZES = {"reels": (1080, 1920), "portrait45": (1080, 1350), "square": (1080, 1080), "landscape": (1920, 1080)}
+
+
+def closest_format(w: int, h: int) -> tuple[int, int]:
+    """The preset canvas whose aspect ratio is nearest to w:h."""
+    import math
+
+    return min(FORMAT_SIZES.values(), key=lambda s: abs(math.log((w / h) / (s[0] / s[1]))))
+
+
+def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index: int | None, fit_canvas: bool = False) -> dict:
+    """Store an uploaded / dropped file in media/ and add it as a source (and clip).
+
+    `fit_canvas`: when this is the project's first clip, switch the canvas to the format closest to the video's shape
+    (a project made by dropping a landscape video becomes 16:9)."""
+    from .. import media_library
+    from ..generate import footage
+
     name = Path(filename).name or "upload.mp4"
-    dest = media_dir / name
-    n = 1
-    while dest.exists():
-        dest = media_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
-        n += 1
-    shutil.move(str(data_path), dest)
-    info = media.probe(dest)
-    with history.transaction(pdir, f"import {dest.name}") as tx:
+    if Path(name).suffix.lower() in footage.VIDEO | footage.AUDIO | footage.IMAGE:
+        # into the media library: studied once in the background, reusable in any project (moved, not copied twice)
+        tmp = data_path.with_suffix(Path(name).suffix.lower())
+        if tmp != data_path:
+            shutil.move(str(data_path), tmp)
+        dest = media_library.store_for_project(pdir, tmp, name, move=True)
+        info = media.probe(dest)
+    else:
+        media_dir = pdir / "media"
+        media_dir.mkdir(exist_ok=True)
+        dest = media_dir / name
+        n = 1
+        while dest.exists():
+            dest = media_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
+            n += 1
+        shutil.move(str(data_path), dest)
+        try:
+            info = media.probe(dest)
+        except VeditError:
+            dest.unlink(missing_ok=True)  # not a usable file: don't leave a copy behind in media/
+            raise
+    with history.transaction(pdir, f"import {name}") as tx:
         p = tx.project
         sid = p.new_id("s")
         p.sources[sid] = Source(path=store_media_path(pdir, dest), **info)
         clip_id = None
         if append and info["has_video"]:
             clip_id = cut.append_clip(p, sid, 0, None, index).id
+            if fit_canvas and len(p.clips) == 1 and info.get("width") and info.get("height"):
+                p.canvas.width, p.canvas.height = closest_format(info["width"], info["height"])
     return {"ok": True, "source": sid, "clip": clip_id, "has_video": info["has_video"]}

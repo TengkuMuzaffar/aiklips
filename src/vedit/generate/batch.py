@@ -26,7 +26,7 @@ from ..ai import client as ai
 from ..project import PROJECT_FILE, VeditError, load
 from ..references import store as refs
 from ..references.dna import StyleDNA
-from . import executor, footage, planner, timing
+from . import brief_tags, executor, footage, planner, timing
 from .spec import AXES, BatchSpec, Creative, EditPlan
 
 SCHEMA = """
@@ -136,9 +136,30 @@ def _metas(spec: BatchSpec) -> dict[str, dict]:
 
 # ---- create / estimate ---------------------------------------------------------------------
 
+def _ref_status(token: int | str) -> str:
+    """A picked reference's study status; a media video not yet used as a reference is "new" (studied on create)."""
+    if isinstance(token, int) or str(token).isdigit():
+        return refs.get(int(token))["status"]
+    rid = refs.for_media(str(token))
+    return refs.get(rid)["status"] if rid is not None else "new"
+
+
+def promote_refs(spec: BatchSpec) -> BatchSpec:
+    """Media videos picked as style references become references (no copy; their style study is queued)."""
+    ids = list(dict.fromkeys(refs.resolve(t) for t in spec.refs))
+    lead = refs.resolve(spec.lead) if spec.lead is not None else None
+    spec.refs, spec.lead = ids, (lead if lead in ids else None)
+    return spec
+
+
 def validate(spec: BatchSpec) -> None:
     for rid in spec.refs:
-        refs.get(rid)  # raises for unknown ids
+        if isinstance(rid, int) or str(rid).isdigit():
+            refs.get(int(rid))  # raises for unknown ids
+        else:
+            meta = footage.get(str(rid))  # raises for unknown media
+            if meta["kind"] != "video":
+                raise VeditError(f"“{meta['name']}” is {meta['kind']}: only videos can be style references")
     kinds = [footage.get(u)["kind"] for u in spec.footage]
     if "video" not in kinds:
         raise VeditError("Add at least one video clip of your own footage")
@@ -158,7 +179,7 @@ def validate(spec: BatchSpec) -> None:
 def estimate(spec: BatchSpec) -> dict:
     validate(spec)
     secs = {**DEFAULT_SECONDS, **ai.usage_stats()}
-    study = sum(1 for r in spec.refs if refs.get(r)["status"] != "ready")
+    study = sum(1 for r in spec.refs if _ref_status(r) != "ready")
     videos = [(fid, u) for fid, u in _files(spec) if footage.get(u)["kind"] == "video"]
     undescribed = 0
     for _, u in videos:
@@ -186,6 +207,7 @@ def estimate(spec: BatchSpec) -> dict:
 
 def create(spec: BatchSpec) -> dict:
     validate(spec)
+    promote_refs(spec)
     bid = time.strftime("b%Y%m%d-%H%M%S-") + secrets.token_hex(2)
     name = (spec.brief.product.strip()[:50] or "Generation") + time.strftime(" · %b %d %H:%M")
     now = time.time()
@@ -225,14 +247,27 @@ def _prepare_inner(job: jobs.Job, bid: str) -> dict:
         raise jobs.Retry(8, "waiting for references")
     _set("batches", bid, status="preparing", progress="Combining the reference styles", error=None)
     dna = refs.merged(spec.refs, spec.lead)
+    try:  # the lead reference's colours, for graphics (scenes, cards) when it is motion design
+        dna.color.palette = refs.palette_of(spec.lead if spec.lead in spec.refs else spec.refs[0])
+    except Exception:  # noqa: BLE001 - a palette is a nice-to-have; never fail the batch over it
+        dna.color.palette = {}
     _set("batches", bid, dna=dna.model_dump_json())
     files = _files(spec)
+    from .. import media_library
+
+    studying = media_library.wait_list([u for _, u in files] + [u for _, u in _sound(spec)])
+    if studying:  # studied in the background since import; usually done before the user gets here
+        _set("batches", bid, status="preparing", progress=f"Waiting for {len(studying)} file(s) to be studied")
+        raise jobs.Retry(3, "waiting for media")
+    media_library.record_use([u for _, u in files] + [u for _, u in _sound(spec)], "batch", bid)
     job.check()
+    # only segments the library study could not log (a partial file) cost an AI call here; usually none
     u = footage.describe(files, spec.quality, lambda s: _set("batches", bid, progress=s))
     _add_usage(bid, "footage", u if u.get("calls") else None)
     log = footage.shot_log(files, _sound(spec))
     job.check()
-    axes = planner.assign_axes(spec.count, spec.axes, seed=bid)
+    bias = brief_tags.funnel_bias(spec.brief)
+    axes = planner.assign_axes(spec.count, spec.axes, seed=bid, prefer={"hook": bias.get("hooks", []), "structure": bias.get("structures", [])})
     planner.assign_sounds(axes, log)
     _set("batches", bid, progress=f"AI is planning {spec.count} variation(s)")
     creatives, usage = planner.creative(spec, dna, log, axes)
@@ -313,7 +348,7 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
     threshold = spec.audit_threshold if spec.audit_threshold is not None else cfg["threshold"]
     max_rounds = (spec.audit_rounds if spec.audit_rounds is not None else cfg["max_rounds"]) if spec.review else 0
     name = f"{b['name'].split(' · ')[0]} v{v['idx']} – {plan.title or c.angle}"[:80]
-    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    brief = " | ".join(x for x in (f"{spec.brief.goal}: {spec.brief.product}".strip(": "), brief_tags.short(spec.brief)) if x)
     usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
 
     def build(pl: EditPlan, where: Path) -> dict:
@@ -321,7 +356,7 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
             _unregister(where)
             shutil.rmtree(where)
         return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
-                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary, refs=list(spec.refs))
 
     best, rounds, stop = _loop(vid, step, build, spec, dna, log, c, axes, d, metas, pdir, threshold, max_rounds, usage_cb,
                                first=(plan, notes), fids=dict(files),
@@ -538,14 +573,14 @@ def run_improve(vid: str, rounds: int, job: jobs.Job | None = None) -> dict:
     bid = v["batch_id"]
     threshold = spec.audit_threshold if spec.audit_threshold is not None else review.settings()["threshold"]
     name = load(pdir).name
-    brief = f"{spec.brief.goal}: {spec.brief.product}".strip(": ")
+    brief = " | ".join(x for x in (f"{spec.brief.goal}: {spec.brief.product}".strip(": "), brief_tags.short(spec.brief)) if x)
     usage_cb = lambda k, u: _add_usage(bid, k, u)  # noqa: E731
 
     def build(pl: EditPlan, where: Path) -> dict:
         if where.exists() and where.parent.parent == batches_root():
             shutil.rmtree(where)
         return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
-                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary, refs=list(spec.refs))
 
     exec_report = {k: x for k, x in rep.items() if k not in ("audit", "review")}
     start = {"rounds": audit.get("rounds") or [], "best": {

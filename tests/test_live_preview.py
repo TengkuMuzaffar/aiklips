@@ -33,13 +33,41 @@ def _layers() -> list[Layer]:
             Keyframe(t=1.6, x=700, y="80%", rotation=-30, ease="elastic_out"),
             Keyframe(t=2.4, reveal=0.5, ease="step"),
         ]),
+        Layer(id="stretch", type="shape", shape="star", width=300, height=200, sx=1.2, fill="#112233", keyframes=[
+            Keyframe(t=0, w=100, h=80, sx=0.5, fill="#FF0000", ease="back_out"),
+            Keyframe(t=1.0, w=420, sy=1.6, fill="#00FF0080", ease="elastic_out"),
+            Keyframe(t=2.2, h=500, sx=1.0, sy=0.7, fill="#0000FF", ease="ease_in"),
+        ]),
+        Layer(id="cycle", type="shape", shape="rect", presets=[Preset(name="color_cycle", params={"colors": ["#000", "#FFFFFF", "#FF00FF"], "period": 1.3}),
+                                                                 Preset(name="squash_stretch"), Preset(name="stretch_in", params={"axis": "y"})]),
         Layer(id="typ", type="text", text="typed out slowly", presets=[Preset(name="typewriter"), Preset(name="fade_out")]),
+        # motion: progress props, cubic-bezier and named bezier easings
+        Layer(id="mo", type="shape", shape="ellipse", morph_to="star", keyframes=[
+            Keyframe(t=0, draw=0, morph=0, count=0, x=100, ease="cubic-bezier(.7,0,.2,1)"),
+            Keyframe(t=0.9, draw=0.6, morph=1, x=500, ease="snap"),
+            Keyframe(t=1.7, draw=1, count=1, x=300, ease="overshoot"),
+            Keyframe(t=2.5, morph=0.2, x=900, ease="anticipate"),
+        ]),
+        Layer(id="steps", type="shape", shape="rect", step_fps=12, presets=[Preset(name="sway"), Preset(name="drop_in")],
+              keyframes=[Keyframe(t=0, x=0, ease="smooth"), Keyframe(t=2, x=500)]),
+        Layer(id="eases", type="text", text="e", keyframes=[
+            Keyframe(t=0, x=0, ease="expo_out"), Keyframe(t=0.6, x=400, ease="circ_out"), Keyframe(t=1.2, x=100, ease="smooth"),
+            Keyframe(t=1.8, x=600, ease="bezier:0.1,0.9,0.9,0.1"), Keyframe(t=2.6, x=50)]),
     ]
-    params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20}}
+    params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20},
+              "spin3d": {"axis": "xyz", "period": -1.7}, "travel": {"from": "90%,20%", "to": [100, "70%"], "dur": 0.9, "loop": "pingpong",
+                                                                    "hop": 30, "scale_from": 0.6, "scale_to": 1.3}}
     for name in PRESETS:  # every preset, alone and with a custom duration
         out.append(Layer(id=f"p-{name}", type="text", text="Hello", x=400, y="30%", scale=1.1, rotation=5,
                          presets=[Preset(name=name, params=params.get(name, {}))]))
         out.append(Layer(id=f"d-{name}", type="text", text="Hello", presets=[Preset(name=name, duration=0.9)]))
+    from vedit.project import Obj3D
+
+    for i, k in enumerate(({"loop": "continue", "to": "40%,10%", "dur": 0.7}, {"loop": "repeat", "face": False, "ease": "ease_out"},
+                           {"loop": "once", "dur": 2})):
+        out.append(Layer(id=f"3d-{i}", type="obj3d", obj3d=Obj3D(kind="car", yaw=10, pitch=-5, roll=3),
+                         keyframes=[Keyframe(t=0, yaw=0), Keyframe(t=2, yaw=90, pitch=30, roll=-40, ease="back_out")],
+                         presets=[Preset(name="travel", params=k), Preset(name="sway3d"), Preset(name="spin3d_in")]))
     out.append(Layer(id="stack", type="text", text="stack", presets=[Preset(name="pop_in"), Preset(name="bob"),
                                                                       Preset(name="wiggle"), Preset(name="slide_out")]))
     return out
@@ -64,8 +92,13 @@ def test_js_props_at_matches_python():
     js = json.loads(res.stdout)
     for lid, frames in py.items():
         for t, a, b in zip(times, frames, js[lid]):
-            for k in ("x", "y", "scale", "rotation", "opacity", "reveal"):
+            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count", "yaw", "pitch",
+                      "roll"):
+                if a[k] is None:
+                    assert b[k] is None, f"{lid} {k} at t={t:.2f}: python None js {b[k]}"
+                    continue
                 assert b[k] == pytest.approx(a[k], abs=1e-6), f"{lid} {k} at t={t:.2f}: python {a[k]} js {b[k]}"
+            assert b["fill"] == a["fill"], f"{lid} fill at t={t:.2f}: python {a['fill']} js {b['fill']}"
 
 
 @needs_node
@@ -88,6 +121,17 @@ def test_base_hash_ignores_overlays(make_project):
     assert base_hash(p) == h
     p.clips[0].speed = 2
     assert base_hash(p) != h
+
+
+def test_preview_hashes_change_when_effect_code_changes(make_project, monkeypatch):
+    """A new mask / background-rebuild version must re-render the preview: the project file itself doesn't change."""
+    from vedit.ops import track
+    from vedit.render.runner import project_hash
+
+    p = make_project(1)
+    h, b = project_hash(p), base_hash(p)
+    monkeypatch.setattr(track, "REMOVE_VERSION", track.REMOVE_VERSION + "-next")
+    assert project_hash(p) != h and base_hash(p) != b
 
 
 @needs_ffmpeg
@@ -129,7 +173,58 @@ def test_sprite_and_mode_api(cli, test_clip):
     assert client.post("/api/sprite", json={"layer": {"type": "nope"}}).status_code == 400
 
     assert client.get("/api/state").json()["render"]["final"] is False
-    assert client.post("/api/preview-mode", json={"final": True}).json() == {"final": True}
+    assert client.post("/api/preview-mode", json={"final": True}).json() == {"final": True, "quality": "half"}
     assert client.get("/api/state").json()["render"]["final"] is True
+    # quality alone keeps the mode; an unknown one is refused
+    assert client.post("/api/preview-mode", json={"quality": "quarter"}).json() == {"final": True, "quality": "quarter"}
+    assert client.get("/api/state").json()["render"]["quality"] == "quarter"
+    assert client.post("/api/preview-mode", json={"quality": "8k"}).status_code == 400
+    assert client.get("/media/preview-25.mp4").status_code in (200, 404)  # allowed name (404 until rendered)
+    assert client.get("/media/project.json").status_code == 404
     assert client.get("/static/animate.js").status_code == 200
     assert client.get("/static/../app.py").status_code == 404
+
+
+def test_preview_quality_has_its_own_file_and_cache(cli, test_clip):
+    """Each preview quality renders to its own file at that size, and the default keeps the old names."""
+    from vedit.render.runner import preview_dir, preview_name
+
+    cli("import", str(test_clip))
+    d = cli.project
+    p = load(d)
+    half = render_preview(p, d, progress=False, base=True)
+    quarter = render_preview(p, d, progress=False, base=True, scale=0.25)
+    assert Path(half["output"]).name == "base.mp4" and Path(quarter["output"]).name == preview_name(True, 0.25) == "base-25.mp4"
+    assert quarter["width"] * 2 == pytest.approx(half["width"], abs=2)
+    # both stay cached: switching quality back and forth renders nothing
+    assert render_preview(p, d, progress=False, base=True)["cached"] is True
+    assert render_preview(p, d, progress=False, base=True, scale=0.25)["cached"] is True
+    assert (preview_dir(d) / "base-hash").exists() and (preview_dir(d) / "base-hash-25").exists()
+
+
+def test_renderer_lets_a_running_render_finish(cli, test_clip, monkeypatch):
+    """A newer edit cancels only a young render: one well under way finishes, so the preview moves on during a
+    stream of AI edits instead of staying on the old video until the AI stops."""
+    from vedit.preview_server import app as app_mod
+
+    cli("import", str(test_clip))
+    seen = []
+
+    def fake_render(p, pdir, should_stop=None, **kw):
+        r.pending.set()  # an edit arrives mid-render
+        seen.append(should_stop())
+        return {"cached": False}
+
+    monkeypatch.setattr(app_mod, "render_preview", fake_render)
+    monkeypatch.setattr(app_mod, "CANCEL_GRACE", 0.0)  # every render counts as "under way"
+    r = app_mod.Renderer(cli.project, watch=False)
+    try:
+        import time
+        for _ in range(100):
+            if len(seen) >= 2:
+                break
+            time.sleep(0.05)
+    finally:
+        r.stop()
+    assert seen and not any(seen)  # never cancelled
+    assert r.version >= 1 and r.file == "base.mp4"

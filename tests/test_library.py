@@ -119,3 +119,75 @@ def test_old_app_folder_is_adopted_with_a_link(tmp_path, monkeypatch):
     assert con.execute("SELECT dir FROM refs").fetchone()[0] == f"{new}/references/abc"
     assert str(new) in (new / "uploads" / "u1" / "meta.json").read_text()
     assert (new / ".paths-renamed").exists()
+
+
+def test_closest_format():
+    from vedit.editor.actions import closest_format
+
+    assert closest_format(1280, 720) == (1920, 1080)
+    assert closest_format(720, 1280) == (1080, 1920)
+    assert closest_format(1000, 1000) == (1080, 1080)
+    assert closest_format(1080, 1350) == (1080, 1350)
+
+
+@needs_ffmpeg
+def test_dropped_video_sets_the_new_projects_shape(test_clip):
+    """Home's "drop a video": the project takes the first video's shape; later imports don't change it."""
+    from fastapi.testclient import TestClient
+
+    from vedit.preview_server.app import create_app
+
+    c = TestClient(create_app(None, watch=False, chat=False))
+    c.post("/api/projects", json={"name": "Dropped", "format": "square"})
+    with open(test_clip, "rb") as f:
+        c.post("/api/import", files={"file": ("a.mp4", f, "video/mp4")}, data={"append": "true", "fit_canvas": "true"})
+    from vedit import media
+
+    info = media.probe(test_clip)
+    want = __import__("vedit.editor.actions", fromlist=["closest_format"]).closest_format(info["width"], info["height"])
+    canvas = c.get("/api/state").json()["project"]["canvas"]
+    assert (canvas["width"], canvas["height"]) == want
+
+
+def test_app_shell_onboarding_and_whats_new(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from vedit import whats_new
+    from vedit.preview_server.app import create_app
+
+    c = TestClient(create_app(None, watch=False, chat=False))
+    a = c.get("/api/app").json()
+    assert a["onboarded"] is False and a["whats_new"] == [] and a["all_notes"]  # fresh install: the tour, no news
+    for name in ("ui.css", "shell.js", "logo.svg", "display.ttf"):
+        assert c.get(f"/static/{name}").status_code == 200
+    assert c.get("/static/../app.py").status_code == 404
+
+    c.post("/api/app/seen", json={"onboarded": True, "prefs": {"format": "square", "calm": True}})
+    a = c.get("/api/app").json()
+    assert a["onboarded"] and a["seen_version"] == a["version"] and a["prefs"] == {"format": "square", "calm": True}
+    c.post("/api/app/seen", json={"prefs": {"fps": 60}, "version": False})
+    assert c.get("/api/app").json()["prefs"] == {"format": "square", "calm": True, "fps": 60}
+
+    # after an update: the highlights of every version since the one last seen
+    notes = [{"version": "9.1.0", "items": []}, {"version": "9.0.0", "items": []}, {"version": "8.0.0", "items": []}]
+    monkeypatch.setattr(whats_new, "NOTES", notes)
+    assert [n["version"] for n in whats_new.since("8.0.0", "9.1.0")] == ["9.1.0", "9.0.0"]
+    assert whats_new.since("9.1.0", "9.1.0") == [] and whats_new.since(None, "9.1.0") == []
+
+
+def test_bulk_remove_from_list_and_delete(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from vedit.preview_server.app import create_app
+
+    c = TestClient(create_app(None, watch=False, chat=False))
+    ids = [c.post("/api/projects", json={"name": f"Bulk {i}", "format": "reels"}).json()["id"] for i in range(4)]
+    paths = {p["id"]: Path(p["path"]) for p in c.get("/api/projects").json()["projects"]}
+    r = c.post("/api/projects/bulk-remove", json={"ids": ids[:2]}).json()
+    assert r["ok"] and sorted(r["removed"]) == sorted(ids[:2])
+    listed = {p["id"] for p in c.get("/api/projects").json()["projects"]}
+    assert not set(ids[:2]) & listed and all(paths[i].exists() for i in ids[:2])  # hidden, files kept
+    r = c.post("/api/projects/bulk-remove", json={"ids": [ids[2], ids[3], 99999], "delete_files": True}).json()
+    assert sorted(r["removed"]) == sorted(ids[2:]) and [f["id"] for f in r["failed"]] == [99999] and not r["ok"]
+    assert not paths[ids[2]].exists() and not paths[ids[3]].exists()
+    assert c.post("/api/projects/bulk-remove", json={"ids": []}).status_code == 400

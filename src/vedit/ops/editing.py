@@ -67,17 +67,30 @@ def chapters(p: Project) -> tuple[list[str], list[str]]:
 
 # ---- keyframes ---------------------------------------------------------------------------------------------------
 
-KF_PROPS = ("x", "y", "scale", "rotation", "opacity")
+KF_PROPS = ("x", "y", "scale", "rotation", "opacity", "w", "h", "sx", "sy", "fill")
 KF_EPS = 0.02  # keyframes closer than this (seconds) are the same keyframe
 
 
 def set_keyframe(layer: Layer, t_local: float, prop: str, value) -> Keyframe:
     """Set `prop` at local time t (seconds since the layer starts), creating the keyframe if needed."""
-    if prop not in KF_PROPS:
-        raise VeditError(f"Keyframe property must be one of: {', '.join(KF_PROPS)}")
     t_local = round(max(0.0, t_local), 3)
+    if prop == "ease":  # the curve from this keyframe to the next (the keyframe must exist)
+        from .animate import ease
+
+        ease(str(value), 0.5)
+        for k in layer.keyframes:
+            if abs(k.t - t_local) <= KF_EPS:
+                k.ease = str(value)
+                return k
+        raise VeditError(f"No keyframe at {t_local:g}s on {layer.id}")
+    if prop not in KF_PROPS:
+        raise VeditError(f"Keyframe property must be one of: {', '.join(KF_PROPS)}, ease")
     if prop in ("x", "y"):
         v = value if isinstance(value, str) and value.strip().endswith("%") else float(value)
+    elif prop == "fill":
+        from .animate import mix_hex
+
+        v = mix_hex(str(value), str(value), 0)  # checks + normalises the colour
     else:
         v = float(value)
     for k in layer.keyframes:

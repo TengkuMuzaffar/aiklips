@@ -21,8 +21,9 @@ Claude turns that into precise, undoable editing commands. It checks its own wor
 - 🧍 **Background removal:** replace with a colour, blur, image or video (MediaPipe fast mode, or BiRefNet quality mode)
 - 🎭 **Face mesh / AR:** 478-point tracked face mesh, stickers that follow the face, 3D props on the head, and face blur / pixelate
 - 🎵 **Music:** background tracks with automatic ducking under speech
-- 📚 **References:** add videos whose style you like. The AI studies their pacing, hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat), and you can correct any trait
-- 🪄 **Generate:** a wizard makes N clearly different videos from your own footage in the style of chosen references. Each one is a normal, undoable project
+- 📚 **References (beta):** add videos whose style you like. The AI studies their pacing, hook, text and caption style, animation, transitions and sound (tempo, cuts on the beat), and you can correct any trait
+- 🪄 **Generate (beta):** a wizard makes N clearly different videos from your own footage in the style of chosen references. Each one is a normal, undoable project
+- ✨ **Design (beta):** motion graphics from your own clips plus a script and / or an image sheet (character sheet, storyboard grid). Your AI writes one plan; aiklips animates the clips, cut-out sheet pieces, text and shapes into a 15-60 s video. No video generator and no extra credits
 - 🖥️ **Desktop editor:** a 4-pane window
   - **Project:** inspector with drill-down settings
   - **Preview**
@@ -102,6 +103,14 @@ It runs in the background (closing the app is fine). For each video:
 
 You can play each result, **Edit** it in the editor (with full undo history), keep it (it moves into Projects), discard it, or regenerate it. If your AI subscription hits its limit, the batch pauses and resumes by itself. The same works from the CLI: `vedit ref add`, `vedit gen run`.
 
+**The Design tab (beta)** makes motion graphics from your own material:
+1. **Clips:** your videos and images. Everything on screen comes from these, plus text and shapes.
+2. **Sheet:** a script, a scene list or just the idea, and optionally image sheets. A character or storyboard sheet is cut into its panels (by code), and its plain background can be removed so the characters move over anything.
+3. **Sound (optional):** scene changes snap to the beats.
+4. **Style:** clean, bold kinetic, playful, corporate, retro or neon; format; length (15-60 s); 1-3 versions; optionally a reference style.
+
+Your AI writes one motion plan (scenes, framing, text, entrances, loops and keyframe paths). aiklips builds it with its normal, undoable edits: one history step per scene. The auditor then checks it, including a check for stretches where nothing moves, and the AI patches what it finds. That's about 2-4 AI calls per version. From the CLI or the chat, `vedit design build plan.json` applies a plan in one step and `vedit design split sheet.png --cutout` cuts a sheet.
+
 ```
 ┌──────────────────────┬─────────────────────────────┐
 │ 1. Project           │ 2. Preview                  │
@@ -151,6 +160,7 @@ Use `uv run vedit app --browser` (or `vedit serve`) to open the same editor in a
 | `ai` | Fast background removal, face mesh / AR | `uv sync --extra ai` |
 | `captions` | Offline auto-captions (faster-whisper) | `uv sync --extra captions` |
 | `bg-quality` | High-quality background removal (BiRefNet) | `uv sync --extra bg-quality` |
+| `mask-ai` | Exact object outlines for masks / focus (SAM 2.1 tiny + PyTorch; ~156 MB model downloaded on first use) | `uv sync --extra mask-ai` |
 
 See [examples/prompts.md](examples/prompts.md) for more things to ask.
 
@@ -202,6 +212,7 @@ src/vedit/
   preview_server/     FastAPI server + the 4-pane editor UI + home tabs (gen_routes.py)
   references/         reference library: measuring (analysis), Style DNA (dna), store
   generate/           footage log, variation planner, beat timing, plan executor, batches
+  design/             Design (beta): sheet splitting, motion plan (AI), builder, jobs
   ai/                 one LLM client for references + generate (routing, JSON, retries), prompts
   jobs.py             durable background job queue (SQLite)
 .claude/              skills, slash commands, permissions for Claude Code
@@ -224,4 +235,4 @@ PRs are welcome. Ideas:
 
 ## Licence & credits
 
-MIT. Built on FFmpeg, Pillow, MediaPipe (Apache-2.0), rembg / BiRefNet (MIT) and faster-whisper (MIT). Model files are downloaded from their official sources on first use. Check the licences of any stickers, fonts, music or 3D models you add.
+MIT. Built on FFmpeg, Pillow, OpenCV and MediaPipe (Apache-2.0), SAM 2.1 (Meta, Apache-2.0), PyTorch (BSD), rembg / BiRefNet (MIT) and faster-whisper (MIT). Model files are downloaded from their official sources on first use. Every component and its licence: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Check the licences of any stickers, fonts, music or 3D models you add.

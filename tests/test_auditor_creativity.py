@@ -23,9 +23,15 @@ def test_every_move_applies(make_project):
     for name, (needs, _about) in moves.MOVES.items():
         p = make_project(3)  # 3 clips of 3.33 s
         before = p.duration
-        kw = {"clip": "c2"} if needs == "clip" else {"at": 4.0}
+        kw = {"clip": "c2"} if needs == "clip" else {"at": 1.0 if name == "magazine_cover" else 4.0}
         if "+text" in needs:
             kw["text"] = "wow"
+        if "+lines" in needs:
+            kw["text"] = "one; two"
+        if name in ("magazine_cover", "orbit", "dolly_zoom", "frame_break", "studio_reveal"):
+            kw["dur"] = 1.5
+        if "+source" in needs:
+            kw["source"] = p.clips[0].source
         msg = moves.apply(p, name, **kw)
         assert msg, name
         if name == "freeze_title":
@@ -136,11 +142,11 @@ def test_revise_plan_hands_the_review_to_the_editor(fake):
     spec, dna, log, c, axes, d = _plan_args()
     rev = {"score": 55, "summary": "weak hook", "scores": {"hook": 2}, "findings": [
         {"id": "A1", "severity": "must-fix", "category": "hook", "at": 0.3, "message": "opening is static", "fix": "swap c1"},
-        {"id": "F2", "severity": "note", "category": "pacing", "at": None, "message": "a note", "fix": None}]}
+        {"id": "F2", "severity": "note", "category": "pacing", "at": None, "message": "a note only", "fix": None}]}
     plan, _ = planner.revise_plan(spec, dna, log, c, axes, d, _good(), rev, threshold=80)
     prompt = calls[0][1]
     assert "INDEPENDENT REVIEW" in prompt and "score 55/100, needs 80" in prompt and "weak hook" in prompt
-    assert "A1 [must-fix] hook @0.3s: opening is static -> swap c1" in prompt and "a note" not in prompt
+    assert "A1 [must-fix] hook @0.3s: opening is static -> swap c1" in prompt and "a note only" not in prompt
     assert '"segment":"f1.s1"' in prompt  # the editor sees its own current plan
     assert plan.beats and all(o.audio for o in plan.ops if o.op == "clip")  # audio modes filled in
 
@@ -190,8 +196,14 @@ def test_stop_hook_sends_the_edit_back_until_the_pass_mark(cli, test_clip):
     cli("layer", "set", "t1", "--end", "0.4")
     s.audit_rounds, s.audited_head = 0, None
     assert run().get("decision") == "block"
-    asyncio.run(s.set_auto_audit(True))  # the chat-pane toggle, persisted per project
-    assert ChatSession(cli.project).auto_audit_ai
+    asyncio.run(s.set_auditor("ai"))  # the chat-pane picker, persisted per project
+    assert ChatSession(cli.project).auditor == "ai"
+    # switched off: no audit at all, even with must-fix findings
+    asyncio.run(s.set_auditor("off"))
+    assert ChatSession(cli.project).auditor == "off"
+    cli("layer", "set", "t1", "--y", "97%")
+    s.audit_rounds, s.audited_head, n = 0, None, len(events)
+    assert run() == {} and not [e for e in events[n:] if e["type"] == "audit"]
 
 
 # ---- sound -----------------------------------------------------------------------------------------

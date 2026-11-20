@@ -56,7 +56,9 @@ def frame_project(project: Project, t: float, clip_override: dict | None = None)
     if end - src_t < span:  # at the very end of the clip: step back so there is footage
         src_t = max(c.in_, end - span)
     if c.zoom_to:  # slow zoom: freeze it at the zoom it has reached here
-        z = max(1.0, c.zoom) + (max(1.0, c.zoom_to) - max(1.0, c.zoom)) * (local / max(c.duration, 1e-6))
+        from ..project import zoom_at
+
+        z = zoom_at(c, local / max(c.duration, 1e-6))
         c.zoom, c.zoom_to = z, z
     # filters timed to part of the clip: the mini clip starts `shift` s into the clip, so their windows move back by it
     shift = (src_t - clip.in_) / c.speed

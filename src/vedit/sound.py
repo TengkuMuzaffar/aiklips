@@ -141,13 +141,20 @@ def _finding(sev: str, msg: str, at: float | None, evidence: str, fix: str | Non
             "evidence": evidence, "fix": fix}
 
 
+def is_sfx(p: Project, m) -> bool:
+    """A sound effect (`vedit sfx add`) shares the music tracks but isn't music: it never 'runs out', and it doesn't
+    carry the video."""
+    src = p.sources.get(m.source)
+    return bool(src) and Path(src.path).name.startswith("sfx-")
+
+
 def check_sound(p: Project, pdir: Path) -> list[dict]:
     out: list[dict] = []
     if not p.clips:
         return out
     starts = p.clip_starts()
     total = p.duration
-    music = [m for m in p.music if m.volume > 0.02 and m.start < total]
+    music = [m for m in p.music if m.volume > 0.02 and m.start < total and not is_sfx(p, m)]
     rows = []
     for c, t0 in zip(p.clips, starts):
         st = clip_stats(p, pdir, c)
@@ -193,15 +200,21 @@ def check_sound(p: Project, pdir: Path) -> list[dict]:
             if ends < total - 0.5:
                 out.append(_finding("should-fix", f"Music {m.id} runs out at {ends:.1f}s, before the video ends ({total:.1f}s).",
                                     ends, f"song {src.duration:.1f}s from {m.in_:.1f}s", f"vedit music set {m.id} --start 0  (or loop / pick an earlier offset)"))
-    if not music and rows and not any(st and is_speech(c, st) for c, _t, st in rows) and all((st or {}).get("db", -90) < -45 for _c, _t, st in rows):
-        out.append(_finding("note", "No speech and no music: the video plays (almost) silent.", None, "", "vedit music add <song> --volume 0.6"))
+    heard = [(c, st) for c, _t, st in rows if st and c.volume >= 0.05 and st.get("db", -90) >= -45]
+    if not music and rows and not any(is_speech(c, st) for c, st in heard):
+        muted = sum(1 for c, _t, st in rows if st and c.volume < 0.05)
+        out.append(_finding("must-fix" if not heard else "should-fix",
+                            "No music and no speech: the video plays " + ("silent" if not heard else "with only background noise")
+                            + (f" ({muted} clips are muted)" if muted else "") + ".", None,
+                            f"{len(rows)} clips, {len(heard)} audible, music tracks: none",
+                            "vedit music make pop --volume 0.5  (or music add <song>)"))
     return out
 
 
 def auto(p: Project, pdir: Path) -> list[str]:
     """Keep speech, mute non-speech footage when there is music, duck the music under speech."""
     changes = []
-    music = [m for m in p.music if m.volume > 0.02]
+    music = [m for m in p.music if m.volume > 0.02 and not is_sfx(p, m)]
     any_speech = False
     for c in p.clips:
         st = clip_stats(p, pdir, c)

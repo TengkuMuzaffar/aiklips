@@ -122,6 +122,11 @@ def proc_size(w: int, h: int, max_side: int) -> tuple[int, int]:
 def _key(src_path: Path, eff: Effect, extra: str = "") -> str:
     st = src_path.stat()
     params = {k: v for k, v in eff.params.items() if k not in _COMPOSITE_ONLY.get(eff.type, set())}
+    if eff.type in ("mask", "focus") and params.get("tracker") not in (None, "box"):
+        from . import outline, segment  # a better tracker must re-render the mask, even though its settings didn't change
+
+        how = outline.resolve_tracker(params)
+        extra = f"{extra}/{segment.VERSION if how == 'segment' else outline.VERSION}"  # outline: same key as before
     blob = json.dumps([str(src_path), st.st_size, st.st_mtime, eff.type, params, EFFECT_VERSION, extra], sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:16]
 

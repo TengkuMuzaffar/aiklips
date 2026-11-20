@@ -84,6 +84,61 @@ def color_profile(path: Path, duration: float | None = None, samples: int = 12) 
         return None
 
 
+def palette(path: Path, duration: float | None = None, samples: int = 16) -> dict | None:
+    """The reference's colours as a designer would name them: the canvas (when one flat colour fills much of the
+    frame, as in motion design), the ink (darkest real colour, for text) and up to 3 saturated accents.
+    {"background": hex|None, "bg_share": 0..1, "surface": hex|None, "ink": hex|None, "accents": [hex],
+     "colors": [[hex, share], ...]}"""
+    from ..ops import color
+
+    dur = duration or media.probe(path)["duration"]
+    frames = [f for f in (color._grab(path, dur * (i + 0.5) / samples) for i in range(samples)) if f is not None]
+    if not frames:
+        return None
+    px = np.concatenate([f.reshape(-1, 3) for f in frames])
+    keys = (px * 15.999).astype(np.int32)
+    keys = keys[:, 0] * 256 + keys[:, 1] * 16 + keys[:, 2]
+    uniq, inv, counts = np.unique(keys, return_inverse=True, return_counts=True)
+    means = np.stack([np.bincount(inv, weights=px[:, c], minlength=len(uniq)) for c in range(3)], 1) / counts[:, None]
+    clusters: list[list] = []  # [rgb, count]
+    for i in np.argsort(-counts):
+        rgb, n = means[i], int(counts[i])
+        for cl in clusters:
+            if np.linalg.norm(cl[0] - rgb) < 0.14:
+                cl[0] = (cl[0] * cl[1] + rgb * n) / (cl[1] + n)
+                cl[1] += n
+                break
+        else:
+            clusters.append([rgb, n])
+    total = float(len(px))
+    # small but strongly saturated colours count as accents (orange keyword text is well under 1% of the frame)
+    small = sorted(([c, n / total] for c, n in clusters if 0.002 <= n / total < 0.01), key=lambda x: -x[1])
+    clusters = sorted(([c, n / total] for c, n in clusters if n / total >= 0.01), key=lambda x: -x[1])
+
+    def hexc(c) -> str:
+        return "#" + "".join(f"{int(round(float(v) * 255)):02X}" for v in c)
+
+    def sat(c) -> float:
+        return float((c.max() - c.min()) / max(c.max(), 1e-6))
+
+    def luma(c) -> float:
+        return float(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+
+    top = clusters[0] if clusters else None
+    background = hexc(top[0]) if top and top[1] >= 0.25 else None
+    accents: list = []
+    for c, s in clusters + small:  # saturated, and clearly different from the accents already picked
+        if sat(c) >= (0.35 if s >= 0.01 else 0.6) and c.max() >= (0.3 if s >= 0.01 else 0.45) \
+                and all(np.linalg.norm(c - a) > 0.3 for a in accents):
+            accents.append(c)
+    surfaces = [c for c, s in clusters[1:] if s >= 0.05 and sat(c) < 0.35 and luma(c) > 0.6]  # a second light panel colour
+    inks = [c for c, _s in clusters if luma(c) < 0.3]
+    return {"background": background, "bg_share": round(top[1], 3) if top else 0.0,
+            "surface": hexc(surfaces[0]) if background and surfaces else None,
+            "ink": hexc(min(inks, key=luma)) if inks else None, "accents": [hexc(c) for c in accents[:3]],
+            "colors": [[hexc(c), round(s, 3)] for c, s in clusters[:8]]}
+
+
 # ---- sound ----------------------------------------------------------------------------------
 
 def load_audio(path: Path, start: float = 0.0, duration: float | None = None) -> np.ndarray | None:
@@ -295,9 +350,54 @@ def make_sheets(path: Path, duration: float, shots: list[float], out_dir: Path) 
     return sheets
 
 
+TIMELINE_FRAMES = 20
+
+
+def timeline_times(duration: float, cuts: list[float] | None = None, energy: list[float] | None = None,
+                   fps: float = 10, n: int = TIMELINE_FRAMES) -> list[tuple[float, str]]:
+    """Frames across the WHOLE video after the hook: an even grid plus the moments the picture changes without a cut
+    (motion-energy peaks: a scene animating in, a card swapping). Motion design changes a lot with no cuts at all,
+    so one frame per shot misses most of it."""
+    if duration <= 3.5:
+        return []
+    cuts = cuts or []
+    changes: list[float] = []
+    if energy:
+        mean = sum(energy) / len(energy) or 1e-6
+        for i in range(1, len(energy) - 1):
+            t = (i + 1) / fps
+            if (t > 3.0 and energy[i] > 3 * mean and energy[i] >= energy[i - 1] and energy[i] >= energy[i + 1]
+                    and not any(abs(t - c) < 0.4 for c in cuts) and not any(abs(t - x) < 1.0 for x in changes)):
+                changes.append(round(min(t + 0.4, duration - 0.05), 2))  # just after the change: the new state
+        changes = sorted(sorted(changes, key=lambda t: -energy[min(len(energy) - 1, int(t * fps))])[:6])
+    grid_n = max(4, n - len(changes))
+    step = (duration - 3.0) / grid_n
+    grid = [round(3.0 + step * (i + 0.5), 2) for i in range(grid_n)]
+    grid = [t for t in grid if not any(abs(t - c) < step * 0.35 for c in changes)]
+    out = [(t, f"{t:.1f}s") for t in grid] + [(t, f"{t:.1f}s change") for t in changes]
+    return sorted(out)[:n]
+
+
+def make_timeline_sheet(path: Path, duration: float, out_dir: Path, cuts: list[float] | None = None,
+                        energy: list[float] | None = None, fps: float = 10) -> str | None:
+    """Sheet 3: the whole video after the hook (see timeline_times)."""
+    marks = timeline_times(duration, cuts, energy, fps)
+    if not marks:
+        return None
+    frames = sample_frames(path, [t for t, _ in marks], out_dir / "frames", "tl")
+    if not frames:
+        return None
+    dest = out_dir / "sheet-3.jpg"
+    _tile([(p, label) for p, (_, label) in zip(frames, marks)], dest, cols=5, width=240,
+          title=f"WHOLE VIDEO: {len(frames)} frames from 3s to the end ('change' = the picture changed without a cut)")
+    return dest.name
+
+
 # ---- everything -----------------------------------------------------------------------------
 
-def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = None, transcript: bool = True) -> dict:
+def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = None, transcript: bool = True,
+            cuts: list[float] | None = None, words: list[dict] | None = None) -> dict:
+    """`cuts` / `words` ([{t, w}]): already measured on the same file by the media library's study; reused, not redone."""
     say = progress or (lambda _s: None)
     out_dir.mkdir(parents=True, exist_ok=True)
     say("Reading the file")
@@ -306,8 +406,9 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         raise VeditError("A reference must be a video")
     dur = info["duration"]
     media.extract_frame(path, min(1.0, dur / 3), out_dir / "thumb.jpg", 360)
-    say("Finding cuts")
-    cuts = detect_cuts(path)
+    if cuts is None:
+        say("Finding cuts")
+        cuts = detect_cuts(path)
     pace = pacing(cuts, dur)
     say("Measuring motion")
     mot = motion(path)
@@ -323,8 +424,19 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
     col = color_profile(path, dur)
     say("Making contact sheets")
     sheets = make_sheets(path, dur, pace["shots"], out_dir)
+    tl = make_timeline_sheet(path, dur, out_dir, cuts, mot.get("energy"), mot.get("fps") or 10)
+    if tl:
+        sheets.append(tl)
+    say("Measuring the palette")
+    try:
+        pal = palette(path, dur)
+    except (VeditError, OSError):
+        pal = None
     text = None
-    if transcript and info["has_audio"] and dur <= 240:
+    if words:
+        text = " ".join(w["w"].strip() for w in words)[:3000] or None
+        (out_dir / "words.json").write_text(json.dumps(words[:400]))
+    elif transcript and info["has_audio"] and dur <= 240:
         try:
             from ..ops import captions as caps
 
@@ -341,7 +453,7 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         "motion_energy": mot.get("energy", []), "audio": audio,
         "cuts_on_beat": sync, "cuts_on_beat_chance": chance, "first_cut_s": cuts[0] if cuts else None,
         "flashes_on_beat": near_beat_ratio(mot.get("flashes", []), beats), "sheets": sheets, "transcript": text,
-        "color": col,
+        "color": col, "palette": pal,
     }
     (out_dir / "metrics.json").write_text(json.dumps(metrics))
     return metrics
@@ -363,4 +475,5 @@ def summary_for_ai(m: dict) -> dict:
         "flashes_on_beat": m.get("flashes_on_beat"), "first_cut_s": m.get("first_cut_s"),
         "transcript": m.get("transcript"),
         "color": m.get("color"),
+        "palette": m.get("palette"),
     }

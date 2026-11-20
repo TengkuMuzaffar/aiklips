@@ -203,5 +203,5 @@ def catalog() -> list[dict]:
         st = v.get("style", {})
         out.append({"name": k, "about": v.get("about", ""), "font": st.get("font") or fonts.DEFAULT_FONT,
                     "animation": [p if isinstance(p, str) else p["name"] for p in v.get("presets", [])],
-                    "saved": k in user})
+                    "saved": k in user, "style": st})
     return out

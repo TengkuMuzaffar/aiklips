@@ -9,6 +9,7 @@ import json
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,7 +21,7 @@ from .ops import captions as caps
 from .ops import cut
 from .ops.silence import find_silences, silence_cut
 from .project import (
-    ACTIVE_FILE, PROJECT_FILE, Effect, Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError,
+    ACTIVE_FILE, PROJECT_FILE, Effect, Keyframe, Layer, MusicTrack, Preset, Project, Source, TextStyle, VeditError,
     find_project_dir, load, save, store_media_path,
 )
 
@@ -37,6 +38,7 @@ music_app = typer.Typer(help="Background music")
 mask_app = typer.Typer(help="Hide a region (text, logo, label, plate): remove it (fill with the background) or blur / pixelate / fill, tracked")
 focus_app = typer.Typer(help="Object focus: spotlight an object or make the camera follow it")
 color_app = typer.Typer(help="Colour: match clips to each other or a reference, grade with looks, LUTs")
+sfx_app = typer.Typer(help="Sound effects made by aiklips' own synth (whoosh, pop, riser, impact...): pick a preset, move its pitch / length, tweak any setting")
 sound_app = typer.Typer(help="Footage sound vs music: what each clip's audio is (speech / background / silent), and sensible defaults")
 fx_app = typer.Typer(help="Signature moves (punch-in, speed ramp, freeze + title, flash, whip, keyword pop, before/after, "
                           "zoom-out reveal) and clip filters (blur, sharpen, glow, vignette, grain, RGB split, film, VHS, shake...)")
@@ -48,13 +50,29 @@ adjust_app = typer.Typer(help="Adjustment layers: filters + colour over a time r
 proxy_app = typer.Typer(help="Proxy media: small copies of big (4K) sources so previews are fast; exports use the originals")
 track_app = typer.Typer(help="Timeline tracks: list them, hide / show the main track or an overlay track")
 marker_app = typer.Typer(help="Markers on the timeline (notes, beats) and YouTube chapters from them")
-shape_app = typer.Typer(help="Shapes: boxes, circles, lines, arrows (callouts, lower-third backgrounds)")
+shape_app = typer.Typer(help="Shapes: boxes, circles, triangles, stars, hearts, bubbles, lines, arrows (callouts, "
+                             "backgrounds, motion-design elements)")
+scene_app = typer.Typer(help="Design projects: scenes (pages) played back to back; their elements move along with them")
+iso_app = typer.Typer(help="Isometric worlds: ready-made scenes or your own, from a library of 60+ items (`iso items`)")
+iso_item_app = typer.Typer(help="The items of an iso world: add / set (move, turn, recolour, label, settings) / remove")
+iso_app.add_typer(iso_item_app, name="item")
+obj3d_app = typer.Typer(help="3D objects that turn in perspective: 3D text, cars, trucks, planes, rockets, dogs, cats, birds, fish, "
+                              "shapes, or your own .glb / .obj; spin them 360 and move them from A to B (`3d kinds`)")
+group_app = typer.Typer(help="Layer groups: an effect's layers as one row on the timeline (move / rename / ungroup / delete together)")
+style_app = typer.Typer(help="Motion styles: a look as numbers (easing, timing, palette, fonts) the AI follows and the audit checks")
+motion_app = typer.Typer(help="Motion graphics on the tracks: kinetic text (by word / letter / line), draw-on, morph, paths")
+chart_app = typer.Typer(help="Charts that grow in: bar, hbar, line, donut (values roll up with the bars)")
+counter_app = typer.Typer(help="Numbers that count up: 0 -> 1,250,000 with prefix / suffix / decimals")
+safe_app = typer.Typer(help="Safe zone of the project's platform (`vedit platform`): check where every layer is, fit "
+                             "the ones under the app's buttons / caption bar back inside")
 look_app = typer.Typer(help="Reusable text looks (font + colours + outline + animation): list / apply / save / delete")
 for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app), ("animate", anim_app),
                   ("captions", cap_app), ("bg", bg_app), ("face", face_app), ("music", music_app),
-                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app),
+                  ("mask", mask_app), ("focus", focus_app), ("color", color_app), ("fx", fx_app), ("sound", sound_app), ("sfx", sfx_app),
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
-                  ("version", version_app), ("template", template_app), ("track", track_app)]:
+                  ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
+                  ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
+                  ("style", style_app), ("group", group_app), ("iso", iso_app), ("3d", obj3d_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -84,14 +102,41 @@ def pdir() -> Path:
 
 
 def emit(data: dict, human: str | None = None) -> None:
+    warnings = STATE.pop("warnings", None)
+    if warnings:
+        data = {**data, "warnings": [*data.get("warnings", []), *warnings]}
     if STATE["json"]:
         print(json.dumps({"ok": True, **data}, default=str))
     else:
         print(human if human is not None else json.dumps(data, indent=2, default=str))
+        for w in warnings or []:
+            print(f"WARNING: {w}")
 
 
+@contextmanager
 def edit(message: str):
-    return history.transaction(pdir(), message)
+    """An undoable edit (history.transaction). Afterwards, text this edit made unreadable (contrast against the shape /
+    box / canvas really behind it, ops/contrast.py) comes back as a warning in the command's own output, so the AI
+    sees it at once instead of only in the audit."""
+    d = pdir()
+    with history.transaction(d, message) as tx:
+        before = tx.project.model_copy(deep=True)
+        yield tx
+    if not tx.cancelled:
+        try:
+            STATE["warnings"] = _contrast_warnings(before, tx.project, d)
+        except Exception:  # a guardrail must never break the edit itself
+            pass
+
+
+def _contrast_warnings(before: Project, after: Project, d: Path) -> list[str]:
+    from .ops import contrast
+
+    now = [r for r in contrast.issues(after, d) if r.severity]
+    if not now:
+        return []
+    old = {(r.layer, r.fill, r.behind_hex) for r in contrast.issues(before, d) if r.severity}
+    return [f"{contrast.message(r)} Fix: {r.suggest}" for r in now if (r.layer, r.fill, r.behind_hex) not in old]
 
 
 def fmt_t(t: float) -> str:
@@ -148,9 +193,13 @@ def import_(
     at: Optional[int] = typer.Option(None, help="Insert at clip index instead of appending"),
     start: float = typer.Option(0.0, help="Source in-point (seconds)"),
     end: Optional[float] = typer.Option(None, help="Source out-point (seconds)"),
-    copy: bool = typer.Option(False, help="Copy the file into the project's media/ folder"),
+    copy: bool = typer.Option(False, help="Copy the file into the project's media/ folder (not the media library)"),
+    library: bool = typer.Option(True, help="Add the file to the media library (copied in, studied once in the background, "
+                                            "reusable in any project). --no-library points the project at the original file"),
 ):
     """Import video/audio/image files as sources (and add them to the timeline)."""
+    from . import media_library
+
     d = pdir()
     with edit("import " + ", ".join(Path(f).name for f in files)) as tx:
         p = tx.project
@@ -163,6 +212,8 @@ def import_(
                 if not dest.exists():
                     shutil.copy2(path, dest)
                 path = dest
+            elif library:
+                path = media_library.store_for_project(d, path)
             sid = p.new_id("s")
             p.sources[sid] = Source(path=store_media_path(d, path), **info)
             clip = None
@@ -195,20 +246,31 @@ def info():
                "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)}
         if l.hidden:
             row["hidden"] = True
+        if l.on_video:
+            row["on_video_track"] = True
+        if l.group:
+            row["group"] = l.group
         if l.type == "video":
             row.update(source=l.source, src_in=l.src_in, fit=l.fit, flip_h=l.flip_h, flip_v=l.flip_v)
         if l.type in ("video", "adjust"):
             row["effects"] = [_fx_label(e) for e in l.effects]
             row["grade"] = l.grade.model_dump(exclude_none=True) if l.grade else None
         layers.append(row)
+    from . import media_library
+
+    studied = media_library.project_media(d, p)  # what the media library's study found in each source
     data = {"project": str(d), "name": p.name, "canvas": p.canvas.model_dump(), "duration": round(p.duration, 3),
             **({"main_hidden": True} if p.main_hidden else {}),
-            "sources": {k: v.model_dump() for k, v in p.sources.items()}, "clips": clips, "layers": layers,
+            **({"video_track_height": p.main_z} if p.main_z else {}),
+            "sources": {k: v.model_dump() | ({"study": studied[k]} if k in studied else {}) for k, v in p.sources.items()},
+            "clips": clips, "layers": layers,
+            **({"groups": __import__("vedit.ops.groups", fromlist=["summary"]).summary(p)} if p.groups else {}),
             "music": [m.model_dump(by_alias=True) for m in p.music], "history_step": history.head(d)}
     if STATE["json"]:
         return emit(data)
     out = [f"Project {p.name}  ({d})", f"Canvas {p.canvas.width}x{p.canvas.height} @{p.canvas.fps:g}fps   Duration {fmt_t(p.duration)}", "", "Sources:"]
-    out += [f"  {k}: {v.path}  {v.duration}s" + (f" {v.width}x{v.height}" if v.has_video else " audio") for k, v in p.sources.items()] or ["  (none)"]
+    out += [f"  {k}: {v.path}  {v.duration}s" + (f" {v.width}x{v.height}" if v.has_video else " audio")
+            + (f"\n  {media_library.media_line(k, '', studied[k]).strip()}" if k in studied else "") for k, v in p.sources.items()] or ["  (none)"]
     out += ["", "Timeline:"]
     out += [f"  {c['id']:>4}  {fmt_t(c['timeline'][0])} - {fmt_t(c['timeline'][1])}   " + ("(gap)" if c.get("gap") else f"src {c['source']} {c['source_range'][0]:.2f}-{c['source_range'][1]:.2f}s") +
             f"{'  x' + str(c['speed']) if c['speed'] != 1 else ''}{'  zoom ' + str(c['zoom']) if c['zoom'] != 1 or c['zoom_to'] else ''}{' -> ' + str(c['zoom_to']) if c['zoom_to'] else ''}"
@@ -216,7 +278,10 @@ def info():
             f"{'  <- ' + c['transition_in']['type'] + ' ' + str(c['transition_in']['duration']) + 's' if c.get('transition_in') else ''}" for c in clips] or ["  (empty)"]
     out += ["", "Layers:"]
     out += [f"  {l['id']:>5}  T{l['track']} {l['type']:<8}{' (hidden)' if l.get('hidden') else ''} {l['start']:.2f}-{(l['end'] if l['end'] is not None else p.duration):.2f}s  {str(l['text'] if l['text'] is not None else l.get('source') or '')[:40]!r}"
-            f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}" for l in layers] or ["  (none)"]
+            f"{'  presets:' + ','.join(l['presets']) if l['presets'] else ''}{'  [' + l['group'] + ']' if l.get('group') else ''}" for l in layers] or ["  (none)"]
+    if data.get("groups"):
+        out += ["", "Groups (one row each on the timeline; `vedit group move|set|ungroup|remove`):"]
+        out += [f"  {g['id']}: {g['name']} {g['start']:.2f}-{g['end']:.2f}s, {len(g['layers'])} layers" for g in data["groups"]]
     if p.music:
         out += ["", "Music:"] + [f"  {m.id}: {m.source} vol {m.volume}{' duck' if m.duck else ''}" for m in p.music]
     print("\n".join(out))
@@ -309,21 +374,38 @@ def remove_clip(clip: str):
     emit(r, f"Removed {clip}. {_summary(tx.project)}")
 
 
-@app.command()
-def place(
-    item: str = typer.Argument(..., help="A clip id (main track) or a layer id (overlay track)"),
-    at: Optional[float] = typer.Option(None, help="New start, timeline seconds"),
-    end: Optional[float] = typer.Option(None, help="Layers: new end (timeline seconds)"),
-    track: Optional[int] = typer.Option(None, help="Layers: overlay track (0 = bottom, higher = drawn on top)"),
-    new_track: bool = typer.Option(False, "--new-track", help="Layers: open a new track at --track instead of sharing it"),
-    src_in: Optional[float] = typer.Option(None, help="Video layers: start this many seconds into the file (trim the head)"),
-):
-    """Move something on the timeline, like dragging it. A clip placed past the end of the clip before it leaves a gap
-    (background colour) before it; placed over another clip it goes before / after that clip. A layer gets new times
-    and / or a track (a busy track bumps it to a new track just above)."""
+@app.command("remove-source")
+def remove_source(sources: list[str] = typer.Argument(..., help="Source ids (s1 s2 ...) from `info`")):
+    """Take imported media out of the project, with every clip / layer / music track that uses it (undoable; the
+    file stays on disk)."""
     from .ops import tracks
 
-    with edit(f"place {item}") as tx:
+    with edit("remove " + ", ".join(sources)) as tx:
+        r = tracks.remove_sources(tx.project, sources)
+    used = [*r["clips"], *r["layers"], *r["music"]]
+    emit(r, f"Removed {', '.join(r['sources'])}" + (f" and {', '.join(used)}" if used else "") + f". {_summary(tx.project)}")
+
+
+@app.command()
+def place(
+    item: str = typer.Argument(..., help="A clip id (video track) or a layer id (any other track)"),
+    at: Optional[float] = typer.Option(None, help="New start, timeline seconds"),
+    end: Optional[float] = typer.Option(None, help="Layers: new end (timeline seconds)"),
+    track: Optional[int] = typer.Option(None, help="Layers: track (0 = bottom, higher = drawn on top; tracks below the video track's height are under the video)"),
+    new_track: bool = typer.Option(False, "--new-track", help="Layers: open a new track at --track instead of sharing it"),
+    src_in: Optional[float] = typer.Option(None, help="Video layers: start this many seconds into the file (trim the head)"),
+    under_video: bool = typer.Option(False, "--under-video", help="Layers: with --new-track at the video track's height, "
+                                                                  "open it under the video instead of over it"),
+    video_track: bool = typer.Option(False, "--video-track", help="Layers: onto the video track itself (in a gap or "
+                                                                  "after the clips; not over a clip)"),
+):
+    """Move something on the timeline, like dragging it. A clip placed past the end of the clip before it leaves a gap
+    (background colour, or the tracks under the video) before it; placed over another clip it goes before / after that
+    clip. A layer gets new times and / or a track (a busy track bumps it to a new track just above). Something must
+    stay at 0s: a move that leaves the start empty is refused."""
+    from .ops import tracks
+
+    with edit(f"place {item}") as tx, tracks.zero_guard(tx.project):
         p = tx.project
         if any(c.id == item for c in p.clips):
             if at is None:
@@ -332,32 +414,39 @@ def place(
             r = {"clip": item, "start": round(t, 3)}
             msg = f"{item} at {t:.2f}s"
         else:
-            l = tracks.place_layer(p, item, at, tracks._KEEP if end is None else end, track, new_track, src_in)
+            if video_track:
+                l = tracks.put_on_video_track(p, item, at, tracks._KEEP if end is None else end)
+            else:
+                l = tracks.place_layer(p, item, at, tracks._KEEP if end is None else end, track, new_track, src_in, under_video)
             r = {"layer": l.id, "track": l.track, "start": l.start, "end": l.end}
             msg = f"{l.id}: track {l.track}, {l.start:.2f}-{'end' if l.end is None else f'{l.end:.2f}'}s"
     emit(r, msg + f". {_summary(tx.project)}")
 
 
 @app.command("to-overlay")
-def to_overlay(clip: str, at: float = typer.Option(0.0, help="Start on the timeline after the clip leaves the main track"),
-               track: int = typer.Option(0, help="Overlay track (0 = bottom)"),
-               share_track: bool = typer.Option(False, "--share-track", help="Join --track instead of opening a new one")):
-    """Move a main-track clip onto an overlay track as a full-frame video layer (keeps sound, colour, filters; text on it
-    moves with it). The main track closes up. Use for b-roll over a talking head, or cutaways."""
+def to_overlay(clip: str, at: float = typer.Option(0.0, help="Start on the timeline after the clip leaves the video track"),
+               track: int = typer.Option(0, help="Track (0 = bottom)"),
+               share_track: bool = typer.Option(False, "--share-track", help="Join --track instead of opening a new one"),
+               close_gap: bool = typer.Option(False, "--close-gap", help="Close up the video track (ripple) instead of "
+                                                                         "leaving a gap where the clip was")):
+    """Move a clip from the video track onto another track as a full-frame video layer (keeps sound, colour, filters;
+    text on it moves with it). The video track keeps its timing (a gap where the clip was) unless --close-gap. Use for
+    b-roll over a talking head, or cutaways."""
     from .ops import tracks
 
-    with edit(f"{clip} to overlay") as tx:
-        l = tracks.clip_to_overlay(tx.project, clip, at, track, not share_track)
+    with edit(f"{clip} to overlay") as tx, tracks.zero_guard(tx.project):
+        l = tracks.clip_to_overlay(tx.project, clip, at, track, not share_track, None if close_gap else pdir())
     emit({"layer": l.id, "track": l.track, "start": l.start, "end": l.end}, f"{clip} -> overlay {l.id} on track {l.track}. {_summary(tx.project)}")
 
 
 @app.command("to-clip")
-def to_clip(layer: str, index: Optional[int] = typer.Option(None, help="Position on the main track (default: the end)")):
-    """Move a video overlay onto the main track as a clip (keeps its trim, sound, colour and filters)."""
+def to_clip(layer: str, index: Optional[int] = typer.Option(None, help="Position among the clips (default: the end)"),
+            at: Optional[float] = typer.Option(None, help="Timeline time instead of --index (a gap before it on empty space)")):
+    """Move a video layer onto the video track as a clip (keeps its trim, sound, colour and filters)."""
     from .ops import tracks
 
-    with edit(f"{layer} to main track") as tx:
-        c = tracks.overlay_to_clip(tx.project, layer, index)
+    with edit(f"{layer} to video track") as tx, tracks.zero_guard(tx.project):
+        c = tracks.overlay_to_clip(tx.project, layer, index, at, pdir())
     emit({"clip": c.id}, f"overlay {layer} -> clip {c.id}. {_summary(tx.project)}")
 
 
@@ -384,9 +473,22 @@ def paste(src: str = typer.Option(..., "--from", help="Clip or layer to copy fro
     emit({"changed": n, "kind": kind}, f"Pasted {', '.join(group)} from {src} onto {n} {kind}(s)")
 
 
+@track_app.command("video")
+def track_video(to: str = typer.Argument(..., help="up | down | top | bottom | a height (0 = bottom)")):
+    """Move the video track (the clips) up or down among the other tracks. Tracks under it show through where the
+    video is transparent: gaps, letterbox bars (fit contain), a keyed green screen (`bg remove --mode chroma --replace
+    none`). E.g. a colour screen behind green-screen footage: `shape add rect --full --fill #hex --track 0 --new-track`,
+    then `track video up`."""
+    from .ops import tracks
+
+    with edit(f"video track {to}") as tx:
+        z = tracks.set_video_track(tx.project, to)
+    emit({"height": z}, f"Video track at height {z}: {z} track(s) under it")
+
+
 @track_app.command("list")
 def track_list():
-    """The main track and the overlay tracks (bottom to top) with what is on each."""
+    """All tracks bottom to top (the video track at its height) with what is on each."""
     from .ops import tracks
 
     rows = tracks.track_rows(load(pdir()))
@@ -402,13 +504,13 @@ def _track_vis(track: str, visible: bool) -> None:
 
 
 @track_app.command("hide")
-def track_hide(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+def track_hide(track: str = typer.Argument(..., help="'video' (or 'main') or a track number (0 = bottom)")):
     """Hide a track (not drawn in the preview or export; its sound still plays)."""
     _track_vis(track, False)
 
 
 @track_app.command("show")
-def track_show(track: str = typer.Argument(..., help="'main' or an overlay track number (0 = bottom)")):
+def track_show(track: str = typer.Argument(..., help="'video' (or 'main') or a track number (0 = bottom)")):
     """Show a hidden track again."""
     _track_vis(track, True)
 
@@ -563,12 +665,18 @@ def text_add(
     glow: Optional[str] = typer.Option(None, help="Glow colour behind the letters, e.g. '#FF2BD6'"),
     gradient: Optional[str] = typer.Option(None, help="Fill gradient top->bottom, e.g. '#FFE600,#FF6A00'"),
     preset: Optional[list[str]] = typer.Option(None, help="Animation preset, repeatable: pop_in, fade_out:0.6 .. (overrides the look's)"),
+    bold: Optional[bool] = None, italic: Optional[bool] = None, underline: Optional[bool] = None, strike: Optional[bool] = None,
+    list_style: Optional[str] = typer.Option(None, "--list", help="none | bullet | number (each line an item)"),
+    align: Optional[str] = typer.Option(None, help="left | center | right"),
+    line_spacing: Optional[float] = None,
 ):
     """Add a text overlay (titles, hooks, CTAs)."""
     from .ops import text_looks
 
     kw = dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width, bg_color=bg, max_width=max_width,
-              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient))
+              uppercase=uppercase, letter_spacing=letter_spacing, glow_color=glow, gradient=_gradient(gradient),
+              bold=bold, italic=italic, underline=underline, strike=strike, list_style=list_style, align=align,
+              line_spacing=line_spacing)
     with edit(f"add text '{text[:30]}'" + (f" ({look})" if look else "")) as tx:
         p = tx.project
         layer = Layer(id=p.new_id("t"), type="text", text=text, start=start, end=end, x=x, y=y)
@@ -592,6 +700,10 @@ def text_edit(
     letter_spacing: Optional[float] = None,
     glow: Optional[str] = typer.Option(None, help="Glow colour, or 'none' to remove"),
     gradient: Optional[str] = typer.Option(None, help="'#top,#bottom' colours, or 'none' to remove"),
+    bold: Optional[bool] = None, italic: Optional[bool] = None, underline: Optional[bool] = None, strike: Optional[bool] = None,
+    list_style: Optional[str] = typer.Option(None, "--list", help="none | bullet | number (each line an item)"),
+    align: Optional[str] = typer.Option(None, help="left | center | right"),
+    line_spacing: Optional[float] = None,
 ):
     """Change the text or style of a text/captions layer."""
     with edit(f"edit text {layer_id}") as tx:
@@ -600,7 +712,8 @@ def text_edit(
             l.text = text
         l.style = _style_from(l.style, size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
                               bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight,
-                              letter_spacing=letter_spacing,
+                              letter_spacing=letter_spacing, bold=bold, italic=italic, underline=underline, strike=strike,
+                              list=list_style, align=align, line_spacing=line_spacing,
                               glow_color=None if glow in (None, "none") else glow,
                               gradient=None if gradient in (None, "none") else _gradient(gradient))
         if glow == "none":
@@ -785,27 +898,570 @@ def overlay_add(
 
 @shape_app.command("add")
 def shape_add(
-    shape: str = typer.Argument(..., help="rect | ellipse | line | arrow"),
-    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    shape: str = typer.Argument(..., help="rect | ellipse | triangle | diamond | polygon | star | ring | heart | bubble | "
+                                            "blob | line | arrow | path (--path)"),
+    start: Optional[float] = typer.Option(None, help="Timeline seconds (design: default = start of --scene)"),
+    end: Optional[float] = None, x: str = "50%", y: str = "50%",
     width: Optional[int] = None, height: Optional[int] = None, fill: Optional[str] = typer.Option(None, help="Fill colour, or 'none'"),
+    gradient: Optional[str] = typer.Option(None, help="Gradient fill instead: '#FF3B6B,#7C5CFF' (2-6 colours)"),
+    gradient_angle: Optional[float] = typer.Option(None, help="Gradient direction in degrees (0 = left->right, 90 = top->bottom)"),
+    sides: Optional[int] = typer.Option(None, help="polygon: number of sides"),
+    points: Optional[int] = typer.Option(None, help="star: number of points"),
+    inner: Optional[float] = typer.Option(None, help="star: inner radius 0..1; ring: hole size 0..1"),
     border: Optional[int] = None, border_color: Optional[str] = None, radius: Optional[int] = None,
     rotation: float = 0.0, blend: Optional[str] = None, preset: Optional[list[str]] = typer.Option(None),
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in (default: the scene at --start)"),
+    full: bool = typer.Option(False, "--full", help="Cover the whole canvas: a colour screen (rect + --fill) or a "
+                                                    "gradient screen (rect + --gradient)"),
+    track: Optional[int] = typer.Option(None, help="Timeline track to put it on (0 = bottom overlay track)"),
+    new_track: bool = typer.Option(False, "--new-track", help="Open a new track at --track for it (a track of its own)"),
+    path: Optional[str] = typer.Option(None, help="path: points as x,y fractions of the box, '0,1 0.3,0.2 1,0' (a line, "
+                                                  "bracket, underline, scribble; draw it on with --preset draw_in)"),
+    closed: bool = typer.Option(False, "--closed", help="path: close it into a filled outline"),
+    morph_to: Optional[str] = typer.Option(None, help="Shape kind it turns into (animate `morph` 0->1 with keyframes, "
+                                                      "or --preset morph_loop)"),
 ):
-    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it)."""
-    from .ops import overlays
+    """Add a shape (box behind a title, a ring around a detail, an arrow pointing at it, a star that pops in,
+    or with --full a colour / gradient screen covering the canvas)."""
+    from .ops import overlays, scenes
 
     with edit(f"shape add {shape}") as tx:
+        p = tx.project
+        t0 = start if start is not None else (scenes.scene_range(p, scene)[0] if scene and p.scenes else 0.0)
         kw: dict[str, Any] = {"x": x, "y": y, "rotation": rotation}
         for k, v in (("width", width), ("height", height), ("radius", radius), ("border_width", border), ("border_color", border_color)):
             if v is not None:
                 kw[k] = v
-        layer = overlays.add_shape(tx.project, shape, start, end, **kw)
-        vals = {} if fill is None else {"fill": fill}
-        if blend:
-            vals["blend"] = blend
+        if full:
+            kw.update(width=p.canvas.width, height=p.canvas.height, radius=0, x="50%", y="50%")
+        layer = overlays.add_shape(p, shape, t0, end, **kw)
+        vals: dict[str, Any] = {} if fill is None else {"fill": fill}
+        for k, v in (("blend", blend), ("fill_gradient", gradient), ("gradient_angle", gradient_angle), ("sides", sides),
+                     ("points", points), ("inner", inner)):
+            if v is not None:
+                vals[k] = v
         overlays.set_fields(layer, vals)
+        from .ops import motion as motion_ops
+
+        motion_ops.set_fields(layer, {"path": path, "closed": closed if shape == "path" else None, "morph_to": morph_to}
+                              if (path or morph_to or closed) else {})
         layer.presets = _presets(preset)
-    emit({"layer": layer.id}, f"Added {shape} {layer.id}")
+        scenes.place_in_scene(p, layer, scene)
+        if track is not None or new_track:
+            overlays.place_layer(p, layer.id, track if track is not None else 1 + max((o.track or 0 for o in p.layers if o is not layer), default=-1),
+                                 new_track=new_track)
+    emit({"layer": layer.id, "scene": layer.scene}, f"Added {shape} {layer.id}" + (f" in {layer.scene}" if layer.scene else ""))
+
+
+def _iso(p: Project, lid: str):
+    l = p.layer(lid)
+    if l.type != "iso" or l.iso is None:
+        raise VeditError(f"{lid} is not an isometric world (`vedit iso add`)")
+    return l
+
+
+@iso_app.command("items")
+def iso_items_list(category: Optional[str] = typer.Option(None, help="Only this category")):
+    """The item library: name, category, size on the grid, its settings."""
+    from .ops import iso_items
+
+    rows = [r for r in iso_items.catalog() if not category or r["category"].lower().startswith(category.lower())]
+    emit({"items": rows, "themes": list(iso_items.THEMES), "worlds": list(iso_items.WORLDS)},
+         "\n".join(f"  {r['kind']:<14} {r['category']:<15} {r['footprint'][0]:g}x{r['footprint'][1]:g}"
+                   + (f"  settings: {', '.join(f'{k}={v!r}' for k, v in r['params'].items())}" if r["params"] else "") for r in rows)
+         + f"\nThemes: {', '.join(iso_items.THEMES)}   Worlds: {', '.join(iso_items.WORLDS)}, empty")
+
+
+@iso_app.command("add")
+def iso_add(world_name: str = typer.Argument("city", metavar="WORLD", help="city | island | desk | cafe | office | farm | data | stack | empty"),
+            theme: str = typer.Option("pastel", help="pastel | bright | corporate | night"),
+            start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "55%",
+            width: Optional[int] = typer.Option(None, help="Width on the canvas (px)"),
+            scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in")):
+    """Add an isometric world that builds itself block by block (edit it with `iso item ...`)."""
+    from .editor import actions
+
+    with edit(f"iso add {world_name}") as tx:
+        msg = actions._iso_add(tx.project, {"world": world_name, "theme": theme, "start": start, "end": end, "x": x, "y": y,
+                                            "width": width, "scene": scene})
+        lid = tx.project.layers[-1].id if tx.project.layers[-1].type == "iso" else next(l.id for l in reversed(tx.project.layers) if l.type == "iso")
+    emit({"layer": lid}, msg)
+
+
+@iso_app.command("list")
+def iso_list(layer: str):
+    """An iso world's items with their index (for `iso item set|remove`)."""
+    p = load(pdir())
+    l = _iso(p, layer)
+    rows = [{"index": i, **it.model_dump(exclude_defaults=True)} for i, it in enumerate(l.iso.items)]
+    emit({"layer": layer, "theme": l.iso.theme, "build": l.iso.build, "items": rows},
+         f"{layer}: theme {l.iso.theme}, build {l.iso.build}\n" + "\n".join(
+             f"  #{r['index']:<3} {r['kind']:<14} at {r.get('x', 0):g},{r.get('y', 0):g}" + (f" z{r['z']:g}" if r.get("z") else "")
+             + (f" rot{r['rot']}" if r.get("rot") else "") + (f" x{r['size']:g}" if r.get("size") else "")
+             + (f" '{r['label']}'" if r.get("label") else "") + (f" {r['params']}" if r.get("params") else "") for r in rows))
+
+
+def _xy(at: Optional[str]) -> tuple[Optional[float], Optional[float]]:
+    if not at:
+        return None, None
+    try:
+        a, b = (float(v) for v in at.split(","))
+        return a, b
+    except ValueError:
+        raise VeditError("--at is x,y on the grid, e.g. 2,1.5") from None
+
+
+@iso_item_app.command("add")
+def iso_item_add(layer: str, kind: str = typer.Argument(..., help="An item from `vedit iso items`"),
+                 at: Optional[str] = typer.Option(None, help="x,y on the grid (default: a free spot on the floor)"),
+                 z: Optional[float] = typer.Option(None, help="Height it stands at (on a desk: 0.78)"),
+                 rot: Optional[int] = typer.Option(None, help="Quarter turns 0-3"), size: Optional[float] = None,
+                 color: Optional[str] = None, color2: Optional[str] = None,
+                 label: Optional[str] = typer.Option(None, help="A floating label above it"),
+                 param: Optional[list[str]] = typer.Option(None, "--param", help="Its own settings: floors=6, text=OPEN, value=3 ...")):
+    """Add an item to an iso world."""
+    from .ops import iso_items
+
+    x, y = _xy(at)
+    with edit(f"iso item add {layer} {kind}") as tx:
+        i = iso_items.add_item(_iso(tx.project, layer).iso, kind, x, y, z=z, rot=rot, size=size, color=color, color2=color2,
+                               label=label, params=iso_items.parse_params(param))
+        it = _iso(tx.project, layer).iso.items[i]
+    emit({"layer": layer, "index": i, "x": it.x, "y": it.y}, f"{layer}: #{i} {kind} at {it.x:g},{it.y:g}")
+
+
+@iso_item_app.command("set")
+def iso_item_set(layer: str, index: int, kind: Optional[str] = None, at: Optional[str] = None, z: Optional[float] = None,
+                 rot: Optional[int] = None, size: Optional[float] = None, color: Optional[str] = None, color2: Optional[str] = None,
+                 label: Optional[str] = None, param: Optional[list[str]] = typer.Option(None, "--param")):
+    """Move / turn / resize / recolour / relabel one item, or change its settings."""
+    from .ops import iso_items
+
+    x, y = _xy(at)
+    with edit(f"iso item set {layer} #{index}") as tx:
+        it = iso_items.set_item(_iso(tx.project, layer).iso, index, iso_items.parse_params(param) or None, kind=kind, x=x, y=y, z=z,
+                                rot=rot, size=size, color=color, color2=color2, label=label)
+    emit({"layer": layer, "index": index, "item": it.model_dump(exclude_defaults=True)}, f"{layer}: #{index} {it.kind}")
+
+
+@iso_item_app.command("remove")
+def iso_item_remove(layer: str, index: int):
+    """Delete one item from an iso world."""
+    from .ops import iso_items
+
+    with edit(f"iso item remove {layer} #{index}") as tx:
+        it = iso_items.remove_item(_iso(tx.project, layer).iso, index)
+    emit({"layer": layer, "removed": it.kind}, f"{layer}: removed #{index} {it.kind}")
+
+
+@iso_app.command("set")
+def iso_set(layer: str, theme: Optional[str] = None, world_name: Optional[str] = typer.Option(None, "--world", help="Swap in a ready-made world"),
+            light: Optional[float] = typer.Option(None, help="0-0.6: how strongly the faces are lit"),
+            outline: Optional[bool] = typer.Option(None, "--outline/--no-outline"),
+            build: Optional[str] = typer.Option(None, help="drop | grow | pop: how each item arrives")):
+    """An iso world's theme, light, outlines and build style (or swap the whole world)."""
+    from .editor import actions
+
+    with edit(f"iso set {layer}") as tx:
+        actions._iso_scene_set(tx.project, {"layer": layer, "theme": theme, "world": world_name, "light": light, "outline": outline, "build": build})
+    emit({"layer": layer}, f"{layer}: updated")
+
+
+@iso_app.command("scene")
+def iso_scene(layer: str, scene_file: Path = typer.Argument(..., help="JSON: {theme, build, items: [{kind, x, y, z, rot, size, color, label, params}]}")):
+    """Replace an iso world's whole scene from a JSON file (build a custom world in one step)."""
+    import json as _json
+
+    from .ops import iso_items
+    from .project import IsoScene
+
+    sc = IsoScene.model_validate(_json.loads(scene_file.read_text()))
+    for it in sc.items:
+        iso_items._check(it)
+    with edit(f"iso scene {layer}") as tx:
+        _iso(tx.project, layer).iso = sc
+    emit({"layer": layer, "items": len(sc.items)}, f"{layer}: {len(sc.items)} items")
+
+
+@obj3d_app.command("kinds")
+def obj3d_kinds():
+    """What can be made in 3D: each kind, its settings (--param k=v) and colours."""
+    from .ops import items3d
+
+    rows = items3d.catalog()
+    emit({"kinds": rows, "presets": ["spin3d", "spin3d_in", "sway3d", "travel"]},
+         "\n".join(f"  {r['kind']:<8} {r['category']:<9} {r['note']}" + (f"\n           settings: {', '.join(f'{k}={v!r}' for k, v in r['params'].items())}"
+                                                                         if r["params"] else "") for r in rows))
+
+
+def _obj_params(param: Optional[list[str]]) -> dict:
+    from .ops import iso_items
+
+    return iso_items.parse_params(param)
+
+
+@obj3d_app.command("add")
+def obj3d_add(kind: str = typer.Argument(..., help="text | car | truck | bus | plane | rocket | dog | cat | bird | fish | cube | sphere | gem | coin | heart | star | model"),
+              text: Optional[str] = typer.Option(None, help="kind text: the words"),
+              font: Optional[str] = typer.Option(None, help="kind text: a font key (`vedit fonts`)"),
+              src: Optional[Path] = typer.Option(None, help="kind model: a .glb / .gltf / .obj / .stl file"),
+              color: Optional[str] = None, color2: Optional[str] = None,
+              param: Optional[list[str]] = typer.Option(None, "--param", help="The kind's own settings: style=sport, ears=pointy ... (`3d kinds`)"),
+              start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+              width: Optional[int] = typer.Option(None, help="Size on the canvas (px): the box it turns in"),
+              yaw: Optional[float] = typer.Option(None, help="Resting turn round its up axis (degrees; 0 = side on, facing right)"),
+              pitch: Optional[float] = typer.Option(None, help="Tip towards the camera (degrees; default 18)"),
+              roll: Optional[float] = None,
+              depth: Optional[float] = typer.Option(None, help="kind text: letter depth (fraction of the height, default 0.35)"),
+              spin: Optional[float] = typer.Option(None, help="Keep turning: seconds per 360 (negative = the other way)"),
+              intro: bool = typer.Option(True, "--intro/--no-intro", help="Spin in while growing at the start"),
+              scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in")):
+    """Add a 3D object (generated from code: nothing to download). Then `3d move` (A -> B) / `3d spin`."""
+    from .ops import objects3d, scenes
+
+    d = pdir()
+    src_s = None
+    if src is not None:
+        sp = src.expanduser().resolve()
+        if not sp.exists():
+            raise VeditError(f"3D model not found: {sp}")
+        src_s = store_media_path(d, sp)
+    with edit(f"3d add {kind}") as tx:
+        l = objects3d.add_object(tx.project, kind, text=text, font=font, src=src_s, color=color, color2=color2, params=_obj_params(param),
+                                 start=start, end=end, x=x, y=y, width=width, pdir=d, spin=spin, intro=intro, yaw=yaw, pitch=pitch,
+                                 roll=roll, depth=depth)
+        scenes.place_in_scene(tx.project, l, scene)
+    emit({"layer": l.id, "kind": kind, "width": l.width}, f"Added 3D {kind} {l.id}")
+
+
+@obj3d_app.command("set")
+def obj3d_set(layer: str, kind: Optional[str] = None, text: Optional[str] = None, font: Optional[str] = None,
+              src: Optional[Path] = None, color: Optional[str] = None, color2: Optional[str] = None,
+              param: Optional[list[str]] = typer.Option(None, "--param", help="k=v (k=default removes one)"),
+              yaw: Optional[float] = None, pitch: Optional[float] = None, roll: Optional[float] = None,
+              depth: Optional[float] = None, fov: Optional[float] = typer.Option(None, help="Lens 5-100: small = flat, large = strong perspective"),
+              light: Optional[float] = typer.Option(None, help="0-1: how much the light shapes it"),
+              outline: Optional[str] = typer.Option(None, help="Edge line colour (#RRGGBBAA) or none"),
+              gait: Optional[bool] = typer.Option(None, "--gait/--no-gait", help="Legs / wheels / wings move over time")):
+    """Change a 3D object (its turn, colours, lens, light, kind settings)."""
+    from .ops import objects3d
+
+    d = pdir()
+    src_s = store_media_path(d, src.expanduser().resolve()) if src is not None else None
+    with edit(f"3d set {layer}") as tx:
+        ob = objects3d.set_object(objects3d.obj_layer(tx.project, layer), _obj_params(param) or None, kind, pdir=d, text=text, font=font,
+                                  src=src_s, color=color, color2=color2, outline=outline, depth=depth, yaw=yaw, pitch=pitch, roll=roll,
+                                  fov=fov, light=light, gait=gait)
+    emit({"layer": layer, "obj3d": ob.model_dump(exclude_defaults=True)}, f"{layer}: 3D {ob.kind} updated")
+
+
+@obj3d_app.command("move")
+def obj3d_move(layer: str, from_: str = typer.Option("15%,50%", "--from", help="Point A: x,y (px or NN%)"),
+               to: str = typer.Option("85%,50%", help="Point B: x,y"),
+               dur: Optional[float] = typer.Option(None, help="Seconds from A to B (default: the layer's length for once, else 3)"),
+               loop: str = typer.Option("once", help="once | repeat | pingpong | continue (keeps going past B, wraps round)"),
+               face: bool = typer.Option(True, "--face/--no-face", help="Turn to face where it goes (cars, animals)"),
+               hop: float = typer.Option(0.0, help="Bounce height in px while moving (walking / hopping)"),
+               scale_from: float = typer.Option(1.0, help="Size at A (smaller = further away)"), scale_to: float = typer.Option(1.0, help="Size at B"),
+               ease_name: Optional[str] = typer.Option(None, "--ease", help="Easing A -> B (default ease_in_out for once, else linear)"),
+               off: bool = typer.Option(False, "--off", help="Stop travelling")):
+    """Move a 3D object from A to B (and keep going, back and forth or round again)."""
+    from .ops import objects3d
+
+    with edit(f"3d move {layer}") as tx:
+        pr = objects3d.move_object(objects3d.obj_layer(tx.project, layer), from_, to, dur, loop, face, hop, scale_from, scale_to, ease_name, off)
+    emit({"layer": layer, "travel": pr.params if pr else None}, f"{layer}: " + ("stopped" if off else f"{from_} -> {to} ({loop})"))
+
+
+@obj3d_app.command("spin")
+def obj3d_spin(layer: str, axis: str = typer.Option("y", help="y (turntable) | x (flip) | z (roll) | yx | xyz (tumble)"),
+               period: float = typer.Option(3.0, help="Seconds per full 360 turn (negative = the other way)"),
+               sway: Optional[float] = typer.Option(None, help="Instead of spinning, turn this many degrees back and forth"),
+               off: bool = typer.Option(False, "--off", help="Stop spinning / swaying")):
+    """Spin a 3D object round and round (360), or sway it."""
+    from .ops import objects3d
+
+    with edit(f"3d spin {layer}") as tx:
+        objects3d.spin_object(objects3d.obj_layer(tx.project, layer), axis, period, off, sway)
+    emit({"layer": layer}, f"{layer}: " + ("no spin" if off else (f"sway {sway} deg" if sway else f"spin {axis} every {period:g}s")))
+
+
+@obj3d_app.command("show")
+def obj3d_show(layer: str):
+    """A 3D object's settings and motion."""
+    from .ops import objects3d
+
+    info = objects3d.describe(objects3d.obj_layer(load(pdir()), layer))
+    emit(info, json.dumps(info, indent=1))
+
+
+@group_app.command("list")
+def group_list():
+    """Groups and their layers (every signature effect with several layers is one group)."""
+    from .ops import groups
+
+    rows = groups.summary(load(pdir()))
+    emit({"groups": rows}, "\n".join(f"  {g['id']}: {g['name']} {g['start']:.2f}-{g['end']:.2f}s ({', '.join(g['layers'])})"
+                                      + ("" if g["collapsed"] else "  [expanded]") for g in rows) or "No groups.")
+
+
+@group_app.command("make")
+def group_make(layers: list[str] = typer.Argument(..., help="Layer ids (2+)"), name: str = typer.Option("Group", help="Its name on the timeline")):
+    """Group layers so they show as one row and move together."""
+    from .ops import groups
+
+    with edit(f"group {' '.join(layers)}") as tx:
+        g = groups.make(tx.project, layers, name)
+    emit({"group": g.id}, f"Group {g.id} ({g.name}): {', '.join(layers)}")
+
+
+@group_app.command("set")
+def group_set(group: str, name: Optional[str] = None,
+              collapsed: Optional[bool] = typer.Option(None, "--collapsed/--expanded", help="One row (collapsed) or every track")):
+    """Rename a group, or collapse / expand it on the timeline."""
+    from .ops import groups
+
+    with edit(f"group set {group}") as tx:
+        g = groups.set_group(tx.project, group, name, collapsed)
+    emit({"group": g.id, "name": g.name, "collapsed": g.collapsed}, f"{g.id}: {g.name}{'' if g.collapsed else ' (expanded)'}")
+
+
+@group_app.command("move")
+def group_move(group: str, to: Optional[float] = typer.Option(None, help="Timeline seconds where the group starts"),
+               by: Optional[float] = typer.Option(None, help="Shift by this many seconds (negative = earlier)")):
+    """Move every layer of a group in time together."""
+    from .ops import groups
+
+    if to is None and by is None:
+        raise VeditError("Give --to T or --by S")
+    with edit(f"group move {group}") as tx:
+        d = groups.move(tx.project, group, by, to)
+    emit({"group": group, "shift": round(d, 3)}, f"{group} moved {d:+.2f}s")
+
+
+@group_app.command("remove")
+def group_remove(group: str):
+    """Delete a group and all its layers."""
+    from .ops import groups
+
+    with edit(f"group remove {group}") as tx:
+        gone = groups.remove(tx.project, group)
+    emit({"group": group, "removed": gone}, f"Removed {group}: {', '.join(gone)}")
+
+
+@group_app.command("ungroup")
+def group_ungroup(group: str):
+    """Keep the layers but drop the group."""
+    from .ops import groups
+
+    with edit(f"ungroup {group}") as tx:
+        ids = groups.ungroup(tx.project, group)
+    emit({"group": group, "layers": ids}, f"Ungrouped {group}: {', '.join(ids)}")
+
+
+@style_app.command("list")
+def style_list():
+    """The motion styles (and the ones still to come)."""
+    from .design import styles
+
+    rows = [{"key": s.key, "name": s.name, "use_for": s.use_for} for s in styles.STYLES.values()]
+    emit({"styles": rows, "planned": styles.PLANNED},
+         "\n".join(f"  {r['key']:<18} {r['name']}: {r['use_for']}" for r in rows)
+         + "\nComing later: " + "; ".join(styles.PLANNED.values()))
+
+
+@style_app.command("show")
+def style_show(name: str):
+    """A style's numbers: easing, entrances, what it never does, timing, palette, fonts, filters, rules."""
+    from .design import styles
+
+    s = styles.get(name)
+    emit(s.card(), styles.brief(s))
+
+
+@style_app.command("set")
+def style_set(name: str = typer.Argument(..., help="A style key (`vedit style list`), or 'none'")):
+    """Give the project a motion style: its rules go to the AI and the audit checks them."""
+    from .design import styles
+
+    with edit(f"style {name}") as tx:
+        tx.project.motion_style = None if name == "none" else styles.get(name).key
+    emit({"style": tx.project.motion_style}, f"Motion style: {tx.project.motion_style or 'none'}")
+
+
+@motion_app.command("set")
+def motion_set(
+    layer_id: str,
+    split: Optional[str] = typer.Option(None, help="Kinetic text: none | word | letter | line (each piece animates in)"),
+    anim: Optional[str] = typer.Option(None, help="How each piece comes in: rise | drop | fade | pop | mask_up | slide | type"),
+    stagger: Optional[float] = typer.Option(None, help="Seconds between pieces (0.03 letters, 0.08 words, 0.15 lines)"),
+    dur: Optional[float] = typer.Option(None, help="Seconds each piece takes"),
+    ease: Optional[str] = typer.Option(None, help="Each piece's easing: ease_out, snap, expo_out, overshoot, "
+                                                  "cubic-bezier(.7,0,.2,1) ..."),
+    morph_to: Optional[str] = typer.Option(None, help="Shapes: the kind it morphs into ('none' to clear)"),
+    path: Optional[str] = typer.Option(None, help="Path shapes: points '0,1 0.3,0.2 1,0' (0..1 of the box)"),
+    closed: Optional[bool] = typer.Option(None, help="Path shapes: closed (filled) or open (a stroke)"),
+    step_fps: Optional[int] = typer.Option(None, help="Move in steps like stop motion (12 = on twos, paper cut-out); 0 = smooth"),
+):
+    """Set a layer's motion-graphics fields (kinetic text, morph target, path points)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"motion set {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if (split or anim) and l.type != "text":
+            raise VeditError("Kinetic text (--split / --anim) is for text layers")
+        if path is not None and l.type == "shape" and l.shape != "path":
+            l.shape = "path"
+        changed = motion_ops.set_fields(l, {"split": split, "split_anim": anim, "stagger": stagger, "split_dur": dur, "split_ease": ease,
+                                            **({"morph_to": None if morph_to == "none" else morph_to} if morph_to is not None else {}),
+                                            "path": path, "closed": closed, "step_fps": step_fps})
+    emit({"layer": layer_id, "changed": changed}, f"{layer_id}: " + (", ".join(changed) or "nothing changed"))
+
+
+@motion_app.command("draw")
+def motion_draw(layer_id: str, dur: float = typer.Option(1.0, help="Seconds to draw on"),
+                ease: str = typer.Option("ease_in_out", help="Easing (a name or cubic-bezier(...))"),
+                out: bool = typer.Option(False, "--out", help="Also undraw at the end (draw_out)")):
+    """Draw a shape's outline / a path / a chart on (preset draw_in), optionally off again at its end."""
+    with edit(f"motion draw {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if l.type not in ("shape", "chart"):
+            raise VeditError("Draw-on is for shapes, paths and charts")
+        anim.ease(ease, 0.5)
+        l.presets = [x for x in l.presets if x.name not in ("draw_in", "draw_out")]
+        l.presets.append(Preset(name="draw_in", duration=dur, params={"ease": ease}))
+        if out:
+            l.presets.append(Preset(name="draw_out", duration=min(dur, 0.6), params={"ease": ease}))
+    emit({"layer": layer_id}, f"{layer_id} draws on over {dur:g}s" + (" and off at the end" if out else ""))
+
+
+@motion_app.command("morph")
+def motion_morph(layer_id: str, to: str = typer.Option(..., help="Shape kind to morph into"),
+                 at: float = typer.Option(0.0, help="Seconds after the layer starts"),
+                 dur: float = typer.Option(0.8, help="Seconds the morph takes"),
+                 ease: str = typer.Option("smooth", help="Easing"),
+                 loop: bool = typer.Option(False, "--loop", help="Morph there and back for ever (morph_loop) instead"),
+                 period: float = typer.Option(2.4, help="--loop: seconds per there-and-back")):
+    """Morph a shape into another kind (circle -> star, square -> heart ...)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"motion morph {layer_id} {to}") as tx:
+        l = tx.project.layer(layer_id)
+        if l.type != "shape":
+            raise VeditError("Only shapes morph")
+        motion_ops.set_fields(l, {"morph_to": to})
+        l.keyframes = [k for k in l.keyframes if k.morph is None]
+        l.presets = [x for x in l.presets if x.name != "morph_loop"]
+        if loop:
+            l.presets.append(Preset(name="morph_loop", params={"period": period}))
+        else:
+            anim.ease(ease, 0.5)
+            l.keyframes += [Keyframe(t=at, morph=0, ease=ease), Keyframe(t=at + dur, morph=1)]
+            l.keyframes.sort(key=lambda k: k.t)
+    emit({"layer": layer_id, "to": to}, f"{layer_id} morphs into a {to}" + (" and back" if loop else f" at +{at:g}s over {dur:g}s"))
+
+
+def _chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font, stagger, line_width, radius, gap) -> dict:
+    return {k: v for k, v in dict(colors=[c.strip() for c in colors.split(",")] if colors else None, prefix=prefix, suffix=suffix,
+                                     decimals=decimals, max=max_, show_values=values, show_labels=labels, text_color=text_color,
+                                     text_size=text_size, font=font, stagger=stagger, line_width=line_width, radius=radius,
+                                     gap=gap).items() if v is not None}
+
+
+@chart_app.command("add")
+def chart_add(
+    kind: str = typer.Argument(..., help="bar | hbar | line | donut"),
+    data: str = typer.Option(..., help="'Mon=12, Tue=30, Wed=18' (label=value, optional :#colour)"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+    width: Optional[int] = None, height: Optional[int] = None,
+    dur: float = typer.Option(1.2, help="Seconds it grows in (0 = already there)"),
+    colors: Optional[str] = typer.Option(None, help="Palette '#22D3EE,#A78BFA' (items cycle through it)"),
+    prefix: Optional[str] = None, suffix: Optional[str] = None, decimals: Optional[int] = None,
+    max_: Optional[float] = typer.Option(None, "--max", help="Top of the value axis (default: the largest value)"),
+    values: Optional[bool] = typer.Option(None, help="Show the values"), labels: Optional[bool] = typer.Option(None, help="Show the labels"),
+    text_color: Optional[str] = None, text_size: Optional[int] = None, font: Optional[str] = None,
+    stagger: Optional[float] = typer.Option(None, help="0 = all bars together, 1 = one after another"),
+    line_width: Optional[int] = None, radius: Optional[int] = None, gap: Optional[float] = None,
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in"),
+):
+    """Add a chart that grows in (data stories: bars rise one by one, values roll up)."""
+    from .ops import chart as chart_ops, motion as motion_ops, scenes
+
+    with edit(f"chart add {kind}") as tx:
+        p = tx.project
+        l = motion_ops.add_chart(p, kind, chart_ops.parse_items(data), start, end, x, y, width, height, dur,
+                                 **_chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font,
+                                               stagger, line_width, radius, gap))
+        scenes.place_in_scene(p, l, scene)
+    emit({"layer": l.id}, f"Added {kind} chart {l.id} ({len(l.chart.items)} values)")
+
+
+@chart_app.command("set")
+def chart_set(
+    layer_id: str, kind: Optional[str] = None, data: Optional[str] = None,
+    colors: Optional[str] = None, prefix: Optional[str] = None, suffix: Optional[str] = None, decimals: Optional[int] = None,
+    max_: Optional[float] = typer.Option(None, "--max"), values: Optional[bool] = None, labels: Optional[bool] = None,
+    text_color: Optional[str] = None, text_size: Optional[int] = None, font: Optional[str] = None,
+    stagger: Optional[float] = None, line_width: Optional[int] = None, radius: Optional[int] = None, gap: Optional[float] = None,
+):
+    """Change a chart's data or look."""
+    from .ops import chart as chart_ops, motion as motion_ops
+
+    vals = _chart_opts(colors, prefix, suffix, decimals, max_, values, labels, text_color, text_size, font, stagger, line_width, radius, gap)
+    if kind:
+        vals["kind"] = kind
+    if data:
+        vals["items"] = chart_ops.parse_items(data)
+    with edit(f"chart set {layer_id}") as tx:
+        motion_ops.set_fields(tx.project.layer(layer_id), {"chart": vals})
+    emit({"layer": layer_id, "changed": sorted(vals)}, f"{layer_id}: " + (", ".join(sorted(vals)) or "nothing changed"))
+
+
+@counter_app.command("add")
+def counter_add(
+    to: float = typer.Argument(..., help="The number it counts to"),
+    from_: float = typer.Option(0.0, "--from", help="The number it starts at"),
+    decimals: int = 0, prefix: str = typer.Option("", help="e.g. '$'"), suffix: str = typer.Option("", help="e.g. '+', '%', 'k'"),
+    sep: str = typer.Option(",", help="Thousands separator ('' = none)"),
+    start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "40%",
+    dur: float = typer.Option(1.2, help="Seconds it counts for"),
+    ease: str = typer.Option("expo_out", help="Easing of the count (expo_out: fast, then settles)"),
+    size: Optional[int] = None, color: Optional[str] = None, font: Optional[str] = None,
+    stroke: Optional[str] = None, stroke_width: Optional[int] = None, glow: Optional[str] = None,
+    scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in"),
+):
+    """Add a number that counts up (stats, prices, followers)."""
+    from .ops import motion as motion_ops, scenes
+
+    style = {k: v for k, v in dict(size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
+                                   glow_color=glow).items() if v is not None}
+    with edit(f"counter add {to:g}") as tx:
+        p = tx.project
+        l = motion_ops.add_counter(p, to, start, end, x, y, dur, ease, style, **{"from": from_, "decimals": decimals,
+                                                                                 "prefix": prefix, "suffix": suffix, "separator": sep})
+        scenes.place_in_scene(p, l, scene)
+    emit({"layer": l.id, "text": l.text}, f"Added counter {l.id}: counts to {l.text} over {dur:g}s")
+
+
+@counter_app.command("set")
+def counter_set(layer_id: str, to: Optional[float] = None, from_: Optional[float] = typer.Option(None, "--from"),
+                decimals: Optional[int] = None, prefix: Optional[str] = None, suffix: Optional[str] = None,
+                sep: Optional[str] = None, off: bool = typer.Option(False, "--off", help="Stop counting (plain text)")):
+    """Change a counter (or turn a counting text back into plain text with --off)."""
+    from .ops import motion as motion_ops
+
+    with edit(f"counter set {layer_id}") as tx:
+        l = tx.project.layer(layer_id)
+        if off:
+            motion_ops.set_fields(l, {"counter": None})
+            l.presets = [x for x in l.presets if x.name != "count_up"]
+        else:
+            motion_ops.set_fields(l, {"counter": {"to": to, "from": from_, "decimals": decimals, "prefix": prefix,
+                                                  "suffix": suffix, "separator": sep}})
+            l.text = motion_ops.counter_text(l.counter, 1.0)
+            if not any(x.name == "count_up" for x in l.presets):
+                l.presets.append(Preset(name="count_up", duration=1.2))
+    emit({"layer": layer_id}, f"{layer_id}: " + ("plain text" if off else f"counts to {l.text}"))
 
 
 @layer_app.command("order")
@@ -858,15 +1514,31 @@ def layer_set(
     start: Optional[float] = None, end: Optional[float] = None,
     x: Optional[str] = None, y: Optional[str] = None,
     scale: Optional[float] = None, rotation: Optional[float] = None, opacity: Optional[float] = None,
-    width: Optional[int] = None,
+    width: Optional[int] = None, height: Optional[int] = typer.Option(None, help="Shape height (px)"),
+    sx: Optional[float] = typer.Option(None, help="Stretch: width multiplier of the drawn layer (1 = as drawn)"),
+    sy: Optional[float] = typer.Option(None, help="Stretch: height multiplier"),
 ):
-    """Change timing / position / transform of a layer."""
+    """Change timing / position / transform / size / stretch of a layer."""
     with edit(f"set {layer_id}") as tx:
         l = tx.project.layer(layer_id)
-        for k, v in dict(start=start, end=end, x=x, y=y, scale=scale, rotation=rotation, opacity=opacity, width=width).items():
+        for k, v in dict(start=start, end=end, x=x, y=y, scale=scale, rotation=rotation, opacity=opacity, width=width,
+                         height=height).items():
             if v is not None:
                 setattr(l, k, v)
+        for k, v in (("sx", sx), ("sy", sy)):
+            if v is not None:
+                setattr(l, k, max(0.01, v))
     emit({"layer": l.model_dump(mode="json", exclude={"words"})}, f"Updated {layer_id}")
+
+
+@layer_app.command("dup")
+def layer_dup(layer_id: str, dx: float = typer.Option(40, help="Offset of the copy (canvas px)"), dy: float = 40):
+    """Duplicate a layer (on top, nudged by dx / dy; 0 0 = same place)."""
+    from .ops import overlays
+
+    with edit(f"duplicate {layer_id}") as tx:
+        l = overlays.duplicate_layer(tx.project, layer_id, dx, dy)
+    emit({"layer": l.id}, f"Duplicated {layer_id} as {l.id}")
 
 
 @layer_app.command("remove")
@@ -903,7 +1575,8 @@ def anim_preset(layer_id: str, name: str, duration: Optional[float] = None,
 @anim_app.command("keyframes")
 def anim_keyframes(layer_id: str, keyframes: str = typer.Argument(..., help='JSON list: [{"t":0,"x":"50%","scale":0,"ease":"back_out"},{"t":0.5,"scale":1}]'),
                    append: bool = typer.Option(False, help="Add to existing keyframes instead of replacing")):
-    """Set custom keyframes (t = seconds from layer start; x,y,scale,rotation,opacity,reveal; ease)."""
+    """Set custom keyframes (t = seconds from layer start; x, y, scale, rotation, opacity, reveal, w / h (shape size,
+    stays crisp), sx / sy (stretch), fill (hex, shapes); ease)."""
     from .project import Keyframe
 
     try:
@@ -982,11 +1655,11 @@ def _clear_effect(p: Project, clip: str | None, types: tuple[str, ...]) -> list[
 def bg_remove(
     clip: Optional[str] = typer.Option(None, help="Only this clip (default: all clips)"),
     mode: str = typer.Option("fast", help="fast (MediaPipe) | quality (BiRefNet, slow) | chroma (green/blue screen, instant)"),
-    replace: str = typer.Option("color:#00B140", help="color:#RRGGBB | blur[:sigma] | image:path | video:path"),
+    replace: Optional[str] = typer.Option(None, help="color:#RRGGBB | blur[:sigma] | image:path | video:path | none (transparent: the tracks under the video show) (default: chroma = canvas colour, AI = #00B140)"),
     smooth: float = typer.Option(0.5, help="fast/quality: temporal smoothing 0..0.9 (less flicker)"),
     key: str = typer.Option("auto", help="chroma: screen colour #RRGGBB, or auto (sampled from each clip)"),
-    similarity: float = typer.Option(0.12, help="chroma: how far from the key colour still counts as screen (0.01-0.6)"),
-    blend: float = typer.Option(0.08, help="chroma: edge softness (0-0.5)"),
+    similarity: Optional[float] = typer.Option(None, help="chroma: how far from the key colour still counts as screen (0.01-0.6; default fitted to the key, at most 0.12)"),
+    blend: Optional[float] = typer.Option(None, help="chroma: edge softness (0-0.5; default fitted to the key, at most 0.08)"),
     spill: float = typer.Option(0.6, help="chroma: remove green/blue cast on the person's edges (0-1)"),
     shrink: int = typer.Option(1, help="chroma: pull the matte edge in by N px (0-4) to hide fringes"),
 ):
@@ -996,12 +1669,15 @@ def bg_remove(
     if mode not in ("fast", "quality", "chroma"):
         raise VeditError("--mode must be fast, quality or chroma")
     d = pdir()
-    with edit(f"remove background ({mode}, {replace})") as tx:
+    with edit(f"remove background ({mode}, {replace or 'default'})") as tx:
         p = tx.project
+        if replace is None:
+            replace = f"color:{p.canvas.background}" if mode == "chroma" else "color:#00B140"
         if mode != "chroma":
             ids = _set_effect(p, clip, Effect(type="bg", params={"mode": mode, "replace": replace, "smooth": smooth}), ("bg",))
         else:
-            base = chroma.clean({"key": key, "similarity": similarity, "blend": blend, "spill": spill, "shrink": shrink})
+            base = chroma.clean({"key": key, "spill": spill, "shrink": shrink,
+                                 **{k: v for k, v in (("similarity", similarity), ("blend", blend)) if v is not None}})
             ids, keys = [], {}
             for c in ([p.clip(clip)] if clip else p.clips):
                 if c.gap:
@@ -1010,8 +1686,9 @@ def bg_remove(
                 if k == "auto":
                     k = chroma.clip_key(d, p, c)
                 keys[c.id] = k
+                tol = chroma.fit_tolerance(k, base.get("similarity"), base.get("blend"))  # pale screens: keep whites solid
                 c.effects = [e for e in c.effects if e.type != "bg"]
-                c.effects.append(Effect(type="bg", params={**base, "mode": "chroma", "key": k, "replace": replace}))
+                c.effects.append(Effect(type="bg", params={**base, **tol, "mode": "chroma", "key": k, "replace": replace}))
                 ids.append(c.id)
     if mode == "chroma":
         emit({"clips": ids, "keys": keys},
@@ -1047,6 +1724,8 @@ def bg_tune(
                     upd = dict(vals)
                     if upd.get("key") == "auto":
                         upd["key"] = chroma.clip_key(d, p, c)
+                    if "key" in upd:
+                        upd.update(chroma.fit_tolerance(upd["key"], upd.get("similarity"), upd.get("blend")))
                     e.params.update(upd)
                     n += 1
         if not n:
@@ -1148,6 +1827,20 @@ def _region(p: Project, d: Path, clip: str | None, at: float | None, box: str | 
     return track.region(p, d, clip, at, box, obj, space, paint, keep)
 
 
+def _log(msg: str) -> None:
+    """Progress of slow one-time work (tracking, SAM) on stderr, so --json output stays clean."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _check_tracker(tracker: str | None, sam_mode: str | None) -> None:
+    from .ops import outline, sam
+
+    if tracker is not None and tracker not in outline.TRACKERS:
+        raise VeditError(f"--tracker must be one of {', '.join(outline.TRACKERS)}")
+    if sam_mode is not None and sam_mode not in sam.MODES:
+        raise VeditError(f"--sam must be one of {', '.join(sam.MODES)}")
+
+
 @mask_app.command("add")
 def mask_add(
     box: Optional[str] = typer.Option(None, help="x,y,w,h of the region on the canvas (px or %), e.g. 20%,55%,60%,10%; "
@@ -1169,10 +1862,16 @@ def mask_add(
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     invert: bool = typer.Option(False, help="Apply to everything EXCEPT the region"),
     space: str = typer.Option("canvas", help="canvas (what you see in frames) | source (original video pixels)"),
+    tracker: str = typer.Option("auto", help="auto: segment when SAM is installed, else outline | segment: SAM 2 finds the "
+                                "object again in every frame (best for turning, resizing, shape changes, entering the "
+                                "frame) | outline: follow the outline point by point (fast) | box: the older box tracker"),
+    sam_mode: str = typer.Option("auto", "--sam", help="SAM 2.1 outlines the object from your box: auto (when the "
+                                 "mask-ai extra is installed) | on (install it if needed) | off"),
 ):
     """Hide a region (labels, logos, plates, screens) with a soft-edged mask that follows it."""
     from .ops.track import STYLES
 
+    _check_tracker(tracker, sam_mode)
     if style not in STYLES:
         raise VeditError(f"--style must be one of {', '.join(STYLES)}")
     if shape not in ("rect", "ellipse"):
@@ -1189,7 +1888,8 @@ def mask_add(
 
         painted = params.get("shape") == "paint"
         params.update({"id": new_mask_id(p), "style": style, "color": color, "shape": "paint" if painted else shape,
-                       "feather": feather, "expand": expand if expand is not None else (1.0 if painted else 1.1), "track": track_, "smooth": smooth, "invert": invert})
+                       "feather": feather, "expand": expand if expand is not None else (1.0 if painted else 1.1), "track": track_, "smooth": smooth, "invert": invert,
+                       "tracker": tracker, "sam": sam_mode})
         if strength is not None:
             params["strength"] = strength
         c.effects.append(Effect(type="mask", params=params))
@@ -1216,17 +1916,25 @@ def mask_list():
 @mask_app.command("set")
 def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float] = None, color: Optional[str] = None,
              feather: Optional[float] = None, expand: Optional[float] = None, shape: Optional[str] = None,
+             tracker: Optional[str] = typer.Option(None, help="auto | segment | outline | box (switching re-tracks, one-time)"),
+             sam_mode: Optional[str] = typer.Option(None, "--sam", help="auto | on | off (re-tracks)"),
              invert: Optional[bool] = typer.Option(None, "--invert/--no-invert"),
              keep_box: Optional[str] = typer.Option(None, help="Region that must stay on top (the product in front), "
                                                     "x,y,w,h[;...] on the canvas at --at; 'none' clears it"),
              at: Optional[float] = typer.Option(None, help="Timeline seconds the --keep-box is drawn at")):
-    """Change how a mask looks (style changes don't re-track)."""
+    """Change how a mask looks (style changes don't re-track; --tracker / --sam do). MASK_ID 'all' = every mask."""
     from .ops import track
 
+    _check_tracker(tracker, sam_mode)
+    if mask_id == "all" and keep_box is not None:
+        raise VeditError("--keep-box belongs to one mask: give its id")
     with edit(f"mask {mask_id}") as tx:
-        for c, e in _masks(tx.project, mask_id):
+        hits = _masks(tx.project, None if mask_id == "all" else mask_id)
+        if not hits:
+            raise VeditError("No masks in this project")
+        for c, e in hits:
             for k, v in (("style", style), ("strength", strength), ("color", color), ("feather", feather),
-                         ("expand", expand), ("shape", shape), ("invert", invert)):
+                         ("expand", expand), ("shape", shape), ("invert", invert), ("tracker", tracker), ("sam", sam_mode)):
                 if v is not None:
                     e.params[k] = v
             if keep_box is not None:
@@ -1241,6 +1949,119 @@ def mask_set(mask_id: str, style: Optional[str] = None, strength: Optional[float
                 e.params["keep"] = track.keep_region(tx.project, c, u, keep_box)
                 e.params["keep"]["at"] = round(t_src, 3)
     emit({"mask": mask_id}, f"Updated {mask_id}")
+
+
+@mask_app.command("find")
+def mask_find(at: float = typer.Option(..., help="Timeline seconds of a frame where the thing to hide is clearly visible"),
+              near: Optional[str] = typer.Option(None, help="Look closer around this area: x,y,w,h on the canvas (px or %)")):
+    """Step 1 of a precise mask: outline every object on one frame and number them (needs SAM). Read the image,
+    pick the number that is exactly the thing to hide, and add the mask with that candidate's box (`add` in the output)."""
+    from .ops import maskfind, track
+    from .render.runner import preview_dir
+
+    d = pdir()
+    p = load(d)
+    nb = None
+    if near:
+        c, _, u = track.locate(p, at)
+        nb = track.box_to_source(p, c, track.parse_box(near, p.canvas.width, p.canvas.height), u)
+    res = maskfind.find(d, p, at, nb, preview_dir(d) / f"find-{at:.2f}.jpg", _log)
+    lines = [f"Candidates at {at}s (picture: {res['image']}):"] + [
+        f"  {r['n']:>2}  box {r['box_source']:<28} area {r['area']:<7}  -> {r['add']}" for r in res["candidates"]]
+    masks = [e.params.get("id") for c, e in _masks(p, None) if c.id == res["clip"]]
+    if masks and res["candidates"]:
+        res["fix_hint"] = f"To correct an existing mask here instead: vedit mask fix {masks[0]} --at {at:g} --space source --box <candidate box>"
+        lines.append(res["fix_hint"])
+    emit(res, "\n".join(lines) if res["candidates"] else f"No objects found at {at}s ({res['image']})")
+
+
+@mask_app.command("check")
+def mask_check(mask_id: str = typer.Argument(..., help="Mask id, or 'all'"),
+               verify: bool = typer.Option(True, "--verify/--no-verify", help="Re-outline sample frames with SAM to catch drift")):
+    """Step 3: check a tracked mask (tracks it first if needed). Prints how the object moves (size, turning, speed,
+    edge, hidden), frames that look wrong, advice with exact fix commands, and a check-sheet image to Read."""
+    from .ops import maskcheck
+    from .render.runner import preview_dir
+
+    d = pdir()
+    p = load(d)
+    hits = _masks(p, None if mask_id == "all" else mask_id)
+    if not hits:
+        raise VeditError("No masks in this project")
+    out = []
+    for c, e in hits:
+        out.append(maskcheck.check(d, p, c, e, preview_dir(d) / f"maskcheck-{e.params.get('id')}.jpg", _log, verify))
+    txt = []
+    for r in out:
+        mo = r["motion"]
+        txt.append(f"{r['mask']} on {r['clip']} ({r['tracker']}): {r['verdict'].upper()}  {r['range'][0]:.2f}-{r['range'][1]:.2f}s")
+        if mo:
+            txt.append(f"  motion: size x{mo['scale_min']}-x{mo['scale_max']}, turns {mo['rotation_deg']}deg, shape change "
+                       f"{mo['shape_change']:.0%}, speed up to {mo['max_speed']:.0%} of the frame/s, at the frame edge "
+                       f"{mo['edge_share']:.0%}, visible {mo['visible_share']:.0%}")
+        if r["agreement"]["checked"]:
+            ag = r["agreement"]
+            txt.append(f"  SAM re-check on {ag['checked']} frames: covers the object {ag['cover_mean']:.0%} on average, "
+                       f"{ag['cover_min']:.0%} at worst (outline overlap {ag['mean']:.0%})")
+        for hd in r["hidden"]:
+            txt.append(f"  no mask {hd['from']:.2f}-{hd['to']:.2f}s: {hd['why']}")
+        for it in r["issues"]:
+            txt.append(f"  ! {it['t']:.2f}s {it['kind']}: {it['detail']}")
+        txt += [f"  -> {a}" for a in r["advice"]]
+        if r["sheet"]:
+            txt.append(f"  Check sheet: {r['sheet']}")
+    emit({"masks": out} if mask_id == "all" else out[0], "\n".join(txt))
+
+
+@mask_app.command("fix")
+def mask_fix(mask_id: str,
+             at: Optional[float] = typer.Option(None, help="Timeline seconds where the mask is wrong"),
+             box: Optional[str] = typer.Option(None, help="Where the object really is at --at: x,y,w,h (px or %); several "
+                                               "joined with ';' for an object in parts"),
+             space: str = typer.Option("canvas", help="canvas (what you see in frames) | source (the check sheet's grid)"),
+             clear: bool = typer.Option(False, "--clear", help="Remove all fixes from this mask"),
+             undo_at: Optional[float] = typer.Option(None, "--remove-at", help="Remove the fix at these timeline seconds")):
+    """Step 4: correct a mask where it's wrong. The fix is a reference for the tracker from that moment on, so one
+    fix repairs a whole stretch. Switches the mask to the segment tracker (SAM 2 video), which re-tracks (one-time)."""
+    from .ops import sam, track
+
+    with edit(f"fix mask {mask_id}") as tx:
+        p = tx.project
+        hits = _masks(p, mask_id)
+        c, e = hits[0]
+        fixes = list(e.params.get("fixes") or [])
+        if clear:
+            fixes = []
+        elif undo_at is not None:
+            hit, t_src, _ = track.locate(p, undo_at)
+            fixes = [f for f in fixes if abs(float(f["at"]) - t_src) > 0.5 / max(1.0, p.canvas.fps)]
+        else:
+            if at is None or not box:
+                raise VeditError("Give --at <timeline seconds> and --box x,y,w,h (where the object really is then)")
+            hit, t_src, u = track.locate(p, at)
+            if hit is not c:
+                raise VeditError(f"--at {at} is not inside {c.id}, the clip of {mask_id}")
+            src = p.sources[c.source]
+            boxes = []
+            for part in (b for b in box.split(";") if b.strip()):
+                if space == "source":
+                    sw, sh = src.width or 1080, src.height or 1920
+                    x, y, w, h = track.parse_box(part, sw, sh)
+                    boxes.append([round(x / sw, 5), round(y / sh, 5), round(w / sw, 5), round(h / sh, 5)])
+                else:
+                    boxes.append(track.box_to_source(p, c, track.parse_box(part, p.canvas.width, p.canvas.height), u))
+            fixes = [f for f in fixes if abs(float(f["at"]) - t_src) > 1e-3] + [{"at": round(t_src, 3), "boxes": boxes}]
+            fixes.sort(key=lambda f: f["at"])
+            if e.params.get("tracker") != "segment":
+                e.params["tracker"] = "segment"
+            if e.params.get("sam") == "off" or not sam.installed():
+                e.params["sam"] = "on"  # fixes need SAM 2 (installed on the next render when missing)
+        if fixes:
+            e.params["fixes"] = fixes
+        else:
+            e.params.pop("fixes", None)
+    emit({"mask": mask_id, "fixes": fixes, "tracker": e.params.get("tracker")},
+         f"{mask_id}: {len(fixes)} fix(es); re-tracks on the next preview (one-time). Then run: vedit mask check {mask_id}")
 
 
 @mask_app.command("remove")
@@ -1275,6 +2096,8 @@ def focus_add(
     smooth: float = typer.Option(0.6, help="Tracking smoothing 0-0.95"),
     track_: bool = typer.Option(True, "--track/--no-track"),
     space: str = typer.Option("canvas", help="canvas | source"),
+    tracker: str = typer.Option("auto", help="auto | segment (SAM 2 video, every frame) | outline (follow the outline) | box"),
+    sam_mode: str = typer.Option("auto", "--sam", help="SAM 2.1 outline from your box: auto | on | off"),
 ):
     """Put the focus on one object: highlight it (spotlight, colour pop, glow, outline...) or reframe to follow it."""
     from .ops import track
@@ -1289,8 +2112,10 @@ def focus_add(
         if clip is None and at is None and len(p.clips) > 1:
             raise VeditError("Say which clip with --clip, or give --at <timeline seconds>")
         c, params, note = _region(p, d, clip, at, box, obj, space, paint_items)
+        _check_tracker(tracker, sam_mode)
         params = track.focus_params(params, mode, style, color=color, width=width, strength=strength, blur=blur, dim=dim,
                                     feather=feather, expand=expand, smooth=smooth, track=track_, zoom=zoom)
+        params.update({"tracker": tracker, "sam": sam_mode})
         c.effects = [e for e in c.effects if e.type != "focus"] + [Effect(type="focus", params=params)]
     emit({"clip": c.id, "mode": mode, "style": style, "shape": params["shape"], "box_source": params["box"], "note": note},
          f"Focus ({mode}, {style}) on {c.id}{' (' + note + ')' if note else ''}. Tracking runs on the next preview (one-time).")
@@ -1339,7 +2164,8 @@ def focus_clear(clip: Optional[str] = None):
 @app.command("audit")
 def audit_cmd(render: bool = typer.Option(True, help="Render the preview to measure audio loudness (cached if unchanged)"),
               ai_review: bool = typer.Option(False, "--ai", help="Also run the independent AI reviewer on the rendered frames (one vision call)"),
-              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy")):
+              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy"),
+              ref: bool = typer.Option(False, "--ref", help="Also score likeness to the edit's target references (`vedit ref target`; one vision call). --ai includes it")):
     """Check the edit before calling it done: hook, readability, safe zones, overlaps, fonts, colour, pacing,
     footage reuse, loudness and stated reasons. Fix every must-fix finding."""
     from .audit import audit
@@ -1350,8 +2176,17 @@ def audit_cmd(render: bool = typer.Option(True, help="Render the preview to meas
 
         r = full_audit(d, use_ai=True, quality=quality)
     else:
-        r = audit(load(d), d, render=render)
-    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + [
+        r = audit(load(d), d, render=render or ref)
+        if ref:
+            from .review import reference_audit
+
+            r = reference_audit(d, r, quality)
+    p = load(d)
+    targets = p.notes.refs if p.notes else []
+    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + (
+        [f"Looks like the reference: {r['reference']['score']}/5" + (f" (carried: {'; '.join(r['reference']['carried'])})" if r['reference'].get('carried') else "")]
+        if r.get("reference") else [f"Technical checks only: likeness to reference(s) {', '.join(f'#{i}' for i in targets)} not scored "
+                                     "(add --ref; the automatic audit when you finish scores it)"] if targets and not ref and not ai_review else []) + [
         f"Score {r['score']}/100 · {'PASSED' if r['passed'] else 'NOT PASSED'} · "
              f"{r['counts']['must-fix']} must-fix, {r['counts']['should-fix']} should-fix, {r['counts']['note']} notes"]
     for f in r["findings"]:
@@ -1372,12 +2207,17 @@ def fx_list():
 @fx_app.command("apply")
 def fx_apply(name: str, clip: Optional[str] = typer.Option(None, help="Clip the move applies to (clip moves)"),
              at: Optional[float] = typer.Option(None, help="Timeline seconds (moment moves)"),
-             text: Optional[str] = typer.Option(None, help="Word / line for freeze_title and keyword_pop")):
-    """Apply one signature move as one undoable step."""
+             text: Optional[str] = typer.Option(None, help="Word / line (freeze_title, keyword_pop, growth_curve label "
+                                                           "'+340%'); items separated by ';' (checklist, headline_storm)"),
+             source: Optional[str] = typer.Option(None, help="broll_overlay: the imported video to show (s2)"),
+             dur: Optional[float] = typer.Option(None, help="How long it lasts (zooms: hold, then cut back)"),
+             amount: Optional[float] = typer.Option(None, help="Zooms: how close (1.35); growth_curve: how steep (4); zoom_portal: dive (2.6)"),
+             box: Optional[str] = typer.Option(None, help="hud_lock: the target as x,y,w,h in % of the frame, e.g. 30,35,40,25")):
+    """Apply one signature move / effect as one undoable step (`vedit fx list` shows them)."""
     from .ops import moves
 
     with edit(f"move {name}") as tx:
-        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text)
+        msg = moves.apply(tx.project, name, clip=clip, at=at, text=text, source=source, dur=dur, amount=amount, box=box)
     emit({"move": name, "done": msg}, msg)
 
 
@@ -1927,15 +2767,18 @@ def music_add(file: str, volume: float = 0.2, start: float = 0.0, offset: float 
               duck: bool = typer.Option(True, help="Lower music automatically while someone talks"),
               loop: bool = True, fade_in: float = 0.5, fade_out: float = 1.5):
     """Add background music."""
+    from . import media_library
+
     d = pdir()
     path = Path(file).expanduser().resolve()
     info = media.probe(path)
     if not info["has_audio"]:
         raise VeditError(f"{path.name} has no audio")
+    stored = media_library.store_for_project(d, path)  # beats / tempo measured once, reusable in other projects
     with edit(f"add music {path.name}") as tx:
         p = tx.project
         sid = p.new_id("s")
-        p.sources[sid] = Source(path=store_media_path(d, path), **info)
+        p.sources[sid] = Source(path=store_media_path(d, stored), **info)
         m = MusicTrack(id=p.new_id("m"), source=sid, start=start, in_=offset, volume=volume, duck=duck, loop=loop,
                        fade_in=fade_in, fade_out=fade_out)
         p.music.append(m)
@@ -1966,6 +2809,147 @@ def music_set(music_id: str, volume: Optional[float] = None, duck: Optional[bool
         e: Any = tracks._KEEP if end is None else None if end.lower() in ("none", "") else float(end)
         m = tracks.set_music(tx.project, music_id, volume, start, offset, e, duck, loop)
     emit({"music": m.model_dump(by_alias=True)}, f"Updated {music_id}")
+
+
+@music_app.command("styles")
+def music_styles():
+    """The loop styles, moods and every setting a loop has (for `music make --set`)."""
+    from . import musicmaker as mm
+
+    st = mm.styles()
+    fields = {k: v.get("description", "") for k, v in mm.MusicParams.model_json_schema()["properties"].items()}
+    emit({"styles": st, "moods": list(mm.MOODS), "settings": fields},
+         "\n".join(f"{x['key']:<11} {x['bpm']:>4.0f} bpm  {x['about']}" for x in st)
+         + "\n\nMoods (--mood): " + ", ".join(mm.MOODS) + "\n\nSettings (--set key=value): " + ", ".join(fields))
+
+
+@music_app.command("make")
+def music_make(style: Optional[str] = typer.Argument(None, help="A style from `music styles` (lofi, hiphop, trap, house, synthwave, chiptune, pop, ambient, cinematic); default lofi, or the --from loop's"),
+               bpm: Optional[float] = typer.Option(None, help="Tempo (50-200)"),
+               key: Optional[str] = typer.Option(None, help="Key, e.g. C, Am, F#m, 'Eb major'"),
+               scale: Optional[str] = typer.Option(None, help="major, minor, dorian, mixolydian, lydian, phrygian, harmonic_minor, pentatonic_major, pentatonic_minor"),
+               chords: Optional[str] = typer.Option(None, help="Progression as scale degrees or roman numerals: '1,5,6,4' or 'i VI III VII'"),
+               bars: Optional[int] = typer.Option(None, help="Loop length in bars (1-32)"),
+               length: Optional[float] = typer.Option(None, help="Loop length in seconds (rounded to a musical number of bars)"),
+               mood: Optional[str] = typer.Option(None, help="happy, bright, sad, dark, tense, dreamy, chill, energetic, epic, soulful"),
+               set_: list[str] = typer.Option([], "--set", help="Any setting, e.g. --set lead=none --set kick=x...x...x...x... (see `music styles`)"),
+               describe: Optional[str] = typer.Option(None, "--describe", help="Let the AI write the loop from a description (1 AI call)"),
+               vary: Optional[int] = typer.Option(None, help="Another take: a different melody and feel over the same chords (the number picks which)"),
+               from_: Optional[str] = typer.Option(None, "--from", help="Change a loop already on the timeline (mN): its track gets the new version"),
+               name: Optional[str] = typer.Option(None, help="Name for the loop file"),
+               volume: float = typer.Option(0.25, help="Track volume (0-2); background music sits at 0.15-0.3"),
+               start: float = typer.Option(0.0, help="Timeline second the music starts"),
+               for_: Optional[float] = typer.Option(None, "--for", help="Play this many seconds (default: to the end of the edit)"),
+               duck: bool = typer.Option(True, help="Lower the music automatically while someone talks")):
+    """Make an original music loop with the built-in sequencer + synth (no download, no licence issues) and put it on
+    a looping, ducking music track. With --from mN, change that loop (faster, darker, another key...) in place."""
+    from . import musicmaker as mm
+
+    d = pdir()
+    note = ""
+    try:
+        if from_:
+            from .project import load as _load
+            base = mm.track_params(_load(d), d, from_)
+            if style:
+                base = mm.style(style, seed=base.seed)
+        else:
+            base = mm.style(style or "lofi")
+        if describe:
+            from .ai import client as aic
+            try:
+                out = mm.design(describe, base if (from_ or style) else None)
+            except aic.AIError as e:
+                raise VeditError(f"AI music design failed: {e}")
+            base, note = mm.MusicParams(**out["params"]), out["note"]
+        upd: dict[str, Any] = {}
+        if key:
+            k, sc = mm.parse_key(key)
+            upd["key"] = k
+            if sc and not scale:
+                upd["scale"] = sc
+        for k_, v in (("bpm", bpm), ("scale", scale), ("bars", bars)):
+            if v is not None:
+                upd[k_] = v
+        if chords:
+            upd["chords"] = mm.parse_chords(chords)
+        for kv in set_:
+            k_, _, v = kv.partition("=")
+            k_, v = k_.strip(), v.strip()
+            if k_ not in mm.MusicParams.model_fields:
+                raise VeditError(f"Unknown music setting '{k_}'. See `vedit music styles`")
+            upd[k_] = json.loads(v) if v[:1] in "[{" else v
+        prm = mm.MusicParams(**{**base.model_dump(), **upd})
+        if mood:
+            prm = mm.apply_mood(prm, mood)
+        if length:
+            prm = mm.MusicParams(**{**prm.model_dump(), "bars": mm.bars_for(length, prm.bpm)})
+        elif bpm is not None and bars is None:
+            prm = mm.fit_length(prm)
+        if vary is not None:
+            prm = prm.model_copy(update={"seed": (prm.seed + 7919 * (vary + 1)) % 2 ** 31})
+        if name:
+            prm = prm.model_copy(update={"name": name})
+        prm = mm.MusicParams(**prm.model_dump())
+    except ValueError as e:
+        raise VeditError(str(e))
+    with edit(f"make music {prm.name}") as tx:
+        if from_:
+            m = mm.replace_on_track(tx.project, d, from_, prm)
+        else:
+            m = mm.add_to_project(tx.project, d, prm, start, volume, for_, duck)
+    secs = mm.loop_seconds(prm)
+    human = (f"{'Updated' if from_ else 'Made'} loop '{prm.name}' ({prm.style}, {prm.bpm:g} bpm, {prm.key} {prm.scale}, "
+             f"{prm.bars} bars = {secs:.1f}s, looping) on {m.id}" + (f". {note}" if note else ""))
+    emit({"music": m.id, "loop_seconds": round(secs, 3), "params": prm.model_dump(), "note": note}, human)
+
+
+@sfx_app.command("list")
+def sfx_list():
+    """The sound presets and every setting a sound has."""
+    from . import sfx
+
+    ps = sfx.presets()
+    fields = {k: v.get("description", "") for k, v in sfx.SfxParams.model_json_schema()["properties"].items()}
+    emit({"presets": [{k: x[k] for k in ("key", "cat", "about")} for x in ps], "settings": fields},
+         "\n".join(f"{x['cat']:<14} {x['key']:<15} {x['about']}" for x in ps) + "\n\nSettings (--set key=value): " + ", ".join(fields))
+
+
+@sfx_app.command("add")
+def sfx_add(preset: str = typer.Argument(..., help="A preset from `sfx list`, e.g. 'mouse click', 'soft click', 'keyboard key', whoosh, impact, pop, ding"),
+            at: float = typer.Option(0.0, "--at", help="Timeline second the sound starts"),
+            pitch: float = typer.Option(0.0, help="Semitones up (+) or down (-); 12 = one octave"),
+            length: Optional[float] = typer.Option(None, help="Stretch the sound to this many seconds"),
+            volume: float = typer.Option(0.8, help="Track volume (0-2)"),
+            name: Optional[str] = typer.Option(None, help="Name for the sound file"),
+            set_: list[str] = typer.Option([], "--set", help="Any setting, e.g. --set wave=saw --set echo=0.3 (see `sfx list`)"),
+            vary: Optional[int] = typer.Option(None, help="Use a natural variation of the sound (another take); the number picks which one"),
+            amount: float = typer.Option(0.25, help="How different the --vary take is: 0.1 subtle, 0.25 clear, 0.6 wild"),
+            for_: Optional[float] = typer.Option(None, "--for", help="Loops (rain, wind, fire, applause): play this many seconds; default = to the end of the edit")):
+    """Make a sound effect with the built-in synth and put it on the timeline at --at (its own music track, no ducking).
+    Ambiences (rain, wind, fire, applause...) are seamless loops that play --for S seconds or to the end."""
+    from . import sfx
+
+    over: dict[str, Any] = {}
+    for kv in set_:
+        k, _, v = kv.partition("=")
+        if k.strip() not in sfx.SfxParams.model_fields:
+            raise VeditError(f"Unknown sound setting '{k}'. See `vedit sfx list`")
+        v = v.strip()
+        over[k.strip()] = json.loads(v) if v[:1] in "[{" else v  # modes / hits are JSON lists
+    try:
+        prm = sfx.preset(preset, pitch, length, **over)
+        prm = sfx.SfxParams(**prm.model_dump())  # validate the --set values
+    except ValueError as e:
+        raise VeditError(str(e))
+    if vary is not None:
+        prm = sfx.vary(prm, amount, seed=vary).model_copy(update={"name": prm.name})
+    if name:
+        prm.name = name
+    with edit(f"add sound {prm.name}") as tx:
+        m = sfx.add_to_project(tx.project, pdir(), prm, at, volume, for_)
+    how = (f"looping until {m.end:.2f}s" if m.end is not None else "looping to the end of the edit") if prm.loop else f"{prm.duration:.2f}s"
+    emit({"music": m.id, "params": prm.model_dump()}, f"Added sound '{prm.name}' ({how}) as {m.id} at {at:.2f}s")
 
 
 # ---- history ------------------------------------------------------------------------------
@@ -2014,9 +2998,57 @@ def preview(open_: bool = typer.Option(False, "--open", help="Open in the system
 
 
 @app.command()
+def platform(name: Optional[str] = typer.Argument(None, help="tiktok | reels | shorts | all | none (no argument: show it)")):
+    """The social app this video is for. Its safe zone (what its buttons, top bar and caption bar leave visible) is
+    where text, stickers and buttons go: `vedit safe check|fix`, the audit and the editor's guides use it."""
+    from .ops import safezone
+
+    if name is None:
+        p = load(pdir())
+        z = safezone.zone(p)
+        return emit({"platform": p.platform, "zone": z.key, "describe": z.describe(p.canvas.width, p.canvas.height)},
+                     f"Platform: {p.platform or 'not set'}. {z.describe(p.canvas.width, p.canvas.height)}")
+    with edit(f"platform {name}") as tx:
+        key = safezone.set_platform(tx.project, name)
+        z = safezone.zone(tx.project)
+    emit({"platform": key, "describe": z.describe(tx.project.canvas.width, tx.project.canvas.height)},
+         f"Platform: {key or 'none'}. {z.describe(tx.project.canvas.width, tx.project.canvas.height)}")
+
+
+@safe_app.command("check")
+def safe_check(platform_: Optional[str] = typer.Option(None, "--platform", help="Check for another app than the project's")):
+    """Where every visible layer is (its real on-screen box, measured) and what pokes out of the safe zone."""
+    from .ops import safezone
+
+    p = load(pdir())
+    r = safezone.check(p, pdir(), platform_)
+    bad = [x for x in r["layers"] if not x["ok"]]
+    lines = [r["describe"]] + [f"  {'OK ' if x['ok'] else 'OUT'} {x['layer']} ({x['type']}) box x {x['box'][0]}-{x['box'][2]}, "
+                               f"y {x['box'][1]}-{x['box'][3]}" + (": " + "; ".join(x["problems"]) if x["problems"] else "")
+                               for x in r["layers"]]
+    lines.append("All inside the safe zone." if not bad else f"{len(bad)} outside: `vedit safe fix {' '.join(x['layer'] for x in bad)}`")
+    emit(r, "\n".join(lines))
+
+
+@safe_app.command("fix")
+def safe_fix(layers: Optional[list[str]] = typer.Argument(None, help="Layer ids (default: every layer outside the zone)"),
+             margin: float = typer.Option(12.0, help="Distance from the zone's edges (px)")):
+    """Move layers back inside the safe zone (shrinking only those too big for it); animated paths move along."""
+    from .ops import safezone
+
+    with edit("safe fix " + (" ".join(layers) if layers else "all")) as tx:
+        p = tx.project
+        todo = [p.layer(i) for i in layers] if layers else safezone.checked_layers(p)
+        changed = {l.id: c for l in todo if (c := safezone.fit(p, pdir(), l, margin=margin))}
+    emit({"changed": changed}, "\n".join(f"  {k}: " + ", ".join(f"{a} {b}" for a, b in v.items()) for k, v in changed.items())
+         or "Nothing to fix: everything is inside the safe zone.")
+
+
+@app.command()
 def frame(at: str = typer.Option(..., help="Timeline seconds; several as a list: 2,5.5,9"),
           out: Optional[str] = typer.Option(None, help="Output image (single time only)"),
-          width: int = 480):
+          width: int = 480,
+          guides: bool = typer.Option(False, "--guides", help="Draw the platform's safe zone on the stills (covered parts in red)")):
     """Save stills of the edit (JPG). Claude looks at these to check its work."""
     from .render.runner import preview_dir, render_preview
 
@@ -2036,6 +3068,10 @@ def frame(at: str = typer.Option(..., help="Timeline seconds; several as a list:
     for t in times:
         dest = Path(out).resolve() if (out and len(times) == 1) else preview_dir(d) / f"frame-{t:.2f}.jpg"
         media.extract_frame(Path(res["output"]), min(t, max(0, p.duration - 0.05)), dest, width)
+        if guides:
+            from .ops import safezone
+
+            safezone.guides_image(dest, p)
         images.append(str(dest))
     data = {"image": images[0], "images": images} if len(images) == 1 else {"images": images}
     emit(data, "\n".join(f"Frame: {i}" for i in images))
@@ -2146,22 +3182,164 @@ def serve(
     run(d, host, port, browser, dev)
 
 
+# ---- media library ----------------------------------------------------------------------
+
+media_app = typer.Typer(help="Media library: every imported file studied once (cuts, motion, light, speech, what is in "
+                             "each shot) and reusable in any project. Look a source up before choosing its shots")
+app.add_typer(media_app, name="media")
+
+
+def _media_id(ref: str) -> str:
+    """A library id, or a source id of the current project (s1) whose file is in the library."""
+    import re
+
+    from . import media_library
+    from .project import resolve_media
+
+    if re.fullmatch(r"s\d+", ref):
+        d = pdir()
+        p = load(d)
+        if ref not in p.sources:
+            raise VeditError(f"No source {ref}")
+        uid = media_library.id_for_path(resolve_media(d, p.sources[ref].path))
+        if not uid:
+            raise VeditError(f"{ref} is not in the media library (imported with --no-library or --copy). "
+                             f"Add it with `vedit media add {p.sources[ref].path}`")
+        return uid
+    return ref
+
+
+@media_app.command("list")
+def media_list(kind: Optional[str] = typer.Option(None, help="video | audio | image"),
+               search: Optional[str] = typer.Option(None, "--search", "-q", help="Find in names, tags and shot notes")):
+    """Everything in the media library, most recently used first."""
+    from . import media_library
+
+    rows = media_library.list_media(kind, search)
+    slim = [{k: r.get(k) for k in ("id", "name", "kind", "duration", "status", "tags", "uses")} | {"digest": r.get("digest")} for r in rows]
+    emit({"media": slim}, "\n".join(f"  {r['id']}  {r['kind']:<5} {r['status']:<8} {r['name']}" + (f"  [{', '.join(r['tags'])}]" if r["tags"] else "")
+                                     for r in rows) or "  (no media yet)")
+
+
+@media_app.command("add")
+def media_add(files: list[str]):
+    """Add files to the library (copied in) and study them in the background, without putting them in a project."""
+    from . import media_library
+
+    rows = [media_library.add(Path(f)) for f in files]
+    emit({"added": [{k: r.get(k) for k in ("id", "name", "kind", "status")} for r in rows]},
+         "\n".join(f"+ {r['id']} {r['name']} ({r['status']})" for r in rows))
+
+
+@media_app.command("show")
+def media_show(ref: str = typer.Argument(..., help="Library id, or a source of this project (s1)")):
+    """What the study found: the digest and every shot (time range, description, quality 1-5, what it is good for,
+    measured motion / light / speech, reviewer marks). Use it to pick shots by content instead of guessing."""
+    from . import media_library
+    from .generate import planner
+
+    uid = _media_id(ref)
+    note = media_library.study_now(uid)  # not studied yet (e.g. imported with the app closed): study it here
+    m = media_library.get(uid, full=True)
+    out = {k: m.get(k) for k in ("id", "name", "kind", "duration", "status", "error", "tags", "digest", "used_in", "ref_id", "ref_status")}
+    if note:
+        out["note"] = note
+    if m.get("segments"):
+        out["segments"] = [{k: v for k, v in sg.items() if k != "id"} | {"k": int(sg["id"].split(".s")[1])} for sg in m["segments"]]
+    human = [f"{m['name']}  ({m['kind']}, {m['status']})"
+             + (f"  · style reference #{m['ref_id']} ({m['ref_status']}): vedit ref show {m['ref_id']}" if m.get("ref_id") else "")]
+    if m.get("digest"):
+        human.append("  " + json.dumps({k: v for k, v in m["digest"].items() if k not in ("kind", "name")}))
+    human += ["  " + planner._shot_line(sg | {"id": f"s{sg['id'].split('.s')[1]}"}) for sg in m.get("segments") or []]
+    emit(out, "\n".join(human))
+
+
+@media_app.command("ref")
+def media_ref(ref: str = typer.Argument(..., help="Library id, or a source of this project (s1); must be a video"),
+              off: bool = typer.Option(False, "--off", help="Stop using it as a reference (the file stays)"),
+              wait: bool = typer.Option(False, help="Study its style now and wait (otherwise the app studies it)")):
+    """Use a video from the media library as a style reference too: no second copy, a style study (Style DNA) is added
+    next to it. Then `vedit ref show <id>`, `ref target`, or `gen run --ref`."""
+    from . import jobs
+    from .references import store
+
+    uid = _media_id(ref)
+    if off:
+        rid = store.for_media(uid)
+        if rid is not None:
+            store.delete(rid)
+        emit({"media": uid, "ref_id": None}, f"{uid} is no longer a reference" if rid is not None else f"{uid} wasn't a reference")
+        return
+    if wait:
+        jobs.AUTOSTART = False
+    r = store.promote(uid)
+    if wait and r["status"] != "ready":
+        jobs.drain(timeout=3600, wait=True)
+        r = store.get(r["id"])
+    emit({"media": uid, "ref_id": r["id"], "status": r["status"], "summary": r.get("summary")},
+         f"{r['name']} is reference #{r['id']} ({r['status']})" + (f": {r['summary']}" if r.get("summary") else ""))
+
+
+@media_app.command("restudy")
+def media_restudy(ref: str):
+    """Measure and log the file again from scratch (your notes and tags are kept)."""
+    from . import media_library
+
+    m = media_library.restudy(_media_id(ref))
+    emit({"id": m["id"], "status": m["status"]}, f"Studying {m['name']} again")
+
+
+@media_app.command("tag")
+def media_tag(ref: str, tags: list[str] = typer.Argument(..., help="Tags (replace the current ones); '' clears")):
+    """Tag a file so it can be found later (product, b-roll, a client's name...)."""
+    from . import media_library
+
+    m = media_library.update(_media_id(ref), tags=[t for t in tags if t])
+    emit({"id": m["id"], "tags": m["tags"]}, f"{m['name']}: {', '.join(m['tags']) or 'no tags'}")
+
+
+@media_app.command("note")
+def media_note(ref: str, segment: int = typer.Argument(..., help="Segment number (k in `media show`)"),
+               text: Optional[str] = typer.Option(None, "--text", help="What is really in the shot"),
+               quality: Optional[int] = typer.Option(None, min=1, max=5, help="1 = unusable ... 5 = a strong opening shot"),
+               clear: bool = typer.Option(False, help="Go back to the AI's note")):
+    """Correct what the study says about one shot. Your note wins over the AI's and survives a re-study."""
+    from . import media_library
+
+    patch = None if clear else {k: v for k, v in (("description", text), ("quality", quality)) if v is not None}
+    if patch == {}:
+        raise VeditError("Give --text and/or --quality (or --clear)")
+    m = media_library.update(_media_id(ref), segment_overrides={str(segment): patch})
+    emit({"id": m["id"], "segment": segment, "override": m["overrides"].get(str(segment))},
+         f"{m['name']} segment {segment}: " + ("back to the AI's note" if clear else json.dumps(patch)))
+
+
 # ---- references + generation ------------------------------------------------------------
 
-ref_app = typer.Typer(help="Reference library: videos the AI studies for style (pacing, text, animation, sound)")
+ref_app = typer.Typer(help="References: videos in the media library the AI also studies for style (pacing, text, animation, sound)")
 gen_app = typer.Typer(help="Generate N different edits of your footage in the style of references")
 app.add_typer(ref_app, name="ref")
 app.add_typer(gen_app, name="gen")
 
 
+def _project_dir_or_none() -> Path | None:
+    try:
+        return pdir()
+    except (VeditError, SystemExit):
+        return None
+
+
 @ref_app.command("add")
-def ref_add(files: list[str], wait: bool = typer.Option(True, help="Study now and wait (otherwise the app studies them)")):
-    """Add reference videos and study them (measure + AI)."""
+def ref_add(files: list[str] = typer.Argument(..., help="Video files, media library ids, or sources of this project (s1)"),
+            wait: bool = typer.Option(True, help="Study now and wait (otherwise the app studies them)")):
+    """Use videos as references and study their style (measure + AI). A file goes into the media library first;
+    something already there is used as it is (no second copy)."""
     from . import jobs
     from .references import store
 
     jobs.AUTOSTART = False
-    rows = [store.add(Path(f)) for f in files]
+    here = _project_dir_or_none() if any(f[:1] == "s" and f[1:].isdigit() for f in files) else None
+    rows = [store.get(store.resolve(f, here)) for f in files]
     if wait:
         jobs.drain(timeout=3600, wait=True)
         rows = [store.get(r["id"]) for r in rows]
@@ -2185,8 +3363,13 @@ def ref_show(ref_id: int):
     from .references import store
 
     r = store.get(ref_id, full=True)
-    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps")}},
-         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+    look = ("Read these contact sheets before building anything like it: they are the reference itself (the DNA is a "
+            "summary). sheet-1 = the opening at 4 fps, sheet-2 = one frame per shot, sheet-3 = the whole video.")
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "media_id", "status", "summary", "dna", "overrides", "error", "recipe", "gaps",
+                                              "sheets", "stale")}, "look_first": look},
+         f"#{r['id']} {r['name']} ({r['status']})" + (" · studied with an older study prompt: `vedit ref restudy`" if r.get("stale") else "")
+         + "\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+         + "".join(f"\n  sheet: {x}" for x in r.get("sheets", []))
          + (f"\n  Rebuild it: vedit ref recipe {r['id']}" if r.get("recipe") else ""))
 
 
@@ -2200,6 +3383,34 @@ def ref_recipe(ref_id: int):
         raise VeditError(f"Reference #{ref_id} isn't studied yet ({r['status']})")
     emit({"reference": ref_id, "recipe": r["recipe"], "gaps": r["gaps"]},
          f"#{r['id']} {r['name']}: rebuild in vedit (<...> = fill in)\n\n" + recipe.as_text(r["recipe"], r["gaps"]))
+
+
+@ref_app.command("restudy")
+def ref_restudy(ref_id: int, quality: str = typer.Option("balanced", help="AI quality tier: best | balanced | economy")):
+    """Study a reference again with the current study prompt (design pass, whole-video sheet)."""
+    from .references import store
+
+    store.study(ref_id, quality=quality)
+    r = store.get(ref_id, full=True)
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "error", "sheets")}},
+         f"#{r['id']} {r['name']}: {r.get('summary') or r['status']}" + (f"\n  {r['error']}" if r.get("error") else ""))
+
+
+@ref_app.command("target")
+def ref_target(ref_ids: list[int] = typer.Argument(None, help="Reference ids this edit should look like"),
+               clear: bool = typer.Option(False, "--clear", help="Stop comparing the edit with any reference")):
+    """Set the reference(s) this edit should look like: the audit then scores likeness to them."""
+    from .project import EditNotes
+    from .references import store
+
+    ids = [] if clear else list(dict.fromkeys(ref_ids or []))
+    for i in ids:
+        store.get(i)  # raises for an unknown id
+    with edit("Match references " + (", ".join(f"#{i}" for i in ids) or "(none)")) as tx:
+        if tx.project.notes is None:
+            tx.project.notes = EditNotes()
+        tx.project.notes.refs = ids[:4]
+    emit({"refs": ids[:4]}, ("Target references: " + ", ".join(f"#{i}" for i in ids[:4])) if ids else "No target references")
 
 
 @ref_app.command("set")
@@ -2219,7 +3430,7 @@ def ref_set(ref_id: int, trait: str = typer.Argument(..., help="Dotted path, e.g
 
 @ref_app.command("remove")
 def ref_remove(ref_id: int):
-    """Delete a reference."""
+    """Stop using a video as a reference (its style study goes; the file stays in the media library)."""
     from .references import store
 
     store.delete(ref_id)
@@ -2240,7 +3451,7 @@ def _role_models(items: list[str] | None) -> dict[str, str]:
 
 @gen_app.command("run")
 def gen_run(
-    ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
+    ref: list[str] = typer.Option(..., "--ref", help="Reference id, media library id, project source (s1) or video file (repeatable); media becomes a reference"),
     footage: list[str] = typer.Option(..., "--footage", "-f", help="Your video / music / image file (repeatable)"),
     sound: Optional[list[str]] = typer.Option(None, "--sound", "-s", help="Audio or video used ONLY for its sound (repeatable; the videos take turns)"),
     count: int = typer.Option(3, help="How many different videos (1-10)"),
@@ -2257,19 +3468,34 @@ def gen_run(
     threshold: Optional[int] = typer.Option(None, help="Audit pass mark; below it the editor revises (default: audit-settings)"),
     max_rounds: Optional[int] = typer.Option(None, help="Max editor revisions per video (default: audit-settings)"),
     model: Optional[list[str]] = typer.Option(None, "--model", help="Model for a role in this generation: watcher|vision, director|planner, editor, auditor = '<provider>/<model>', e.g. --model auditor=anthropic/claude-opus-5-5 (repeatable)"),
-    lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
+    lead: Optional[str] = typer.Option(None, help="Reference that wins style ties (any form --ref takes)"),
+    funnel: Optional[str] = typer.Option(None, help="Funnel stage: awareness | consideration | conversion | retention"),
+    audience: Optional[str] = typer.Option(None, help="Who it is for, comma-separated ids (e.g. gen_z,students,malaysia,problem_aware) "
+                                                      "or your own words in quotes; `vedit gen tags` lists the ids"),
+    pace: str = typer.Option("reference", help="reference | very_slow | slow | medium | fast | very_fast | build | pulse"),
+    tone: Optional[str] = typer.Option(None, help="Up to 3, comma-separated: playful, premium, emotional, funny, urgent, calm, educational, bold, wholesome, raw"),
+    rule: Optional[list[str]] = typer.Option(None, "--rule", help="Must do / avoid (repeatable): price_early, logo_end, product_first_2s, no_faces, "
+                                                                  "captions_always, no_music, voiceover_room, no_text_first_1s, brand_colours"),
+    notes: str = typer.Option("", help="Anything else the AI should know"),
 ):
     """Generate COUNT videos from your footage in the style of the references (waits until done)."""
     from . import jobs
     from .generate import batch, footage as foot
     from .generate.spec import AXES, BatchSpec
 
+    from .references import store
+
     jobs.AUTOSTART = False
+    here = _project_dir_or_none()
+    ref = [store.resolve(r, here) for r in ref]
+    lead = store.resolve(lead, here) if lead else None
     ups = [foot.add(Path(f))["id"] for f in footage]
     snd = [foot.add(Path(s))["id"] for s in sound or []]
     spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review, explore=explore,
                      audit_threshold=threshold, audit_rounds=max_rounds, models=_role_models(model),
-                     brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
+                     brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language,
+                            "notes": notes, "funnel": funnel, "audience": _audience(audience), "pace": pace,
+                            "tone": [t.strip() for t in (tone or "").split(",") if t.strip()], "rules": rule or []})
     est = batch.estimate(spec)
     if not STATE["json"]:
         print(f"About {est['calls']} AI calls, ~{est['minutes']} min…", file=sys.stderr)
@@ -2278,6 +3504,37 @@ def gen_run(
     b = batch.get(b["id"])
     emit({"batch": b}, f"Batch {b['id']}: {b['status']}" + (f" ({b['error']})" if b["error"] else "") + "\n" + "\n".join(
         f"  v{v['idx']} {v['status']:<7} “{v['hook_text']}”  {v['output'] or v['error'] or ''}" for v in b["variations"]))
+
+
+def _audience(text: Optional[str]) -> dict:
+    """--audience ids (any group) into the Brief's audience; unknown words are kept as the user's own."""
+    from .generate import brief_tags
+
+    groups = brief_tags.audience_ids()
+    out: dict = {"age": [], "who": [], "region": [], "awareness": None, "custom": []}
+    for w in [x.strip() for x in (text or "").split(",") if x.strip()]:
+        g = groups.get(w)
+        if g == "awareness":
+            out["awareness"] = w
+        elif g:
+            out[g].append(w)
+        else:
+            out["custom"].append(w)
+    return out
+
+
+@gen_app.command("tags")
+def gen_tags():
+    """The brief tags `gen run` takes: funnel stages, audience, pace, tone, must do / avoid."""
+    from .generate import brief_tags
+
+    o = brief_tags.options()
+    lines = ["--funnel   " + ", ".join(f"{x['id']} ({x['hint']})" for x in o["funnel"])]
+    lines += [f"--audience {g['label']}: " + ", ".join(x["id"] for x in g["options"]) for g in o["audience"]]
+    lines += ["--pace     " + ", ".join(f"{x['id']} ({x['hint']})" for x in o["pace"]),
+              "--tone     " + ", ".join(x["id"] for x in o["tone"]) + f" (max {o['max_tone']})",
+              "--rule     " + ", ".join(x["id"] for x in o["rules"])]
+    emit({"tags": o}, "\n".join(lines))
 
 
 @gen_app.command("improve")
@@ -2307,6 +3564,191 @@ def gen_list():
 
     rows = batch.list_batches()
     emit({"batches": rows}, "\n".join(f"{b['id']}  {b['status']:<9} {b['done']}/{b['count']}  {b['name']}" for b in rows) or "No batches yet")
+
+
+design_app = typer.Typer(help="Design: motion-design videos made of scenes of animated shapes, text and media")
+app.add_typer(design_app, name="design")
+
+
+@design_app.command("new")
+def design_new(
+    folder: Path = typer.Argument(..., help="New project folder, e.g. projects/my-promo"),
+    fmt: str = typer.Option("reels", "--format", help="reels | square | landscape | portrait45"),
+    name: Optional[str] = None,
+    dur: float = typer.Option(5.0, "--dur", help="Length of the first scene (s)"),
+    background: Optional[str] = typer.Option(None, help="Canvas colour, e.g. #101014"),
+):
+    """Start a blank design (one scene) and make it the active project. Open it in the Design studio."""
+    from . import features, library
+    from .ops import scenes
+
+    features.require_design()
+    d = folder.expanduser().resolve()
+    if (d / PROJECT_FILE).exists():
+        raise VeditError(f"{d} already has a project.json")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "media").mkdir(exist_ok=True)
+    (d / "exports").mkdir(exist_ok=True)
+    proj = Project(name=name or d.name)
+    sc = scenes.new_design(proj, d, fmt, name, dur, background)
+    save(d, proj)
+    history.commit(d, proj, f"new design ({fmt})")
+    library.register(d)
+    (Path.cwd() / ACTIVE_FILE).write_text(str(d))
+    emit({"project": str(d), "scene": sc.id}, f"Created design {d} with scene {sc.id} (now active)")
+
+
+@scene_app.command("list")
+def scene_list():
+    """The design's scenes: times, background, transition, notes and their layers."""
+    from .ops import scenes
+
+    p = load(pdir())
+    scenes.require_design(p)
+    rows = scenes.summary(p)
+    emit({"scenes": rows}, "\n".join(f"{r['id']}  {r['start']:6.2f}-{r['end']:6.2f}s  {r['name']}  [{r['transition']}]"
+                                      f"  {len(r['layers'])} layers" + (f"  bg {r['background']}" if r['background'] else "")
+                                      for r in rows))
+
+
+@scene_app.command("add")
+def scene_add(
+    dur: float = typer.Option(5.0, "--dur"), after: Optional[str] = typer.Option(None, help="Insert after this scene (default: at the end)"),
+    name: str = "", background: Optional[str] = typer.Option(None, help="Scene background colour (hex)"),
+    transition: str = typer.Option("cut", help="How its elements enter: cut | fade | slide | zoom | pop | wipe"),
+    notes: str = typer.Option("", help="Storyboard notes: what happens in this scene"),
+):
+    """Add a scene."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit("scene add") as tx:
+        sc = scenes.add(tx.project, d, dur, after, name, background, transition, notes)
+        st = scenes.scene_range(tx.project, sc.id)
+    emit({"scene": sc.id, "start": st[0], "end": st[1]}, f"Added {sc.id} at {st[0]:g}-{st[1]:g}s")
+
+
+@scene_app.command("set")
+def scene_set(
+    scene_id: str, dur: Optional[float] = typer.Option(None, "--dur"), name: Optional[str] = None,
+    background: Optional[str] = typer.Option(None, help="Hex colour, or 'none'"),
+    transition: Optional[str] = None, notes: Optional[str] = None, why: Optional[str] = None,
+):
+    """Change a scene: length (later scenes and their elements move along), name, background, transition, notes."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"scene {scene_id}") as tx:
+        bg: Any = False if background is None else (None if background.lower() == "none" else background)
+        scenes.set_scene(tx.project, d, scene_id, dur, name, bg, transition, notes, why)
+        st = scenes.scene_range(tx.project, scene_id)
+    emit({"scene": scene_id, "start": st[0], "end": st[1]}, f"Updated {scene_id} ({st[0]:g}-{st[1]:g}s)")
+
+
+@scene_app.command("move")
+def scene_move(scene_id: str, index: int = typer.Argument(..., help="New position (0 = first)")):
+    """Reorder a scene; its elements move with it."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"move scene {scene_id}") as tx:
+        scenes.move(tx.project, d, scene_id, index)
+    emit({"scene": scene_id, "index": index}, f"Moved {scene_id} to position {index}")
+
+
+@scene_app.command("dup")
+def scene_dup(scene_id: str):
+    """Duplicate a scene with all its elements, right after it."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"duplicate scene {scene_id}") as tx:
+        sc = scenes.duplicate(tx.project, d, scene_id)
+    emit({"scene": sc.id}, f"Duplicated {scene_id} as {sc.id}")
+
+
+@scene_app.command("remove")
+def scene_remove(scene_id: str):
+    """Delete a scene and its elements; later scenes move up."""
+    from .ops import scenes
+
+    d = pdir()
+    with edit(f"remove scene {scene_id}") as tx:
+        scenes.remove(tx.project, d, scene_id)
+    emit({"removed": scene_id}, f"Removed {scene_id}")
+
+
+@design_app.command("build")
+def design_build(
+    plan_file: Path = typer.Argument(..., help="MotionPlan JSON (optionally with a \"files\": {id: path} map)"),
+    new: Path | None = typer.Option(None, "--new", help="Create this new project folder for it (default: the active project)"),
+    fmt: str = typer.Option("reels", "--format", help="reels|square|landscape|portrait45 (with --new)"),
+    replace: bool = typer.Option(False, "--replace", help="Rebuild a video-edit project as a design anyway (its clips, "
+                                                          "layers and music are replaced; only when the user asked)"),
+):
+    """Build a whole motion-graphics video from one plan, in one step per scene (undoable). Rebuilds the project's
+    timeline: its layers, clips and music are replaced by the plan's. A video edit is never rebuilt by accident:
+    give --new DIR for a separate design project (or --replace when the user asked to turn this one into a design)."""
+    from . import features
+    from .design import builder
+    from .generate.executor import create_project
+
+    features.require_design()
+    plan, raw_files = builder.load_plan_file(plan_file)
+    files = builder.files_from_json(raw_files)
+    if new:
+        if (new / PROJECT_FILE).exists():
+            raise VeditError(f"{new} already has a project.json")
+        create_project(new, plan.title or new.name, fmt)
+        d = new
+    else:
+        d = pdir()
+        cur = load(d)
+        if cur.kind != "design" and (cur.clips or cur.layers or cur.music) and not replace:
+            raise VeditError("This project is a video edit: `design build` would replace its clips, layers and music "
+                             "with a motion-graphics design. To edit this video (social media layout, text, captions) "
+                             "use the normal commands; for a separate motion-graphics video use `--new DIR`.")
+    rep = builder.build(plan, d, files)
+    emit({"project": str(d), **rep},
+         f"built {rep['length']:g}s in {d}: {len(rep['applied'])} parts" + (f", skipped {len(rep['skipped'])}:\n  " + "\n  ".join(rep["skipped"]) if rep["skipped"] else ""))
+
+
+@design_app.command("split")
+def design_split(
+    image: Path = typer.Argument(..., exists=True, help="Image sheet: character sheet, storyboard grid, stickers"),
+    out: Path | None = typer.Option(None, "--out", help="Folder for the pieces (default: <project>/media/pieces)"),
+    grid: str | None = typer.Option(None, "--grid", help="Force an even grid, e.g. 2x3 (rows x columns)"),
+    cutout: bool = typer.Option(False, "--cutout", help="Make the sheet's background colour transparent"),
+):
+    """Cut an image sheet into its panels (PNG pieces to animate)."""
+    from .design import sheet
+
+    dest = out or (pdir() / "media" / "pieces")
+    pieces = sheet.split(image, dest, grid, cutout)
+    for i, pc in enumerate(pieces, 1):
+        pc["id"] = f"p{i}"
+    over = sheet.contact(pieces, dest / f"{image.stem}-pieces.png")
+    emit({"pieces": pieces, "overview": str(over)},
+         "\n".join(f"{pc['id']}  {pc['width']}x{pc['height']}  {pc['path']}" for pc in pieces) + f"\noverview: {over}")
+
+
+@design_app.command("catalog")
+def design_catalog():
+    """What a MotionPlan may use: frames, transitions, styles, animation presets, text looks, textures, fonts."""
+    from .design import spec
+    from .ops import animate as anim
+    from .ops import fonts, overlays, text_looks
+
+    data = {"frames": list(spec.FRAMES), "transitions": list(spec.TRANSITIONS), "styles": spec.STYLES,
+            "presets": {k: v[3] for k, v in anim.PRESETS.items()},
+            "looks": [x["name"] for x in text_looks.catalog()],
+            "textures": [k for k, it in overlays.LIBRARY.items() if it.kind == "video"],
+            "fonts": list(fonts.FONTS), "max_length": spec.MAX_LENGTH}
+    from .design import planner
+
+    cat = planner.catalog()
+    data.update(eases=cat["eases"], motion_styles=cat["motion_styles"], motion_elements=cat["motion_elements"])
+    emit(data)
 
 
 update_app = typer.Typer(help="App updates (installed desktop app; in a git checkout use `git pull`)")

@@ -20,7 +20,20 @@ import (
 var httpClient = &http.Client{Timeout: 30 * time.Minute}
 
 // download fetches url into dest (via dest.part), and checks its sha256 when want is not empty.
-func download(url, dest, want string) error {
+func download(url, dest, want string) error { return downloadP(url, dest, want, nil) }
+
+// downloadP is download with a progress tracker (nil: none).
+func downloadP(url, dest, want string, tr *tracker) error {
+	err := fetch(url, dest, want, tr)
+	if err != nil {
+		tr.reset()
+	} else {
+		tr.finish()
+	}
+	return err
+}
+
+func fetch(url, dest, want string, tr *tracker) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -37,13 +50,14 @@ func download(url, dest, want string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
+	tr.setTotal(resp.ContentLength)
 	tmp := dest + ".part"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
+	_, err = io.Copy(io.MultiWriter(f, h, tr), resp.Body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

@@ -25,7 +25,7 @@ changed. The payload keeps the repo layout, so `CLAUDE.md`, `.claude/skills` and
   app/versions/<v>/                     one install per version, each with its own .venv (keeps current + previous)
   app/current, app/previous, app/skip   version pointers; skip = a version that was rolled back
   app/pending/                          staged update: manifest.json, manifest.sig, payload
-  app/extras.txt                        optional features installed (ai, bg-quality, captions)
+  app/extras.txt                        optional features installed (ai, bg-quality, captions, mask-ai)
   launcher.log, app.log
 ~/aiklips-projects/          projects: outside the version folders, never touched by updates
 ```
@@ -50,6 +50,32 @@ changed. The payload keeps the repo layout, so `CLAUDE.md`, `.claude/skills` and
    smoke-tests `vedit --version`, then switches `current` (old one becomes `previous`) and starts it.
 5. If the new version exits with an error within 20 s, the launcher switches back and marks it `skip`.
    Users can also go back by hand: Settings → Updates → Go back, or `vedit update rollback`.
+
+## Setup window
+
+First installs and updates show a small branded window instead of dialogs (`launcher/setup.go`, page
+`launcher/ui/setup.html`, embedded). The launcher serves the page on 127.0.0.1 (random port, random token in the
+URL) and streams progress over SSE (`/events`); `POST /retry` and `/open-log` back the error state's buttons.
+
+- **Window:** Windows uses Edge in app mode (`msedge --app`, a throwaway profile; Chrome, then the default browser as
+  fallbacks). macOS runs `launcher/ui/window.js` with `osascript -l JavaScript`: an NSWindow with a WKWebView and the
+  aiklips dock icon (no cgo). Linux: Chromium/Chrome/Edge/Brave `--app`, else `xdg-open`.
+- **When:** only if there is work (`plan()` in main.go) and it takes longer than `showDelay` (0.9 s). An ordinary
+  start shows nothing. `AIKLIPS_QUIET=1` never opens it (tests, CI).
+- **Progress:** downloads are byte-counted tasks (`tracker`); install steps ease towards done over an expected time.
+  The window closes when the app creates `AIKLIPS_READY_FILE` (an env var the launcher passes), the app exits, or
+  after 15 s.
+- **Speed:** uv, FFmpeg/FFprobe and the release payload download at once; `uv python install 3.12` starts as soon as
+  uv has arrived. `uv sync --compile-bytecode` makes the install a little longer and the first start much quicker.
+- **Errors:** a plain sentence (`friendly()`), with Try again / Copy details / Show log. Without a window (quiet, or
+  it couldn't open) the old native dialog is the fallback.
+- **Check it by eye:** `AIKLIPS_PREVIEW=1 go test -count=1 -run TestPreviewStates .` serves the download, error and
+  done states on ports 47811-47813 (`?t=x`). `AIKLIPS_WINDOW_TEST=1 go test -run TestMacWindow .` builds the real
+  macOS window off screen.
+
+Icons: `assets/brand/` (generated from `logo.svg`). The release workflow embeds `icon.ico` in the Windows exe
+(go-winres → a `.syso`, never committed) and puts `icon.icns` in the macOS bundle; Linux gets the PNG with its menu
+entry.
 
 ## Releasing (maintainers)
 

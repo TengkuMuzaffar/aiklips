@@ -216,7 +216,12 @@ def test_planner_keeps_one_font_and_passes_the_grade():
                          Op(op="text", text="c", font=d["text"]["accent_font"])])
     out = planner.enforce(plan, d, Creative(index=1, angle="x", hook_text="a"))
     used = [o.font for o in out.ops if o.op == "text"]
-    assert used == [d["text"]["font"], d["text"]["accent_font"], d["text"]["font"]]  # one accent line at most
+    # the model may pick one second font for emphasis (its first choice), never a third
+    assert used == ["bangers", d["text"]["font"], d["text"]["font"]]
+    plan = EditPlan(ops=[Op(op="text", text="a"), Op(op="text", text="b", font=d["text"]["accent_font"]),
+                         Op(op="text", text="c", font=d["text"]["accent_font"])])
+    used = [o.font for o in planner.enforce(plan, d, Creative(index=1, angle="x", hook_text="a")).ops if o.op == "text"]
+    assert used == [d["text"]["font"], d["text"]["accent_font"], d["text"]["accent_font"]]
     assert out.grade["look"] == "moody"
     d2 = planner.directives(dna, Brief(), {**old_axes, "font": "rounded", "color_look": "vibrant"}, {}, False)
     assert d2["text"]["font"] in fonts.BY_FEEL["rounded"] and d2["grade"]["look"] == "vibrant"

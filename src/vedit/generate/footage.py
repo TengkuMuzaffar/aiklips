@@ -64,6 +64,7 @@ def add(path: Path, name: str | None = None, move: bool = False) -> dict:
     if (d / "meta.json").exists():
         if move:
             path.unlink(missing_ok=True)
+        _register(uid)
         return get(uid)
     d.mkdir(parents=True, exist_ok=True)
     dest = d / ("file" + ext)
@@ -87,11 +88,22 @@ def add(path: Path, name: str | None = None, move: bool = False) -> dict:
             else:
                 a = analysis.analyze_audio(dest, min(info["duration"], 600))
                 meta.update(bpm=(a or {}).get("bpm"), beats=(a or {}).get("beats", []), rms=(a or {}).get("rms", []))
-    except Exception:
+    except VeditError:
         shutil.rmtree(d, ignore_errors=True)
         raise
+    except Exception as e:  # an unreadable image / video: a clear message, and no half-made folder left behind
+        shutil.rmtree(d, ignore_errors=True)
+        raise VeditError(f"{meta['name']}: can't read this file ({type(e).__name__})") from e
     (d / "meta.json").write_text(json.dumps(meta))
+    _register(uid)
     return get(uid)
+
+
+def _register(uid: str) -> None:
+    """Every upload is in the media library, studied once in the background (media_library.study)."""
+    from .. import media_library
+
+    media_library.register(uid)
 
 
 def get(uid: str) -> dict:
@@ -125,7 +137,10 @@ def segments(uid: str) -> list[dict]:
     if meta["kind"] != "video":
         return []
     dur = float(meta["duration"])
-    cuts = analysis.detect_cuts(Path(meta["path"]))
+    cuts = _json(d / "cuts.json")
+    if cuts is None:
+        cuts = analysis.detect_cuts(Path(meta["path"]))
+        (d / "cuts.json").write_text(json.dumps(cuts))  # raw cuts: a style study of the same file reuses them
     edges = [0.0] + [c for c in cuts if 0.3 < c < dur - 0.3] + [dur]
     out: list[dict] = []
     for a, b in zip(edges, edges[1:]):
@@ -204,13 +219,22 @@ def _sheet(uid: str, fid: str, segs: list[dict]) -> Path:
     return dest
 
 
-def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: Callable[[str], None] | None = None) -> dict:
-    """Make sure every video in [(fid, upload id)] has AI notes per segment. Returns usage."""
+def sample(segs: list[dict], limit: int | None) -> list[dict]:
+    """At most `limit` segments spread evenly over the file (a long recording is logged by samples, not every 3 s)."""
+    if not limit or len(segs) <= limit:
+        return segs
+    return [segs[int(i * len(segs) / limit)] for i in range(limit)]
+
+
+def describe(files: list[tuple[str, str]], quality: str = "balanced", progress: Callable[[str], None] | None = None,
+             limit: int | None = None) -> dict:
+    """Make sure every video in [(fid, upload id)] has AI notes per segment (or per sampled segment, with `limit`).
+    Returns usage."""
     todo = []
     for fid, uid in files:
         if meta_full(uid)["kind"] != "video":
             continue
-        segs = segments(uid)
+        segs = sample(segments(uid), limit)
         notes = _json(_dir(uid) / "notes.json", {})
         if any(str(s["k"]) not in notes for s in segs):
             todo.append((fid, uid, segs))
@@ -315,12 +339,15 @@ def shot_log(files: list[tuple[str, str]], sound: list[tuple[str, str]] = ()) ->
         meta = meta_full(uid)
         entry = {"name": meta["name"], "kind": meta["kind"], "duration": meta.get("duration")}
         if meta["kind"] == "video":
-            notes = _json(_dir(uid) / "notes.json", {})
+            from .. import media_library
+
+            notes = media_library.apply_overrides(_json(_dir(uid) / "notes.json", {}) or {}, media_library.overrides(uid))
             try:
                 measured = measure(uid)
             except Exception:  # measuring is a bonus; never block planning on it
                 measured = {}
             entry["has_audio"] = meta.get("has_audio")
+            entry["digest"] = _json(_dir(uid) / "digest.json") or {}
             learned = marks(uid)
             entry["segments"] = [{"id": f"{fid}.s{s['k']}", "from": s["from"], "to": s["to"],
                                   **(notes.get(str(s["k"])) or {"description": "(not described)", "quality": 3}),

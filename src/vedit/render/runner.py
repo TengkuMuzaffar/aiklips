@@ -16,6 +16,15 @@ from ..project import Project, dump_json, state_dir
 from .graph import build
 
 PREVIEW_SCALE = 0.5
+# the editor's preview quality picker: Full (as exported), Half (default) or Quarter (fast on low-spec machines)
+PREVIEW_QUALITIES = {"full": 1.0, "half": 0.5, "quarter": 0.25}
+
+
+def preview_name(base: bool = False, scale: float = PREVIEW_SCALE) -> str:
+    """File name of a preview render. The default scale keeps the old names (the CLI, audit and review use them);
+    other scales get their own file, so switching quality back and forth reuses both renders."""
+    stem = "base" if base else "preview"
+    return f"{stem}.mp4" if scale == PREVIEW_SCALE else f"{stem}-{round(scale * 100)}.mp4"
 
 
 def preview_dir(pdir: Path) -> Path:
@@ -61,21 +70,34 @@ def _playable(path: Path) -> bool:
     return info.get("has_video", False) and info.get("duration", 0) > 0
 
 
+def _effects_salt() -> str:
+    """Versions of the computed effect artifacts (masks, rebuilt backgrounds): when the code that makes them changes,
+    the project file doesn't, so without this a stale preview made with the old artifacts would be reused."""
+    from ..ops import effects, outline, segment, track
+
+    return f"{effects.EFFECT_VERSION}/{track.REMOVE_VERSION}/{track.MASK_VERSION}/{outline.VERSION}/{segment.VERSION}"
+
+
 def project_hash(project: Project) -> str:
-    return hashlib.sha1(dump_json(project).encode()).hexdigest()
+    return hashlib.sha1((dump_json(project) + _effects_salt()).encode()).hexdigest()
 
 
 def base_hash(project: Project) -> str:
     """Hash of the base preview (everything but overlay layers, notes and the clips' "why" notes)."""
     d = project.to_dict()
-    adjust = [l for l in d.get("layers", []) if l.get("type") == "adjust"]  # these change the base picture
+    # these change the base picture: adjustment layers, and every layer under the video track (baked into the base)
+    adjust = [l for l in d.get("layers", []) if l.get("type") == "adjust" or (
+        not l.get("on_video") and (l.get("track") or 0) < project.main_z)]
     for k in ("layers", "notes", "name", "markers"):
         d.pop(k, None)
     d["adjust"] = adjust
+    d["duration"] = round(project.duration, 3)  # a layer past the clips makes the base video longer
     for c in d.get("clips", []):
         c.pop("meta", None)
-    used = {c.source for c in project.clips} | {m.source for m in project.music}
+    used = ({c.source for c in project.clips} | {m.source for m in project.music}
+            | {l.source for l in project.layers if l.source and not l.on_video and (l.track or 0) < project.main_z})
     d["sources"] = {k: v for k, v in d.get("sources", {}).items() if k in used}  # sources only overlays use
+    d["effects_salt"] = _effects_salt()
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
 
@@ -140,30 +162,32 @@ def render(project: Project, pdir: Path, out: Path, scale: float, quality: str, 
 
 
 def render_preview(project: Project, pdir: Path, force: bool = False, progress: bool = True, should_stop=None,
-                   base: bool = False) -> dict:
+                   base: bool = False, scale: float = PREVIEW_SCALE) -> dict:
     """`should_stop` returning True aborts the FFmpeg run (media.Cancelled), e.g. when a newer edit arrives.
 
     `base=True` renders `base.mp4` without the overlay layers, for the editor's live preview (which draws the
-    layers itself). Its cache ignores layer edits, so changing text never re-encodes the video."""
+    layers itself). Its cache ignores layer edits, so changing text never re-encodes the video.
+    `scale` is the size relative to the canvas (see PREVIEW_QUALITIES); each scale has its own file and cache."""
     d = preview_dir(pdir)
     # Only one preview render per project at a time. A second caller waits, then
     # usually finds the fresh cache instead of rendering the same thing again.
     with _file_lock(d / ".lock"):
-        return _render_preview_locked(project, pdir, d, force, progress, should_stop, base)
+        return _render_preview_locked(project, pdir, d, force, progress, should_stop, base, scale)
 
 
 def _render_preview_locked(project: Project, pdir: Path, d: Path, force: bool, progress: bool, should_stop=None,
-                           base: bool = False) -> dict:
-    out = d / ("base.mp4" if base else "preview.mp4")
+                           base: bool = False, scale: float = PREVIEW_SCALE) -> dict:
+    out = d / preview_name(base, scale)
     h = base_hash(project) if base else project_hash(project)
-    hfile = d / ("base-hash" if base else "hash")
+    suffix = out.stem.removeprefix("base").removeprefix("preview")  # "" or "-25" / "-100"
+    hfile = d / (("base-hash" if base else "hash") + suffix)
     if not force and out.exists() and hfile.exists() and hfile.read_text() == h:
         if _playable(out):  # a corrupt file with a matching hash is re-rendered
             return {"output": str(out), "cached": True, "duration": round(project.duration, 3)}
     hfile.unlink(missing_ok=True)  # never leave a hash pointing at a half-written file
     for stale in d.glob(f"{out.stem}.part*"):  # leftovers from crashed renders (we hold the lock)
         stale.unlink(missing_ok=True)
-    res = render(project, pdir, out, PREVIEW_SCALE, "preview", progress, should_stop=should_stop, layers=not base)
+    res = render(project, pdir, out, scale, "preview", progress, should_stop=should_stop, layers=not base)
     hfile.write_text(h)
     # timeline helpers for the preview UI: only when the clips/sound changed, not for text or overlay edits
     th, tfile = timeline_hash(project), d / "timeline-hash"

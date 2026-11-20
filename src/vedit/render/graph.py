@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 from .. import media
 from ..ops import color
 from ..project import Clip, Project, VeditError, resolve_media, state_dir
-from .layers import ensure_layer, even, layer_span
+from .layers import even, layer_clip, layer_span
 
 
 def _f(v: float) -> str:
@@ -51,25 +52,33 @@ class Graph:
         self.filters.append(f)
 
 
+def _zoom_expr(clip: Clip, frames: int) -> str:
+    from ..project import ZOOM_EASES
+
+    expr = ZOOM_EASES.get(clip.zoom_ease, ZOOM_EASES["linear"])[1]
+    return expr.replace("P", f"min(on/{frames},1)") if expr != "P" else f"on/{frames}"
+
+
 def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float, bg: str, dur: float,
-                hold_head: float = 0.0, hold_tail: float = 0.0) -> str:
+                hold_head: float = 0.0, hold_tail: float = 0.0, alpha: bool = False) -> str:
     """Scale/crop/pad a clip onto the W x H canvas. Returns the output label.
 
     hold_head / hold_tail: seconds of frozen first / last frame to add (transition
     handles when the source has no spare footage before / after the clip).
+    alpha: keep transparency (tracks under the video show through): letterbox bars are transparent, not `bg`.
     """
     z = max(1.0, clip.zoom)
     fx, fy = min(max(clip.focus_x, 0), 1), min(max(clip.focus_y, 0), 1)
     out = g.label("fit")
     head = f"start_mode=clone:start_duration={_f(hold_head)}:" if hold_head > 1e-3 else ""
-    tail = (f"fps={_f(fps)},setsar=1,format=yuv420p,tpad={head}stop_mode=clone:stop_duration={_f(hold_tail + 0.2)},"
+    tail = (f"fps={_f(fps)},setsar=1,format={'yuva420p' if alpha else 'yuv420p'},tpad={head}stop_mode=clone:stop_duration={_f(hold_tail + 0.2)},"
             f"trim=duration={_f(dur)},setpts=PTS-STARTPTS,settb=AVTB")
     if clip.zoom_to:
         z1 = max(1.0, clip.zoom_to)
         frames = max(1, round(dur * fps))
         g.add(
             f"[{src_label}]scale={2 * W}:{2 * H}:force_original_aspect_ratio=increase,crop={2 * W}:{2 * H}:(iw-{2 * W})*{_f(fx)}:(ih-{2 * H})*{_f(fy)},"
-            f"zoompan=z='{_f(z)}+({_f(z1)}-{_f(z)})*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={_f(fps)},{tail}[{out}]"
+            f"zoompan=z='{_f(z)}+({_f(z1)}-{_f(z)})*{_zoom_expr(clip, frames)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={_f(fps)},{tail}[{out}]"
         )
         return out
     zw, zh = even(W * z), even(H * z)
@@ -82,7 +91,7 @@ def fit_filters(g: Graph, clip: Clip, src_label: str, W: int, H: int, fps: float
         g.add(
             f"[{src_label}]scale={zw}:{zh}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
             f"crop='min(iw,{W})':'min(ih,{H})':(iw-ow)*{_f(fx)}:(ih-oh)*{_f(fy)},"
-            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color={ffcolor(bg)},{tail}[{out}]"
+            f"{'format=rgba,' if alpha else ''}pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color={'black@0' if alpha else ffcolor(bg)},{tail}[{out}]"
         )
     else:  # blur: blurred cover background + contained foreground
         a, b, bgl, fgl = g.label("ba"), g.label("bb"), g.label("bbg"), g.label("bfg")
@@ -149,6 +158,17 @@ def _focus_composite(g: Graph, prm: dict, cur: str, mk: str, out: str, sw: int, 
     g.add(f"[{cur}][{halo}]overlay=0:0:shortest=1:format=auto[{out}]")
 
 
+def keep_alpha(g: Graph, src: str, colour) -> str:
+    """Run `colour(label) -> label` (a grade, filters: they drop transparency) on the colour of an RGBA `src` and put
+    its alpha back afterwards."""
+    c, a, al, out = g.label("ka"), g.label("kb"), g.label("kal"), g.label("kam")
+    g.add(f"[{src}]split=2[{c}][{a}]")
+    g.add(f"[{a}]alphaextract[{al}]")
+    cur = colour(c)
+    g.add(f"[{cur}][{al}]alphamerge,format=yuva420p[{out}]")
+    return out
+
+
 def _chroma_fg(g: Graph, src: str, params: dict) -> str:
     """Green / blue screen keyed out of `src` (RGBA out), with spill removed and the matte edge pulled in."""
     from ..ops import chroma
@@ -170,6 +190,10 @@ def _bg_composite(g: Graph, project: Project, pdir: Path, eff, cur: str, make_fg
     """Put the cut-out person (`make_fg(label)` -> RGBA label) over the replacement background -> `out`.
     Shared by the AI modes (alpha from a mask video) and chroma keying (alpha from the key)."""
     kind, _, val = str(eff.params.get("replace", "color:#00b140")).partition(":")
+    if kind == "none":  # transparent: the tracks under the video show through
+        fg = make_fg(cur)
+        g.add(f"[{fg}]format=yuva420p[{out}]")
+        return
     if kind == "blur":
         s1, s2, bb = g.label("s"), g.label("s"), g.label("bb")
         g.add(f"[{cur}]split=2[{s1}][{s2}]")
@@ -301,14 +325,39 @@ BLEND_FILTER = {"screen": "screen", "multiply": "multiply", "overlay": "overlay"
                 "lighten": "lighten", "darken": "darken"}
 
 
-def _blend_layer(g: Graph, base: str, li: int, start: float, mode: str, out: str) -> str:
-    """Composite a full-canvas RGBA layer video over `base` with a blend mode, limited to the layer's own alpha.
+def _layer_clips(project: Project, pdir: Path, layers: list, scale: float) -> dict:
+    """{layer id: layer_clip(...)} for these layers. The ones not cached yet render in worker processes: the drawing
+    is Pillow work that holds Python's lock, so threads barely overlap and processes use every core."""
+    from .layers import MISS, cached_clip
+
+    out = {l.id: cached_clip(project, pdir, l, scale) for l in layers}
+    todo = [l for l in layers if out[l.id] is MISS]
+    if len(todo) < 3:  # starting worker processes costs ~0.5 s: not worth it for one or two layers
+        out.update({l.id: layer_clip(project, pdir, l, scale) for l in todo})
+        return out
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
+    # the biggest jobs first, so a long layer doesn't start last and hold the render up
+    todo.sort(key=lambda l: -layer_span(l, project.duration)[1])
+    workers = max(2, min(len(todo), (os.cpu_count() or 4) - 1))
+    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
+        futs = {l.id: ex.submit(layer_clip, project, pdir, l, scale) for l in todo}
+        out.update({k: f.result() for k, f in futs.items()})
+    return out
+
+
+def _blend_layer(g: Graph, base: str, src: str, start: float, mode: str, out: str,
+                 box: tuple[int, int, int, int] | None = None) -> str:
+    """Composite an RGBA layer video over `base` with a blend mode, limited to the layer's own alpha.
 
     blend works on colour only, so: blend the base with the layer's colours, give that result the layer's alpha,
-    and lay it over the base. The layer is padded with transparent frames until its start so both line up."""
+    and lay it over the base. The layer is padded with transparent frames until its start so both line up.
+    `box` = (canvas W, H, x, y) when the layer video is cropped: it is padded back to the canvas first."""
     lp, l1, l2, b1, b2, bb, lr, bl, al, blm = (g.label(x) for x in ("lp", "l1", "l2", "b1", "b2", "bb", "lr", "bl", "al", "blm"))
     pad = f"tpad=start_duration={_f(start)}:start_mode=add:color=black@0," if start > 1e-3 else ""
-    g.add(f"[{li}:v]setpts=PTS-STARTPTS,{pad}format=rgba[{lp}]")
+    grow = f"format=rgba,pad={box[0]}:{box[1]}:{box[2]}:{box[3]}:color=black@0," if box else ""
+    g.add(f"[{src}]setpts=PTS-STARTPTS,{grow}{pad}format=rgba[{lp}]")
     g.add(f"[{lp}]split=2[{l1}][{l2}]")
     g.add(f"[{base}]split=2[{b1}][{b2}]")
     g.add(f"[{b1}]format=gbrp[{bb}]")
@@ -341,18 +390,108 @@ def _adjust_layer(g: Graph, project: Project, pdir: Path, layer, base: str, star
     return out
 
 
+def glass_box(project: Project, layer, scale: float) -> tuple[int, int, int, int]:
+    """A glass layer's panel on the rendered canvas: x, y, w, h (even px, inside the frame)."""
+    from ..project import parse_pos
+
+    W, H = even(project.canvas.width * scale), even(project.canvas.height * scale)
+    w = min(W, even((layer.width or 600) * layer.scale * layer.sx * scale))
+    h = min(H, even((layer.height or 300) * layer.scale * layer.sy * scale))
+    x = round(parse_pos(layer.x, project.canvas.width) * scale - w / 2)
+    y = round(parse_pos(layer.y, project.canvas.height) * scale - h / 2)
+    return max(0, min(W - w, x)), max(0, min(H - h, y)), w, h
+
+
+def glass_sprites(project: Project, pdir: Path, layer, scale: float) -> tuple[Path, Path]:
+    """The panel's rounded alpha mask and its rim light / sheen (cached PNGs)."""
+    import hashlib
+
+    from PIL import Image, ImageDraw
+
+    from ..ops.text import rgba
+
+    _, _, w, h = glass_box(project, layer, scale)
+    r = min(round(layer.radius * scale), w // 2, h // 2)
+    key = hashlib.sha1(f"{w}x{h}r{r}{layer.fill}".encode()).hexdigest()[:12]
+    cdir = state_dir(pdir) / "cache" / "glass"
+    cdir.mkdir(parents=True, exist_ok=True)
+    mask_p, rim_p = cdir / f"mask-{key}.png", cdir / f"rim-{key}.png"
+    if not rim_p.exists():
+        S = 3
+        m = Image.new("L", (w * S, h * S), 0)
+        ImageDraw.Draw(m).rounded_rectangle((0, 0, w * S - 1, h * S - 1), radius=r * S, fill=255)
+        m = m.resize((w, h), Image.LANCZOS)
+        m.save(mask_p)
+        rim = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        tint = rgba(layer.fill) if layer.fill else (255, 255, 255, 26)
+        sheen = Image.new("RGBA", (w, h))
+        px = sheen.load()
+        for yy in range(h):  # a soft diagonal sheen: brighter top-left, the tint everywhere
+            for xx in range(0, w, 2):
+                k = max(0.0, 1 - (xx / w + yy / h) / 1.2)
+                a = min(255, round(tint[3] + 40 * k))
+                px[xx, yy] = tint[:3] + (a,)
+                if xx + 1 < w:
+                    px[xx + 1, yy] = tint[:3] + (a,)
+        rim.paste(sheen, (0, 0), m)
+        edge = Image.new("L", (w * S, h * S), 0)
+        bw = max(2, round(1.6 * scale)) * S
+        ImageDraw.Draw(edge).rounded_rectangle((0, 0, w * S - 1, h * S - 1), radius=r * S, outline=255, width=bw)
+        edge = edge.resize((w, h), Image.LANCZOS)
+        hl = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        grad = Image.linear_gradient("L").resize((w, h)).transpose(Image.FLIP_TOP_BOTTOM)  # rim brighter at the top
+        hl.putalpha(Image.fromarray((__import__("numpy").asarray(edge, "uint16") * (90 + __import__("numpy").asarray(grad, "uint16") * 120 // 255) // 255).astype("uint8")))
+        rim = Image.alpha_composite(rim, hl)
+        rim.save(rim_p)
+    return mask_p, rim_p
+
+
+def _glass_layer(g: Graph, project: Project, pdir: Path, layer, base: str, start: float, ldur: float,
+                 W: int, H: int, scale: float) -> str:
+    """Liquid glass: the picture under the panel, frosted (blurred, a little brighter and more saturated), cut to the
+    panel's rounded shape, with a rim light and sheen on top; it fades in / out over 0.25 s. The live preview draws
+    the same with CSS backdrop-filter."""
+    if ldur <= 0.01:
+        return base
+    x, y, w, h = glass_box(project, layer, scale)
+    mask_p, rim_p = glass_sprites(project, pdir, layer, scale)
+    blur = max(1, round(layer.glass_blur * scale / 2))
+    a, b, gb, gm, gr, out, out2 = (g.label(n) for n in ("ga", "gb", "gbl", "gm", "gr", "gV", "gV"))
+    fps = project.canvas.fps
+    loop = ["-loop", "1", "-framerate", _f(fps), "-t", _f(start + ldur + 0.5)]
+    mi, ri = g.add_input([*loop, "-i", str(mask_p)]), g.add_input([*loop, "-i", str(rim_p)])
+    fade = (f"fade=t=in:st={_f(start)}:d=0.25:alpha=1,fade=t=out:st={_f(max(start, start + ldur - 0.25))}:d=0.25:alpha=1")
+    g.add(f"[{base}]split=2[{a}][{b}]")
+    g.add(f"[{b}]crop={w}:{h}:{x}:{y},boxblur={blur}:2,eq=brightness=0.05:saturation=1.35,format=rgba[{gb}]")
+    g.add(f"[{mi}:v]format=gray,setpts=PTS-STARTPTS[{gm}m]")
+    g.add(f"[{gb}][{gm}m]alphamerge,{fade}[{gm}]")
+    g.add(f"[{ri}:v]format=rgba,setpts=PTS-STARTPTS,{fade}[{gr}]")
+    en = f"enable='between(t,{_f(start)},{_f(start + ldur - 1e-3)})'"
+    g.add(f"[{a}][{gm}]overlay={x}:{y}:eof_action=pass:format=auto:{en}[{out}]")
+    g.add(f"[{out}][{gr}]overlay={x}:{y}:shortest=0:eof_action=pass:format=auto:{en}[{out2}]")
+    return out2
+
+
 def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, quality: str = "preview", log=None,
           encode: list[str] | None = None, audio: bool = True, layers: bool = True) -> tuple[list[str], float]:
     """`encode` replaces the default H.264 encoder arguments (codec, quality, pixel format, container flags) for exports
     in other formats; `audio=False` writes a silent file (GIF). `layers=False` leaves out the overlay layers: the
     editor's live preview draws them in the browser over this "base" video."""
-    if not project.clips:
+    total = project.duration
+    if total <= 0.01:
         raise VeditError("Timeline is empty. Import a video first: `vedit import <file>`")
     log = log or (lambda msg: None)
     canvas = project.canvas
     W, H = even(canvas.width * scale), even(canvas.height * scale)
     fps = canvas.fps
-    total = project.duration
+    # equal tracks: layers on tracks under the video track (track < main_z) are drawn first, and the video track goes
+    # over them with transparent gaps / letterbox bars / keyed backgrounds. Without any, the old opaque path is used.
+    below = [l for l in project.layers if not l.hidden and not l.on_video and (l.track or 0) < project.main_z]
+    # the video track's own layers (in its gaps / past its clips) come first: drawn right over the video
+    above = ([l for l in project.layers if not l.hidden and l.on_video]
+             + [l for l in project.layers if not l.hidden and not l.on_video and (l.track or 0) >= project.main_z])
+    alpha = bool(below)
+    stacked = alpha or not project.clips or project.clips_end < total - 1e-3
     g = Graph()
     vsegs: list[str] = []
     asegs: list[str] = []
@@ -378,27 +517,37 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         hold_head = max(0.0, pre - ext_in / clip.speed)
         hold_tail = max(0.0, post - ext_out / clip.speed)
         s0, slen = clip.in_ - ext_in, dur_src + ext_in + ext_out
-        idx = g.add_input(["-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
+        hold = ["-loop", "1", "-framerate", _f(fps)] if media.is_still(path) else []  # a picture as a clip: repeat it
+        idx = g.add_input([*hold, "-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
         v0 = g.label("v")
         show = src.has_video and not project.main_hidden
-        if show:
+        if alpha and (clip.gap or not show):  # nothing here on the video track: the tracks under it show
+            show = False
+            g.add(f"color=c=black@0:s={W}x{H}:r={_f(fps)}:d={_f(slen)},format=yuva420p[{v0}]")
+        elif show:
             g.add(f"[{idx}:v]setpts=PTS-STARTPTS[{v0}]")
         else:  # audio-only source, or the main track is hidden: show the canvas background
             g.add(f"color=c={ffcolor(canvas.background)}:s={W}x{H}:r={_f(fps)}:d={_f(slen)}[{v0}]")
         cur = apply_effects(g, project, pdir, clip, v0, fps, log, s0, slen) if show else v0
         sp = g.label("sp")
         g.add(f"[{cur}]setpts=PTS/{_f(clip.speed)}[{sp}]")
-        vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur + pre + post, hold_head, hold_tail)
+        vlab = fit_filters(g, clip, sp, W, H, fps, canvas.background, dur + pre + post, hold_head, hold_tail, alpha)
         grade = color.filter_chain(clip.grade, pdir) if show else None
         if grade:  # at canvas size: cheaper than at source size, and the blurred fill gets the same grade
-            gl = g.label("grade")
-            g.add(f"[{vlab}]{grade},format=yuv420p[{gl}]")
-            vlab = gl
+            def graded(lab: str, grade: str = grade) -> str:
+                gl = g.label("grade")
+                g.add(f"[{lab}]{grade},format=yuv420p[{gl}]")
+                return gl
+
+            vlab = keep_alpha(g, vlab, graded) if alpha else graded(vlab)
         if show and any(e.type == "fx" for e in clip.effects):  # filters: blur, vignette, grain, shake...
             from ..ops import fx_filters
 
             # the clip's first frame is at `pre` here (the transition handle before it): timed filters count from it
-            vlab = fx_filters.apply_filters(g, clip, vlab, fx_filters.Ctx(W, H, scale, fps), offset=pre, dur=dur)
+            def filtered(lab: str, clip: Clip = clip, pre: float = pre, dur: float = dur) -> str:
+                return fx_filters.apply_filters(g, clip, lab, fx_filters.Ctx(W, H, scale, fps), offset=pre, dur=dur)
+
+            vlab = keep_alpha(g, vlab, filtered) if alpha else filtered(vlab)
         alab = g.label("a")
         fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if src.has_audio:
@@ -413,7 +562,7 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         asegs.append(f"[{alab}]")
 
     # video: hard cuts are concatenated, transitions blend across the cut point
-    vcur = vsegs[0]
+    vcur = vsegs[0] if vsegs else ""
     if len(vsegs) > 1 and not any(trans):
         g.add(f"{''.join(f'[{v}]' for v in vsegs)}concat=n={len(vsegs)}:v=1:a=0[vcat]")
         vcur = "vcat"
@@ -446,6 +595,13 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         g.add(f"[{ai}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,"
               f"volume={_f(layer.volume)},adelay={ms}|{ms}[{al}]")
         ov_audio.append(al)
+    # the clips' sound, as long as the whole timeline (silence where the video track has nothing)
+    fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    if asegs:
+        g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1,apad=whole_dur={_f(total)}[aclips]")
+    else:
+        g.add(f"anullsrc=r=48000:cl=stereo,atrim=duration={_f(total)},{fmt}[aclips]")
+    asegs = ["[aclips]"]
     if ov_audio:
         g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat0]")
         g.add(f"[acat0]{''.join(f'[{x}]' for x in ov_audio)}amix=inputs={len(ov_audio) + 1}:duration=first:normalize=0:"
@@ -453,24 +609,50 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     else:
         g.add(f"{''.join(asegs)}concat=n={len(asegs)}:v=0:a=1[acat]")
 
+    # render every layer video up front, the uncached ones in parallel (see _layer_clips)
+    wanted = [l for l in below + (above if layers else []) if l.type not in ("adjust", "glass")]
+    clips = _layer_clips(project, pdir, wanted, scale)
 
-    # layers=False (the editor's base video) still applies adjustment layers: they change the picture itself
-    for layer in [l for l in project.layers if not l.hidden and (layers or l.type == "adjust")]:
+    def draw(layer, vcur: str) -> str:
         start, ldur = layer_span(layer, total)
         if layer.type == "adjust":
-            vcur = _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
-            continue
-        f = ensure_layer(project, pdir, layer, scale)
-        if f is None:
-            continue
-        li = g.add_input(["-i", str(f)])
+            return _adjust_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale, fps)
+        if layer.type == "glass":
+            return _glass_layer(g, project, pdir, layer, vcur, start, ldur, W, H, scale)
+        lc = clips.get(layer.id) if layer.id in clips else layer_clip(project, pdir, layer, scale)
+        if lc is None:
+            return vcur
+        f, x, y = lc  # the layer's video is cropped to where it appears; (x, y) puts it back on the canvas
+        # -itsoffset: the file's timestamps start where the layer does, so FFmpeg reads each input only when the
+        # timeline gets there instead of buffering hundreds of inputs from the first frame
+        src = f"{g.add_input(['-itsoffset', _f(start), '-i', str(f)])}:v"
         ll, out = g.label("L"), g.label("V")
         if layer.blend == "normal":
-            g.add(f"[{li}:v]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
-            g.add(f"[{vcur}][{ll}]overlay=0:0:eof_action=pass:format=auto[{out}]")
-        else:
-            vcur = _blend_layer(g, vcur, li, start, layer.blend, out)
-        vcur = out
+            g.add(f"[{src}]setpts=PTS-STARTPTS+{_f(start)}/TB[{ll}]")
+            # enable: outside the layer's own time the step passes frames straight through (no framesync, no
+            # conversion), so a project with hundreds of short layers doesn't pay for every layer on every frame
+            # half a frame of slack: t = n / fps is inexact (frame 1566 at 30 fps is 52.19999..), and a window starting
+            # at exactly 52.2 dropped the layer's first frame. Outside its frames the layer has nothing to draw anyway.
+            en = f"enable='between(t,{_f(start - 0.5 / fps)},{_f(start + ldur + 0.5 / fps)})'"
+            # format=yuv420: blend straight into the picture's own format. "auto" kept the chain in RGB and converted
+            # every frame of every layer (~6 ms per full-size frame): 2x slower, for the same yuv420p output
+            g.add(f"[{vcur}][{ll}]overlay={x}:{y}:eof_action=pass:format=yuv420:{en}[{out}]")
+            return out
+        return _blend_layer(g, vcur, src, start, layer.blend, out, (W, H, x, y))
+
+    if stacked:  # canvas colour, the tracks under the video (always: the editor's base video has them too), the video
+        cur = g.label("base")
+        g.add(f"color=c={ffcolor(canvas.background)}:s={W}x{H}:r={_f(fps)}:d={_f(total)},format=yuv420p[{cur}]")
+        for layer in below:
+            cur = draw(layer, cur)
+        if vcur:
+            out = g.label("V")
+            g.add(f"[{cur}][{vcur}]overlay=0:0:eof_action=pass:format=auto[{out}]")
+            cur = out
+        vcur = cur
+    # layers=False (the editor's base video) still applies adjustment layers: they change the picture itself
+    for layer in [l for l in above if layers or l.type == "adjust"]:
+        vcur = draw(layer, vcur)
     g.add(f"[{vcur}]format=yuv420p[vout]")
 
     # music
@@ -515,7 +697,9 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         g.add(f"[{acur}]anull[amix]")
     if not audio:  # silent export (GIF, or sound switched off): the audio chain must still end somewhere
         g.add("[amix]anullsink")
-    elif canvas.loudness is not None:  # one consistent level on every phone, and no clipping
+    elif canvas.loudness is not None and (music_labels or ov_audio or any(
+            project.sources[c.source].has_audio and not c.gap for c in project.clips)):
+        # one consistent level on every phone, and no clipping (pure silence would turn into NaN)
         g.add(f"[amix]loudnorm=I={_f(canvas.loudness)}:TP=-1.5:LRA=11,aresample=48000,atrim=duration={_f(total)}[aout]")
     else:
         g.add("[amix]anull[aout]")
@@ -527,7 +711,11 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
     gfile.write_text(";\n".join(g.filters))
     graph_flag = ["-/filter_complex", str(gfile)] if media.ffmpeg_major() >= 7 else ["-filter_complex_script", str(gfile)]
 
-    if quality == "preview":
+    hw = media.hw_h264() if quality == "preview" else None
+    if hw:  # previews on the GPU's encoder: about twice as fast as x264, and the CPU is left for drawing layers
+        kbps = max(1500, round(6000 * W * H / (1080 * 1920)))  # ~6 Mb/s at 1080x1920, less for smaller previews
+        enc = ["-c:v", hw, "-b:v", f"{kbps}k", "-c:a", "aac", "-b:a", "128k"]
+    elif quality == "preview":
         enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "128k"]
     else:
         enc = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-c:a", "aac", "-b:a", "192k"]

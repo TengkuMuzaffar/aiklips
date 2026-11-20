@@ -13,6 +13,7 @@ every change, whether it came from the GUI, the AI or the CLI.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import tempfile
@@ -26,7 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 
 from .. import history, library, media
 from ..project import PROJECT_FILE, VeditError, load, resolve_media, state_dir
-from ..render.runner import preview_dir, render_preview
+from ..render.runner import PREVIEW_QUALITIES, preview_dir, preview_name, render_preview
 
 STATIC = Path(__file__).parent / "static"
 SRC = Path(__file__).resolve().parents[1]  # src/vedit, watched by `vedit serve --dev`
@@ -59,6 +60,12 @@ def _rev(pdir: Path) -> float:
         return 0.0
 
 
+# A newer edit cancels the running preview render only while that render is young. Past this, the render finishes
+# and is shown, then the newest edit renders: during an AI run (an edit every few seconds) cancelling every time
+# meant the preview never updated until the AI stopped.
+CANCEL_GRACE = 1.5
+
+
 class Renderer:
     """Re-renders the preview whenever project.json changes."""
 
@@ -68,8 +75,10 @@ class Renderer:
         # live mode (default): render base.mp4 without overlay layers; the browser draws them from sprites.
         # final mode: render the full preview.mp4 exactly as it will export.
         self.final = False
+        self.quality = "half"  # PREVIEW_QUALITIES key: the size the preview renders at
+        self.file = preview_name(base=True)  # what the browser plays at `version`
         self.passes = 0  # finished render passes (cache hits too): tells the browser the edit has been handled
-        self._shown_final: bool | None = None
+        self._shown: tuple | None = None  # (final, quality) of the file at `version`
         self.status = "idle"
         self.error: str | None = None
         self.pending = threading.Event()
@@ -118,12 +127,15 @@ class Renderer:
             time.sleep(0.15)  # debounce bursts of edits
             self.pending.clear()
             self.status = "rendering"
-            fresh, final = False, self.final
+            fresh, final, quality = False, self.final, self.quality
+            scale = PREVIEW_QUALITIES[quality]
+            t0 = time.monotonic()
+            # a newer edit makes this render stale: stop FFmpeg and start over, unless it is well under way
+            young = lambda: self.pending.is_set() and time.monotonic() - t0 < CANCEL_GRACE  # noqa: E731
             try:
                 p = load(self.pdir)
-                if p.clips:
-                    # a newer edit makes this render stale: stop FFmpeg now and start over
-                    res = render_preview(p, self.pdir, progress=False, should_stop=self.pending.is_set, base=not final)
+                if p.duration > 0.01:  # clips, or layers only (equal tracks)
+                    res = render_preview(p, self.pdir, progress=False, should_stop=young, base=not final, scale=scale)
                     fresh = not res.get("cached")
                 self.error = None
             except media.Cancelled:
@@ -135,9 +147,10 @@ class Renderer:
             self.status = "idle"
             # the version only moves when there is a new file to load (or on the first pass), so the
             # browser never re-downloads an unchanged preview
-            if fresh or self.version == 0 or self._shown_final != final:
+            if fresh or self.version == 0 or self._shown != (final, quality):
+                self.file = preview_name(base=not final, scale=scale)
                 self.version += 1
-                self._shown_final = final
+                self._shown = (final, quality)
             self.passes += 1
 
     def _watch(self) -> None:
@@ -171,6 +184,12 @@ class Host:
         """Open a project when nothing else is open (no async cleanup needed)."""
         pdir = pdir.resolve()
         library.touch(pdir)
+        try:  # an old Design (beta) version opens as a design with scenes
+            from ..ops.scenes import adopt_legacy
+
+            adopt_legacy(pdir)
+        except (VeditError, OSError, ValueError):
+            pass
         self.pdir = pdir
         if self.dev:
             DEV_OPEN.write_text(str(pdir), encoding="utf-8")
@@ -209,8 +228,28 @@ def _thumb(pdir: Path, sid: str) -> Path:
         raise HTTPException(404)
     out = d / f"{sid}-{int(path.stat().st_mtime)}.jpg"
     if not out.exists():
-        media.extract_frame(path, min(1.0, src.duration / 3), out, 360)
+        media.extract_frame(path, 0.0 if media.is_still(path) else min(1.0, src.duration / 3), out, 360)
     return out
+
+
+@functools.lru_cache(maxsize=512)
+def _iso_thumb(kind: str, theme: str) -> bytes:
+    from ..ops import iso_items
+
+    return iso_items.thumb(kind, theme)
+
+
+def _obj3d_thumb(kind: str) -> bytes:
+    import io
+
+    from ..ops.render3d import thumbnail
+
+    buf = io.BytesIO()
+    thumbnail(kind, 240).save(buf, "PNG")
+    return buf.getvalue()
+
+
+MODEL_EXTS = (".glb", ".gltf", ".obj", ".stl", ".ply")
 
 
 def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, dev: bool = False) -> FastAPI:
@@ -224,6 +263,18 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         return HTTPException(400, str(e))
 
     # ---- pages -----------------------------------------------------------------
+    IN_DEVELOPMENT = HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Design · in development</title><style>body{margin:0;height:100vh;display:grid;place-items:center;"
+        "background:#0b0d10;color:#e8eaed;font:15px/1.5 system-ui,sans-serif}main{max-width:440px;padding:24px;text-align:center}"
+        "b{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#c5f467;border:1px solid #2f4a1f;"
+        "border-radius:999px;padding:2px 10px;margin-bottom:14px}h1{font-size:22px;margin:0 0 8px}p{color:#9aa3ad;margin:0 0 18px}"
+        "a{color:#0b0d10;background:#c5f467;border-radius:8px;padding:8px 14px;text-decoration:none;font-weight:600;margin:0 4px}"
+        "a.g{background:none;color:#e8eaed;border:1px solid #333}</style><main><b>In development</b><h1>The Design studio "
+        "isn't available yet</h1><p>We're still working on it. Motion graphics (kinetic titles, counters, charts, lines "
+        "that draw themselves) are in the editor: Elements, then Motion.</p><a href=\"/\">Home</a>"
+        '<a class="g" href="/editor?view=timeline">Open in the editor</a></main>')
+
     def page(name: str) -> str:
         html = (STATIC / name).read_text(encoding="utf-8")
         return html.replace("</body>", DEV_SCRIPT + "</body>", 1) if dev else html
@@ -236,22 +287,89 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
     def settings_page() -> str:
         return page("settings.html")
 
+    def _is_design() -> bool:
+        try:
+            return host.pdir is not None and load(host.pdir).kind == "design"
+        except VeditError:
+            return False
+
     @app.get("/editor", response_class=HTMLResponse)
-    def editor():
+    def editor(view: str | None = None):
         if host.pdir is None:
             return RedirectResponse("/")
+        from .. import features
+
+        # designs open in the Design studio (?view=timeline: the editor anyway); while the studio is switched off
+        # (features.design_enabled) they open here, on the timeline
+        if features.design_enabled() and _is_design() and view != "timeline":
+            return RedirectResponse("/studio")
         return page("index.html")
+
+    @app.get("/studio", response_class=HTMLResponse)
+    def studio():
+        from .. import features
+
+        if not features.design_enabled():
+            return IN_DEVELOPMENT
+        if host.pdir is None:
+            return RedirectResponse("/")
+        if not _is_design():
+            return RedirectResponse("/editor")
+        return page("studio.html")
 
     if dev:
         @app.get("/api/dev/stamp", response_class=Response)
         def dev_stamp() -> Response:
             return Response(_dev_stamp(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
+    STATIC_TYPES = {"animate.js": "text/javascript", "shell.js": "text/javascript", "ui.css": "text/css",
+                    "shapes.js": "text/javascript", "studio.js": "text/javascript",
+                    "logo.svg": "image/svg+xml"}
+
     @app.get("/static/{name}")
     def static_file(name: str):
-        if name not in ("animate.js",):
+        if name == "display.ttf":  # the UI's italic display face (bundled for text layers too)
+            from ..ops import fonts as font_lib
+
+            return FileResponse(font_lib.FONT_DIR / "DMSerifDisplay-Italic.ttf", media_type="font/ttf",
+                                headers={"Cache-Control": "max-age=86400"})
+        if name not in STATIC_TYPES:
             raise HTTPException(404)
-        return FileResponse(STATIC / name, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+
+    # ---- app shell: version, first-run onboarding, "what's new" after an update -------------
+    def _ui_file() -> Path:
+        return library.home_dir() / "ui.json"
+
+    def _ui() -> dict:
+        try:
+            return json.loads(_ui_file().read_text())
+        except (OSError, ValueError):
+            return {}
+
+    @app.get("/api/app")
+    def api_app() -> dict:
+        from .. import __version__, features, updater, whats_new
+
+        ui = _ui()
+        return {"version": __version__, "features": {"design": features.design_enabled()}, "installed": updater.enabled(), "onboarded": bool(ui.get("onboarded")),
+                "seen_version": ui.get("seen_version"), "whats_new": whats_new.since(ui.get("seen_version")),
+                "all_notes": whats_new.NOTES, "prefs": ui.get("prefs", {}), "projects_root": str(library.projects_root())}
+
+    @app.post("/api/app/seen")
+    def api_app_seen(body: dict) -> dict:
+        """Remember that the welcome tour / this version's highlights were shown, and UI preferences."""
+        from .. import __version__
+
+        ui = _ui()
+        if body.get("onboarded"):
+            ui["onboarded"] = True
+        if body.get("version", True):
+            ui["seen_version"] = __version__
+        if isinstance(body.get("prefs"), dict):
+            ui["prefs"] = {**ui.get("prefs", {}), **body["prefs"]}
+        _ui_file().write_text(json.dumps(ui, indent=2))
+        return {"ok": True}
 
     # ---- project library ------------------------------------------------------------
     @app.get("/api/projects")
@@ -310,6 +428,26 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise bad(e)
         return {"ok": True}
 
+    @app.post("/api/projects/bulk-remove")
+    async def bulk_remove_projects(body: dict) -> dict:
+        """Remove several projects from the list (files stay) or, with delete_files, delete their folders too.
+        Each one is tried on its own: one failure doesn't stop the rest, and the result says which failed."""
+        ids = [int(x) for x in (body.get("ids") or []) if str(x).lstrip("-").isdigit()]
+        delete_files = bool(body.get("delete_files"))
+        if not ids:
+            raise HTTPException(400, "No projects selected")
+        done, failed = [], []
+        for pid in dict.fromkeys(ids):
+            try:
+                row = library.get(pid)
+                if host.pdir and Path(row["path"]).resolve() == host.pdir:
+                    await host.close()
+                library.remove(pid, delete_files and Path(row["path"]).exists())
+                done.append(pid)
+            except (VeditError, OSError) as e:
+                failed.append({"id": pid, "error": str(e)})
+        return {"ok": not failed, "removed": done, "failed": failed}
+
     @app.get("/api/projects/{pid}/thumb.jpg")
     def project_thumb(pid: int):
         try:
@@ -318,9 +456,9 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             p = load(d)
         except VeditError:
             raise HTTPException(404)
-        if not p.clips:
-            raise HTTPException(404)
         prev = preview_dir(d) / "preview.mp4"
+        if not p.clips and not prev.exists():
+            raise HTTPException(404)
         if prev.exists():  # poster of the actual edit (canvas, overlays and all)
             poster = state_dir(d) / "cache" / f"poster-{int(prev.stat().st_mtime)}.jpg"
             if not poster.exists():
@@ -333,6 +471,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     poster = None
             if poster:
                 return FileResponse(poster, headers={"Cache-Control": "no-store"})
+        if not p.clips:  # layers only, and the poster failed
+            raise HTTPException(404)
         return FileResponse(_thumb(d, p.clips[0].source), headers={"Cache-Control": "no-store"})
 
     @app.post("/api/close")
@@ -392,8 +532,9 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         return {"ok": True}
 
     # ---- references + generation (home tabs) ---------------------------------------------
-    from . import gen_routes
+    from . import design_routes, gen_routes
 
+    design_routes.mount(app, host, bad)  # first: registers the design job handlers before workers resume jobs
     gen_routes.mount(app, host, bad)
 
     # ---- AI models: any model from any Anthropic-compatible provider -----------------
@@ -644,8 +785,10 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             "starts": p.clip_starts(),
             "history": history.log(d, 80),
             "rev": _rev(d),
-            "render": {"status": r.status, "error": r.error, "version": r.version, "final": r.final, "passes": r.passes} if r
-            else {"status": "idle", "error": None, "version": 0, "final": False, "passes": 0},
+            "render": {"status": r.status, "error": r.error, "version": r.version, "final": r.final, "passes": r.passes,
+                       "quality": r.quality, "file": r.file} if r
+            else {"status": "idle", "error": None, "version": 0, "final": False, "passes": 0, "quality": "half",
+                  "file": preview_name(base=True)},
         }
 
     def _hist(fn, *a):
@@ -692,7 +835,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise HTTPException(400, f"Bad request: {e}")
 
     @app.post("/api/import")
-    async def api_import(file: UploadFile = File(...), append: bool = Form(True), index: int | None = Form(None)) -> dict:
+    async def api_import(file: UploadFile = File(...), append: bool = Form(True), index: int | None = Form(None),
+                         fit_canvas: bool = Form(False)) -> dict:
         from ..editor import actions
 
         d = host.need()
@@ -701,7 +845,7 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             while chunk := await file.read(1 << 20):
                 tmp.write(chunk)
         try:
-            return actions.import_file(d, file.filename or "upload" + suffix, Path(tmp.name), append, index)
+            return actions.import_file(d, file.filename or "upload" + suffix, Path(tmp.name), append, index, fit_canvas)
         except VeditError as e:
             Path(tmp.name).unlink(missing_ok=True)
             raise bad(e)
@@ -820,7 +964,8 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
     @app.get("/media/{name}")
     def media_file(name: str):
-        if name not in ("preview.mp4", "base.mp4", "thumbs.jpg", "wave.png"):
+        renders = {preview_name(b, sc) for b in (True, False) for sc in PREVIEW_QUALITIES.values()}
+        if name not in renders | {"thumbs.jpg", "wave.png"}:
             raise HTTPException(404)
         f = preview_dir(host.need()) / name
         if not f.exists():
@@ -908,6 +1053,109 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise bad(e)
         return {"ok": True}
 
+    # ---- sound effects: aiklips' own synth (presets, live preview, AI design) -------------------------
+    @app.get("/api/sfx/presets")
+    def api_sfx_presets() -> dict:
+        from .. import sfx
+
+        return {"presets": sfx.presets(), "max_len": sfx.MAX_LEN}
+
+    def _sfx_in(body: dict):
+        """The sound in a request: its settings with the Pitch / Length knobs applied."""
+        from .. import sfx
+
+        try:
+            return sfx.adjust(sfx.SfxParams(**(body.get("params") or {})), float(body.get("pitch") or 0),
+                              float(body["length"]) if body.get("length") else None)
+        except (ValueError, TypeError) as e:
+            raise bad(e)
+
+    @app.post("/api/sfx/preview")
+    def api_sfx_preview(body: dict) -> Response:
+        from .. import sfx
+
+        return Response(sfx.render(_sfx_in(body)), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/sfx/variations")
+    def api_sfx_variations(body: dict) -> dict:
+        """Takes of the current sound (knobs folded in), each with its settings."""
+        from .. import sfx
+
+        prm = _sfx_in(body)
+        vs = sfx.variations(prm, int(body.get("n") or 6), float(body.get("amount") or 0.25))
+        return {"base": prm.model_dump(), "takes": [v.model_dump() for v in vs]}
+
+    @app.post("/api/sfx/ai")
+    def api_sfx_ai(body: dict) -> dict:
+        from .. import sfx
+        from ..ai import client as aic
+
+        try:
+            cur = _sfx_in(body) if body.get("params") else None
+            return sfx.design(body.get("prompt", ""), cur, body.get("model") or None)
+        except (aic.AIError, ValueError) as e:
+            raise bad(e)
+
+    # ---- music loops: aiklips' own sequencer + synth (styles, live preview, moods, AI, loops on the timeline) ------
+    @app.get("/api/music/styles")
+    def api_music_styles() -> dict:
+        from .. import musicmaker as mm
+
+        schema = mm.MusicParams.model_json_schema()["properties"]
+        return {"styles": [{**s, "params": mm.style(s["key"]).model_dump()} for s in mm.styles()],
+                "moods": list(mm.MOODS), "keys": list(mm.NOTE_NAMES), "scales": list(mm.SCALES),
+                "scale_steps": {k: list(v) for k, v in mm.SCALES.items()}, "parents": mm._PARENT,
+                "help": {k: v.get("description", "") for k, v in schema.items()}, "max_seconds": mm.MAX_SECONDS}
+
+    def _music_in(body: dict):
+        from .. import musicmaker as mm
+
+        try:
+            return mm.MusicParams(**(body.get("params") or {}))
+        except (ValueError, TypeError) as e:
+            raise bad(e)
+
+    @app.post("/api/music/preview")
+    def api_music_preview(body: dict) -> Response:
+        from .. import musicmaker as mm
+
+        return Response(mm.render(_music_in(body)), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/music/mood")
+    def api_music_mood(body: dict) -> dict:
+        from .. import musicmaker as mm
+
+        try:
+            return {"params": mm.apply_mood(_music_in(body), body.get("mood", "")).model_dump()}
+        except ValueError as e:
+            raise bad(e)
+
+    @app.post("/api/music/ai")
+    def api_music_ai(body: dict) -> dict:
+        from .. import musicmaker as mm
+        from ..ai import client as aic
+
+        try:
+            cur = _music_in(body) if body.get("params") else None
+            return mm.design(body.get("prompt", ""), cur, body.get("model") or None)
+        except (aic.AIError, ValueError) as e:
+            raise bad(e)
+
+    @app.get("/api/music/loops")
+    def api_music_loops() -> dict:
+        """Music tracks on the timeline that were made here (their settings can be loaded and changed)."""
+        from .. import musicmaker as mm
+
+        d = host.need()
+        p = load(d)
+        out = []
+        for m in p.music:
+            src = p.sources.get(m.source)
+            prm = mm.params_of(d / src.path) if src else None
+            if prm:
+                out.append({"id": m.id, "start": m.start, "end": m.end, "volume": m.volume, "params": prm.model_dump()})
+        return {"loops": out}
+
     @app.get("/api/overlays")
     def overlays_catalog() -> dict:
         from ..ops import overlays
@@ -963,16 +1211,20 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
     @app.post("/api/preview-mode")
     def preview_mode(body: dict) -> dict:
-        """Live (base video + browser-drawn overlays) or final (the full FFmpeg render, as exported)."""
+        """Live (base video + browser-drawn overlays) or final (the full FFmpeg render, as exported), and the
+        quality (size) the preview renders at: full / half / quarter. Either key may be left out."""
         host.need()
         r = host.renderer
         if r is None:
             raise HTTPException(409, "No renderer")
-        final = bool(body.get("final"))
-        if final != r.final:
-            r.final = final
+        final = bool(body.get("final", r.final))
+        quality = body.get("quality", r.quality)
+        if quality not in PREVIEW_QUALITIES:
+            raise HTTPException(400, f"quality must be one of {', '.join(PREVIEW_QUALITIES)}")
+        if (final, quality) != (r.final, r.quality):
+            r.final, r.quality = final, quality
             r.pending.set()
-        return {"final": r.final}
+        return {"final": r.final, "quality": r.quality}
 
     @app.post("/api/frame")
     async def frame(body: dict):
@@ -1023,12 +1275,98 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         opt = lambda k: None if body.get(k) is None else int(body[k])  # noqa: E731
         try:
             png = await asyncio.to_thread(sprite_png, d, body.get("layer") or {}, float(body.get("scale", 0.5)),
-                                          opt("reveal"), opt("group"), opt("hi"))
+                                          opt("reveal"), opt("group"), opt("hi"), body.get("motion"))
         except VeditError as e:
             raise bad(e)
         except (ValueError, TypeError) as e:
             raise HTTPException(400, f"Bad layer: {e}")
-        return Response(png, media_type="image/png")
+        headers = {}
+        lay = body.get("layer") or {}
+        if lay.get("type") == "text" and lay.get("split", "none") != "none" and not lay.get("counter"):
+            from ..ops.motion import kinetic_end
+
+            headers["X-Kinetic-End"] = f"{kinetic_end(lay, float(body.get('scale', 0.5))):.3f}"  # when it stops moving
+        return Response(png, media_type="image/png", headers=headers)
+
+    @app.get("/api/iso-items")
+    def iso_items_catalog() -> dict:
+        """The iso item library, themes and ready-made worlds (the editor's item picker)."""
+        from ..ops import iso_items
+
+        return {"items": iso_items.catalog(), "themes": list(iso_items.THEMES), "worlds": list(iso_items.WORLDS)}
+
+    @app.get("/api/iso-item/{name}")
+    async def iso_item_thumb(name: str, theme: str = "pastel"):
+        """One iso item drawn on its own (PNG), for the item picker."""
+        from ..ops import iso_items
+
+        kind = name.removesuffix(".png")
+        if kind not in iso_items.ITEMS or theme not in iso_items.THEMES:
+            raise HTTPException(404, "No such item")
+        data = await asyncio.to_thread(_iso_thumb, kind, theme)
+        return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/api/obj3d-kinds")
+    def obj3d_kinds() -> dict:
+        """What the 3D tab can add: kinds, their settings and default colours."""
+        from ..ops import items3d
+
+        return {"kinds": items3d.catalog()}
+
+    @app.get("/api/obj3d-item/{name}")
+    async def obj3d_item_thumb(name: str):
+        """One 3D kind drawn by the export's renderer (PNG), for the 3D tab."""
+        from ..ops import items3d
+
+        kind = name.removesuffix(".png")
+        if kind not in ("text", "model", *items3d.ITEMS3D):
+            raise HTTPException(404, "No such 3D kind")
+        data = await asyncio.to_thread(_obj3d_thumb, kind)
+        return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    @app.post("/api/obj3d-model")
+    async def obj3d_model(file: UploadFile = File(...)) -> dict:
+        """A 3D model file for the 3D tab: saved in the project's models/ folder; returns the path to use as `src`."""
+        from ..project import store_media_path
+
+        d = host.need()
+        name = Path(file.filename or "model.glb").name
+        if Path(name).suffix.lower() not in MODEL_EXTS:
+            raise HTTPException(400, f"3D models: {', '.join(MODEL_EXTS)}")
+        out_dir = d / "models"
+        out_dir.mkdir(exist_ok=True)
+        out = out_dir / name
+        n = 2
+        while out.exists():
+            out = out_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
+            n += 1
+        with out.open("wb") as fh:
+            while chunk := await file.read(1 << 20):
+                fh.write(chunk)
+        return {"src": store_media_path(d, out)}
+
+    @app.get("/api/move-thumb/{name}")
+    async def move_thumb(name: str):
+        """Effects tab previews of the graphic signature effects: {name}.png or {name}.webp (animated)."""
+        from ..ops import moves
+        from .motion_thumbs import move_thumb as thumb
+
+        key, _, ext = name.rpartition(".")
+        if key not in moves.PREVIEWS or ext not in ("png", "webp"):
+            raise HTTPException(404, "No such preview")
+        data = await asyncio.to_thread(thumb, key, ext == "webp")
+        return Response(data, media_type=f"image/{ext}", headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/api/motion-thumb/{name}")
+    async def motion_thumb(name: str):
+        """Elements > Motion card previews: {key}.png (the finished element) or {key}.webp (it animating in)."""
+        from .motion_thumbs import KEYS, thumb
+
+        key, _, ext = name.rpartition(".")
+        if key not in KEYS or ext not in ("png", "webp"):
+            raise HTTPException(404, "No such preview")
+        data = await asyncio.to_thread(thumb, key, ext == "webp")
+        return Response(data, media_type=f"image/{ext}", headers={"Cache-Control": "max-age=86400"})
 
     @app.get("/api/source/{sid}/thumb.jpg")
     def source_thumb(sid: str):
@@ -1045,11 +1383,11 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     yield f"data: {json.dumps({'closed': True})}\n\n"
                     return
                 rev = _rev(d)
-                key = (id(r), r.version, r.status, r.error, rev, r.final, r.passes)
+                key = (id(r), r.version, r.status, r.error, rev, r.final, r.passes, r.quality)
                 if key != last:
                     last = key
                     msg = {'version': r.version, 'status': r.status, 'error': r.error, 'rev': rev, 'final': r.final,
-                           'passes': r.passes}
+                           'passes': r.passes, 'quality': r.quality, 'file': r.file}
                     yield f"data: {json.dumps(msg)}\n\n"
                 await asyncio.sleep(0.15)
 
@@ -1072,7 +1410,7 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     asyncio.create_task(session.ask(str(msg["text"]).strip(), msg.get("context") or {}))
                 elif kind == "permission":
                     allow = msg.get("allow")
-                    session.answer_permission(str(msg.get("id", "")), "always" if allow == "always" else bool(allow))
+                    session.answer_permission(str(msg.get("id", "")), allow if allow in ("always", "turn") else bool(allow))
                 elif kind == "interrupt":
                     await session.interrupt()
                 elif kind == "model":
@@ -1085,6 +1423,13 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
                     asyncio.create_task(session.delete_chat(str(msg.get("id", ""))))
                 elif kind == "auto_audit":
                     await session.set_auto_audit(bool(msg.get("on")))
+                elif kind == "auditor":
+                    await session.set_auditor(str(msg.get("value", "")))
+                elif kind == "mode":
+                    await session.set_mode(str(msg.get("mode", "")))
+                elif kind == "plan_answer":
+                    asyncio.create_task(session.answer_plan(str(msg.get("id", "")), str(msg.get("answer", ""))[:2000],
+                                                            msg.get("context") or {}))
         except WebSocketDisconnect:
             session.sockets.discard(ws)
 

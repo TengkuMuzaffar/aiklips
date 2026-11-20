@@ -1,4 +1,4 @@
-"""Audit an edit with code: hook, readability, safe zones, overlaps, typography, colour, pacing,
+"""Audit an edit with code: hook, readability, text contrast, safe zones, overlaps, typography, colour, pacing,
 footage use, audio loudness and justification. No AI; every finding carries its evidence.
 
     report = audit(project, pdir)          # {"score", "passed", "counts", "findings": [...]}
@@ -20,10 +20,6 @@ from . import media
 from .project import Layer, Project, VeditError, parse_pos
 
 SEVERITY_COST = {"must-fix": 15, "should-fix": 6, "note": 1}
-SAFE_X = (0.08, 0.88)
-SAFE_Y = (0.12, 0.75)
-CAPTION_MAX_Y = 0.82
-SLACK = 0.02  # a box may poke this far (fraction of the canvas) past a safe-zone edge
 LOUDNESS = (-18.0, -10.0)
 MAX_TRUE_PEAK = -0.5
 
@@ -50,7 +46,9 @@ def text_box(p: Project, layer: Layer) -> tuple[float, float, float, float] | No
     from .ops.text import render_text
 
     if layer.type == "text":
-        sample = layer.text or ""
+        from .ops.motion import shown_text
+
+        sample = shown_text(layer)  # a counter's final value
     elif layer.type == "captions" and layer.words:
         n = max(1, layer.words_per_group)
         groups = [" ".join(w.text for w in layer.words[i:i + n]) for i in range(0, len(layer.words), n)]
@@ -109,35 +107,38 @@ def check_readability(p: Project, pdir: Path) -> list[dict]:
 
 
 def check_layout(p: Project, pdir: Path) -> list[dict]:
-    """Safe zone per text layer, and overlaps between text/captions on screen at the same time."""
+    """Safe zone of the project's platform for every visible layer (text, captions, stickers, shapes, picture-in-
+    picture; not full-frame backgrounds), measured by code (ops/safezone.py), and overlaps between text/captions on
+    screen at the same time."""
+    from .ops import safezone
+
     out = []
     total = p.duration
+    z = safezone.zone(p)
+    where = "the " + (z.name if z.key != "title" else "title-safe area") + (" safe zone" if z.key != "title" else "")
+    for l in safezone.checked_layers(p):
+        try:
+            probs, worst, b = safezone.problems(p, pdir, l, z)
+        except VeditError:
+            continue
+        if not probs:
+            continue
+        W, H = p.canvas.width, p.canvas.height
+        off = b[0] < 0 or b[1] < 0 or b[2] > W or b[3] > H
+        out.append(_finding("must-fix" if off or worst > 0.05 else "should-fix", "safe-zone",
+                            f"{l.id} ({l.type}) is outside {where}{' and cut off' if off else ''}: " + "; ".join(probs) + ".",
+                            l.start, f"box x {b[0]:.0f}-{b[2]:.0f}px, y {b[1]:.0f}-{b[3]:.0f}px; " + z.describe(W, H),
+                            f"vedit safe fix {l.id}"))
     boxes: list[tuple[Layer, tuple]] = []
     for l in p.layers:
-        if l.type not in ("text", "captions"):
+        if l.type not in ("text", "captions") or l.hidden:
             continue
         try:
             box = text_box(p, l)
         except VeditError:
             continue
-        if box is None:
-            continue
-        boxes.append((l, box))
-        x0, y0, x1, y1 = box
-        ymax = CAPTION_MAX_Y if l.type == "captions" else SAFE_Y[1]
-        problems, worst = [], 0.0
-        for over, text in ((SAFE_X[0] - x0, f"left edge at {x0:.0%}"), (x1 - SAFE_X[1], f"right edge at {x1:.0%} (under the app buttons)"),
-                           (SAFE_Y[0] - y0, f"top at {y0:.0%}"), (y1 - ymax, f"bottom at {y1:.0%} (under the caption/music bar)")):
-            if over > SLACK:
-                problems.append(text)
-                worst = max(worst, over)
-        if problems:
-            off = x0 < 0 or x1 > 1 or y0 < 0 or y1 > 1
-            out.append(_finding("must-fix" if off or worst > 0.05 else "should-fix", "safe-zone", f"{l.id} is outside the safe zone{' and cut off' if off else ''}: "
-                                + ", ".join(problems) + ".", l.start, f"box x {x0:.0%}-{x1:.0%}, y {y0:.0%}-{y1:.0%}",
-                                f"vedit text edit {l.id} --max-width 820 && vedit layer set {l.id} --x 48%"
-                                if (x1 - x0) > (SAFE_X[1] - SAFE_X[0]) * 0.9
-                                else f"vedit layer set {l.id} --x 48% --y {'72%' if l.type == 'captions' else '30%'}"))
+        if box is not None:
+            boxes.append((l, box))
     for i, (a, ba) in enumerate(boxes):
         for b, bb in boxes[i + 1:]:
             t0, t1 = max(a.start, b.start), min(_end(a, total), _end(b, total))
@@ -147,6 +148,20 @@ def check_layout(p: Project, pdir: Path) -> list[dict]:
                 out.append(_finding("must-fix", "overlap", f"{a.id} and {b.id} overlap on screen from {t0:.1f}s to {t1:.1f}s.",
                                     t0, f"boxes intersect: {a.id} y {ba[1]:.0%}-{ba[3]:.0%}, {b.id} y {bb[1]:.0%}-{bb[3]:.0%}",
                                     f"vedit layer set {b.id} --y {'22%' if bb[1] > 0.5 else '62%'}"))
+    return out
+
+
+def check_contrast(p: Project, pdir: Path, preview: Path | None = None) -> list[dict]:
+    """Text a person can't read against what is really behind it (ops/contrast.py): WCAG contrast of the letters on
+    the shape / box / canvas under them, or on the rendered pixels around them when footage or images are behind."""
+    from .ops import contrast
+
+    out = []
+    for r in contrast.check(p, pdir, preview):
+        if r.severity:
+            out.append(_finding(r.severity, "contrast", contrast.message(r), r.t,
+                                f"fill {r.fill.upper()} vs {r.behind_hex} behind ({r.behind}): {r.ratio:.2f}:1, "
+                                f"needs {r.need:g}:1", r.suggest))
     return out
 
 
@@ -171,7 +186,7 @@ def check_color(p: Project, pdir: Path) -> list[dict]:
     from .ops import color
 
     out = []
-    video = [c for c in p.clips if p.sources[c.source].has_video and not c.gap]
+    video = [c for c in p.clips if p.sources[c.source].has_video and not _plain(p, c)]
     if len(video) < 2:
         return out
     looks = {(c.grade.look if c.grade else None) for c in video}
@@ -198,12 +213,17 @@ def check_color(p: Project, pdir: Path) -> list[dict]:
     return out
 
 
+def _plain(p: Project, c) -> bool:
+    """A gap, or a Design background clip (the canvas-colour file played as a clip): no footage to judge."""
+    return c.gap or Path(p.sources[c.source].path).name.startswith(".gap-")
+
+
 def check_pacing(p: Project, pdir: Path) -> list[dict]:
     out = []
     target = p.notes.target_shot_s if p.notes else None
     limit = max(1.5, 3 * target) if target else 6.0
     for c, start in zip(p.clips, p.clip_starts()):
-        if c.duration > limit and not c.gap:
+        if c.duration > limit and not _plain(p, c):
             out.append(_finding("note", "pacing", f"Clip {c.id} holds for {c.duration:.1f}s"
                                 + (f", over 3x the {target:g}s target shot." if target else "."), start,
                                 f"{c.duration:.2f}s > {limit:.1f}s", f"vedit split --at {start + c.duration / 2:.2f}"))
@@ -216,13 +236,52 @@ def check_footage(p: Project, pdir: Path) -> list[dict]:
     for i, a in enumerate(p.clips):
         for j in range(i + 1, len(p.clips)):
             b = p.clips[j]
-            if a.source != b.source or a.gap:
+            if a.source != b.source or _plain(p, a):
                 continue
             ov = min(a.out, b.out) - max(a.in_, b.in_)
             if ov > 0.3:
                 out.append(_finding("should-fix", "footage", f"Clips {a.id} and {b.id} reuse the same footage "
                                     f"({max(a.in_, b.in_):.1f}-{min(a.out, b.out):.1f}s of {a.source}).", starts[j],
                                     f"{ov:.1f}s shared", f"vedit remove-clip {b.id}"))
+    return out
+
+
+def check_masks(p: Project, pdir: Path) -> list[dict]:
+    """Every tracked mask, checked like `vedit mask check` (motion jumps, SAM re-outline on sample frames). Results are
+    cached per mask setup, so an unchanged mask costs nothing on the next audit."""
+    import hashlib
+    import json
+
+    from .ops import maskcheck, sam
+    from .ops.effects import cache_dir
+    from .render.runner import preview_dir
+
+    out = []
+    starts = p.clip_starts()
+    for c, s0 in zip(p.clips, starts):
+        for e in c.effects:
+            if e.type != "mask" or not e.params.get("track", True):
+                continue
+            mid = e.params.get("id")
+            verify = sam.installed()
+            key = hashlib.sha1(json.dumps([c.source, c.in_, c.out, c.speed, s0, e.params, verify, maskcheck.VERSION],
+                                          sort_keys=True, default=str).encode()).hexdigest()[:16]
+            cache = cache_dir(pdir) / f"maskcheck-{key}.json"
+            if cache.exists():
+                r = json.loads(cache.read_text())
+            else:
+                r = maskcheck.check(pdir, p, c, e, preview_dir(pdir) / f"maskcheck-{mid}.jpg", lambda m: None, verify)
+                cache.write_text(json.dumps(r))
+            if r["verdict"] == "good":
+                continue
+            times = ", ".join(f"{it['t']:.2f}s" for it in r["issues"][:4])
+            first = r["issues"][0]["t"] if r["issues"] else None
+            out.append(_finding("must-fix" if r["verdict"] == "poor" else "should-fix", "mask",
+                                f"Mask {mid} doesn't hold on the object" + (f" at {times}" if times else "")
+                                + (f" ({r['issues'][0]['detail']})" if r["issues"] else "") + ".", first,
+                                f"verdict {r['verdict']}; covers the object {r['agreement'].get('cover_min')} at worst",
+                                f"vedit mask check {mid} (Read its sheet), then vedit mask fix {mid} --at <first wrong time> "
+                                f"--space source --box <where it really is>"))
     return out
 
 
@@ -245,16 +304,19 @@ def loudness(path: Path) -> tuple[float | None, float | None]:
     return num(_I), num(_PEAK)
 
 
+def _preview(p: Project, pdir: Path) -> Path:
+    from .render.runner import render_preview
+
+    return Path(render_preview(p, pdir, progress=False)["output"])
+
+
 def check_audio(p: Project, pdir: Path, render: bool = True) -> list[dict]:
     if not render or not p.clips:
         return []
-    from .render.runner import render_preview
-
     try:
-        res = render_preview(p, pdir, progress=False)
+        lufs, peak = loudness(_preview(p, pdir))
     except VeditError as e:
         return [_finding("must-fix", "render", f"The edit does not render: {e}")]
-    lufs, peak = loudness(Path(res["output"]))
     out = []
     if lufs is None:
         return out
@@ -279,7 +341,7 @@ def check_justification(p: Project, pdir: Path) -> list[dict]:
     if not beats:
         return out
     for c in p.clips:
-        if not c.gap and not (c.meta and c.meta.why):
+        if not _plain(p, c) and not (c.meta and c.meta.why):
             out.append(_finding("note", "justification", f"Clip {c.id} has no stated reason.", starts[c.id], "",
                                 f'vedit why {c.id} "<what it shows and which beat it serves>" --beat <id>'))
     used = {c.meta.beat for c in p.clips if c.meta and c.meta.beat}
@@ -297,10 +359,101 @@ def check_sound(p: Project, pdir: Path) -> list[dict]:
     return sound.check_sound(p, pdir)
 
 
+def check_motion(p: Project, pdir: Path) -> list[dict]:
+    """Design videos (motion graphics on a plain background): a stretch of 3s+ where nothing moves looks frozen."""
+    from .ops import animate as anim
+
+    if not p.clips or not all(_plain(p, c) for c in p.clips):
+        return []
+
+    def moving(t: float) -> bool:
+        for l in p.layers:
+            end = p.duration if l.end is None else l.end
+            if l.hidden or not (l.start <= t < end):
+                continue
+            if l.type == "video" or l.keyframes:
+                return True
+            if l.type == "text" and l.split != "none" and t - l.start < l.split_dur + l.stagger * len(l.text or ""):
+                return True
+            for pr in l.presets:
+                phase = anim.PRESETS.get(pr.name, ("loop",))[0]
+                d = anim._preset_duration(l, pr) if pr.name in anim.PRESETS else 0
+                if phase == "loop" or (phase == "in" and t - l.start < d) or (phase == "out" and end - t < d):
+                    return True
+        return False
+
+    out, run_start, t, step = [], None, 0.0, 0.25
+    while t <= p.duration:
+        if moving(t) or t >= p.duration - step:
+            if run_start is not None and t - run_start >= 3.0:
+                out.append(_finding("should-fix", "motion", f"Nothing moves from {run_start:.1f}s to {t:.1f}s.", run_start,
+                                    f"{t - run_start:.1f}s with no animated layer",
+                                    "give a layer there a loop preset (bob, pulse, float) or a keyframe path"))
+            run_start = None
+        elif run_start is None:
+            run_start = t
+        t = round(t + step, 3)
+    return out
+
+
+def check_style(p: Project, pdir: Path) -> list[dict]:
+    """The project's motion style (design/styles.py): presets, scene transitions, fonts, easing and colour count
+    must stay inside its rules."""
+    if not p.motion_style:
+        return []
+    from .design import styles
+
+    try:
+        s = styles.get(p.motion_style)
+    except Exception:
+        return [_finding("note", "style", f"Unknown motion style '{p.motion_style}'.", None, "", "vedit style none")]
+    out = []
+    eases = {s.ease, "linear", "step"}
+    for l in p.layers:
+        if l.hidden:
+            continue
+        bad = [pr.name for pr in l.presets if pr.name in s.forbid]
+        if bad:
+            out.append(_finding("should-fix", "style", f"{l.id} uses {', '.join(bad)}, which {s.name} never does.", l.start,
+                                f"style {s.key}: never {', '.join(s.forbid)}",
+                                f"vedit animate preset {l.id} {s.enter[0]}  (and remove {', '.join(bad)})"))
+        off = sorted({k.ease for k in l.keyframes if k.ease not in eases})
+        if l.type == "text" and l.split != "none" and l.split_ease not in eases:
+            off.append(l.split_ease)
+        if off:
+            out.append(_finding("note", "style", f"{l.id} eases with {', '.join(off)}; {s.name} moves on '{s.ease}'.", l.start,
+                                "", f"use ease '{s.ease}' on its keyframes / `vedit motion set {l.id} --ease {s.ease}`"))
+        if l.type in ("text", "captions") and l.style.font and s.fonts and l.style.font not in s.fonts:
+            out.append(_finding("should-fix", "style", f"{l.id} is in font {l.style.font}; {s.name} uses {', '.join(s.fonts)}.",
+                                l.start, "", f"vedit text edit {l.id} --font {s.fonts[0]}"))
+        if "glow" in s.forbid and l.type in ("text", "captions") and l.style.glow_color:
+            out.append(_finding("should-fix", "style", f"{l.id} glows; {s.name} has no glow.", l.start, "",
+                                f"vedit text edit {l.id} --glow none"))
+    for sc in p.scenes:
+        if sc.transition not in s.transitions:
+            out.append(_finding("should-fix", "style", f"Scene {sc.id} enters with a {sc.transition}; {s.name} uses "
+                                f"{', '.join(s.transitions)}.", None, "", f"vedit scene set {sc.id} --transition {s.transitions[0]}"))
+    cols: set[str] = set()
+    for l in p.layers:
+        if l.hidden:
+            continue
+        if l.type == "shape" and l.fill and not (l.width and l.width >= p.canvas.width * 0.9 and (l.height or 0) >= p.canvas.height * 0.9):
+            cols.add(l.fill.upper()[:7])
+        if l.type == "text":
+            cols.add(l.style.color.upper()[:7])
+        if l.type == "chart" and l.chart:
+            n = len(l.chart.items)
+            cols |= {(it.color or l.chart.colors[i % len(l.chart.colors)]).upper()[:7] for i, it in enumerate(l.chart.items[:n])}
+    if len(cols) > s.max_colors + 1:  # + the text colour
+        out.append(_finding("should-fix", "style", f"{len(cols)} colours on screen; {s.name} keeps to {s.max_colors} plus text.",
+                            None, ", ".join(sorted(cols)), f"use {s.text} and {', '.join(s.accents)}"))
+    return out
+
+
 CHECKS: list[tuple[str, Callable]] = [
     ("hook", check_hook), ("readability", check_readability), ("layout", check_layout), ("typography", check_typography),
     ("colour", check_color), ("pacing", check_pacing), ("footage", check_footage), ("justification", check_justification),
-    ("sound", check_sound),
+    ("sound", check_sound), ("motion", check_motion), ("style", check_style),
 ]
 
 
@@ -311,10 +464,25 @@ def audit(p: Project, pdir: Path, render: bool = True) -> dict:
             findings += fn(p, pdir)
         except Exception as e:  # one broken check must not hide the others
             findings.append(_finding("note", "audit", f"Check '{name}' could not run: {e}"))
+    if render:  # masks are tracked by the preview render; without it there's nothing to check yet
+        try:
+            findings += check_masks(p, pdir)
+        except Exception as e:
+            findings.append(_finding("note", "audit", f"Check 'masks' could not run: {e}"))
     try:
         findings += check_audio(p, pdir, render)
     except Exception as e:
         findings.append(_finding("note", "audit", f"Check 'audio' could not run: {e}"))
+    try:  # after the audio check: the preview it rendered is reused for the pixels behind text over footage
+        preview = None
+        if render and p.clips:
+            try:
+                preview = _preview(p, pdir)
+            except VeditError:
+                pass
+        findings += check_contrast(p, pdir, preview)
+    except Exception as e:
+        findings.append(_finding("note", "audit", f"Check 'contrast' could not run: {e}"))
     order = {"must-fix": 0, "should-fix": 1, "note": 2}
     findings.sort(key=lambda f: (order[f["severity"]], f["at"] if f["at"] is not None else 1e9))
     for i, f in enumerate(findings, 1):

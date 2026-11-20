@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 5  # 4 also has Clip.zoom_ease (additive, default linear); 5: 3D object layers (obj3d, yaw / pitch / roll)
 
 
 class VeditError(Exception):
@@ -132,6 +132,7 @@ class EditNotes(_Model):
     beats: list[Beat] = Field(default_factory=list)
     target_shot_s: float | None = None  # pacing the edit aims for (from the reference)
     style: str = ""  # one-line summary of the target style (Style DNA), for reviewers
+    refs: list[int] = Field(default_factory=list)  # reference videos this edit should look like: the audit compares them
 
 
 class Clip(_Model):
@@ -146,6 +147,7 @@ class Clip(_Model):
     focus_y: float = 0.5
     zoom: float = 1.0
     zoom_to: float | None = None  # animated zoom (Ken Burns) from `zoom` to `zoom_to`
+    zoom_ease: str = "linear"  # how zoom -> zoom_to moves: linear | ease_out | ease_in | ease_in_out | snap (ZOOM_EASES)
     effects: list[Effect] = Field(default_factory=list)
     transition: Transition | None = None  # transition *into* this clip from the previous one
     grade: Grade | None = None  # colour correction + look (`vedit color ...`)
@@ -162,6 +164,26 @@ class Clip(_Model):
         return (self.out - self.in_) / self.speed
 
 
+# easing of a clip's animated zoom: (python fn of p 0..1, the same as an FFmpeg expression of P)
+ZOOM_EASES: dict[str, tuple[Callable[[float], float], str]] = {
+    "linear": (lambda p: p, "P"),
+    "ease_out": (lambda p: 1 - (1 - p) ** 3, "(1-pow(1-P,3))"),
+    "ease_in": (lambda p: p**3, "pow(P,3)"),
+    "ease_in_out": (lambda p: 4 * p**3 if p < 0.5 else 1 - (-2 * p + 2) ** 3 / 2,
+                    "if(lt(P,0.5),4*pow(P,3),1-pow(-2*P+2,3)/2)"),
+    "snap": (lambda p: 1 - (1 - p) ** 5, "(1-pow(1-P,5))"),  # gets there almost at once, then settles
+}
+
+
+def zoom_at(clip: "Clip", u: float) -> float:
+    """A clip's zoom at fraction u (0..1) through it."""
+    z = max(1.0, clip.zoom)
+    if clip.zoom_to:
+        fn = ZOOM_EASES.get(clip.zoom_ease, ZOOM_EASES["linear"])[0]
+        z = z + (max(1.0, clip.zoom_to) - z) * fn(min(max(u, 0.0), 1.0))
+    return z
+
+
 class Keyframe(_Model):
     t: float  # seconds, relative to the layer start
     x: float | str | None = None
@@ -169,8 +191,123 @@ class Keyframe(_Model):
     scale: float | None = None
     rotation: float | None = None
     opacity: float | None = None
-    reveal: float | None = None  # 0..1 fraction of text shown (typewriter)
-    ease: str = "ease_in_out"  # easing used from this keyframe to the next
+    reveal: float | None = None  # 0..1 fraction shown (text: typewriter; other layers: wipe from the left)
+    w: float | None = None  # shape / image / video width in canvas px (stretch; shapes are redrawn crisp)
+    h: float | None = None  # shape height in canvas px
+    sx: float | None = None  # non-uniform stretch (multiplies the drawn width / height, any layer)
+    sy: float | None = None
+    fill: str | None = None  # shape fill colour, blended in RGB between keyframes
+    # build-up progress, 0..1 (ops/motion.py): draw = how much of a shape's outline / a chart is drawn (1 = all),
+    # morph = how far a shape has turned into its `morph_to` kind, count = how far a counter has counted (1 = `to`)
+    draw: float | None = None
+    morph: float | None = None
+    count: float | None = None
+    # 3D objects (obj3d layers): turn in degrees around the object's own up (yaw), side (pitch) and front (roll) axes
+    yaw: float | None = None
+    pitch: float | None = None
+    roll: float | None = None
+    # easing used from this keyframe to the next: a name (ease_out, snap, expo_out ...) or "cubic-bezier(a,b,c,d)"
+    ease: str = "ease_in_out"
+
+
+class Counter(_Model):
+    """A text layer that counts: its text is `from` -> `to` as the `count` progress goes 0 -> 1 (`count_up` preset)."""
+    from_: float = Field(default=0.0, alias="from")
+    to: float = 100.0
+    decimals: int = 0
+    prefix: str = ""
+    suffix: str = ""
+    separator: str = ","  # thousands separator ("" = none)
+
+
+class ChartItem(_Model):
+    label: str = ""
+    value: float = 0.0
+    color: str | None = None  # None = the chart's palette
+
+
+class Chart(_Model):
+    """A chart layer (ops/chart.py), grown by the `draw` progress (`draw_in` preset): bars rise one after another,
+    a line draws itself, a donut sweeps round, and the values roll up with them."""
+    kind: Literal["bar", "hbar", "line", "donut"] = "bar"
+    items: list[ChartItem] = Field(default_factory=list)
+    colors: list[str] = Field(default_factory=lambda: ["#22D3EE", "#A78BFA", "#F472B6", "#FBBF24", "#34D399", "#60A5FA"])
+    max: float | None = None  # top of the value axis (None = the largest value)
+    show_values: bool = True
+    show_labels: bool = True
+    prefix: str = ""
+    suffix: str = ""
+    decimals: int = 0
+    font: str | None = None
+    text_color: str = "#FFFFFF"
+    text_size: int = 40
+    radius: int = 12  # bar corners
+    gap: float = 0.35  # space between bars, as a fraction of each bar's slot
+    line_width: int = 10  # line chart stroke / donut ring thickness (0 = a pie)
+    stagger: float = 0.5  # how much each item waits for the previous one (0 = all together, 1 = one after another)
+
+
+class IsoBlock(_Model):
+    """A box in an isometric scene, in grid units: x / y on the floor, z up."""
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    w: float = 1.0  # along x
+    d: float = 1.0  # along y
+    h: float = 1.0  # up
+    color: str = "#7C9CFF"
+
+
+class IsoItem(_Model):
+    """A placed object from the iso item library (ops/iso_items.py: trees, buildings, cars, desks, people, signs ...),
+    in grid units. `color` / `color2` override its theme colours; `params` are its own settings (floors, text ...)."""
+    kind: str
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    rot: int = 0  # quarter turns (0-3)
+    size: float = 1.0  # scale
+    color: str | None = None
+    color2: str | None = None
+    label: str | None = None  # floating label above it
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class IsoScene(_Model):
+    """An isometric miniature world (ops/iso.py): its items (and raw blocks) build up one after another as `draw`
+    goes 0 -> 1."""
+    items: list[IsoItem] = Field(default_factory=list)
+    blocks: list[IsoBlock] = Field(default_factory=list)
+    theme: str = "pastel"  # colour palette for every item (ops/iso_items.py THEMES)
+    light: float = 0.25  # how much brighter the tops / darker the sides are (0..0.6)
+    outline: str | None = "#00000030"  # thin edge lines (None = none)
+    build: Literal["drop", "grow", "pop"] = "drop"  # how each item arrives
+
+
+OBJ3D_KINDS = ("text", "car", "truck", "bus", "plane", "rocket", "dog", "cat", "bird", "fish", "cube", "sphere", "gem", "coin",
+               "heart", "star", "model")
+
+
+class Obj3D(_Model):
+    """A 3D object (ops/render3d.py): generated from a recipe (ops/items3d.py), never stored as a file, except
+    `kind="model"` (a .glb / .obj / .stl the user brings). Drawn low-poly, flat-shaded, in perspective. Its turn is
+    yaw / pitch / roll here plus the layer's keyframes / presets (spin3d, travel). Front = +x (cars drive, animals walk
+    that way at yaw 0), up = +y."""
+    kind: str = "cube"
+    text: str | None = None  # kind text
+    font: str | None = None  # kind text (a font key from `vedit fonts`)
+    src: str | None = None  # kind model: a .glb / .gltf / .obj / .stl path
+    color: str | None = None  # main colour (None = the recipe's own)
+    color2: str | None = None  # second colour (windows, belly, sides of 3D text ...)
+    depth: float = 0.35  # text: how deep the letters are, as a fraction of their height
+    params: dict[str, Any] = Field(default_factory=dict)  # the recipe's own settings (`vedit 3d kinds`)
+    yaw: float = -25.0  # resting turn in degrees (keyframes / presets add to it)
+    pitch: float = 18.0
+    roll: float = 0.0
+    fov: float = 30.0  # camera lens: small = flat / telephoto, large = strong perspective
+    light: float = 0.45  # how much the light shapes it (0 = flat colour, 1 = deep shadows)
+    outline: str | None = "#00000038"  # thin edge lines (None = none)
+    gait: bool = True  # animals / vehicles move their legs / wheels / wings / propellers over time
 
 
 class Preset(_Model):
@@ -199,6 +336,11 @@ class TextStyle(_Model):
     glow_size: int = 18
     gradient: list[str] | None = None  # fill top -> bottom, e.g. ["#FFE600", "#FF6A00"]
     look: str | None = None  # name of the text look this style came from (informational)
+    bold: bool = False  # heavier letters (a fill-colour stroke on top of the font's own weight)
+    italic: bool = False  # slanted (sheared) letters
+    underline: bool = False
+    strike: bool = False  # strikethrough
+    list_style: Literal["none", "bullet", "number"] = "none"  # each line (paragraph) as a list item
 
 
 class Word(_Model):
@@ -208,7 +350,9 @@ class Word(_Model):
 
 
 BLEND_MODES = ("normal", "screen", "multiply", "overlay", "add", "lighten", "darken")
-SHAPE_KINDS = ("rect", "ellipse", "line", "arrow")
+SHAPE_KINDS = ("rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
+               "arrow", "path")
+SCENE_TRANSITIONS = ("cut", "fade", "slide", "zoom", "pop", "wipe")
 
 
 class Layer(_Model):
@@ -217,10 +361,13 @@ class Layer(_Model):
     order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape", "adjust"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart", "glass", "iso", "obj3d"]
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
+    # on the video track itself (equal tracks): in a gap or past the clips, never over a clip; drawn at the video
+    # track's height. `track` then just mirrors main_z (normalize_tracks)
+    on_video: bool = False
     start: float = 0.0  # timeline seconds
     end: float | None = None  # None = until the end of the timeline
     x: float | str = "50%"  # centre position, canvas px or "NN%"
@@ -228,6 +375,9 @@ class Layer(_Model):
     scale: float = 1.0
     rotation: float = 0.0
     opacity: float = 1.0
+    sx: float = 1.0  # non-uniform stretch of the drawn layer (1 = as drawn); shapes stretch with width / height instead
+    sy: float = 1.0
+    scene: str | None = None  # design projects: the scene (Project.scenes) this layer belongs to; None = whole video
     keyframes: list[Keyframe] = Field(default_factory=list)
     presets: list[Preset] = Field(default_factory=list)
     text: str | None = None
@@ -236,6 +386,20 @@ class Layer(_Model):
     width: int | None = None  # image width in canvas px
     words: list[Word] = Field(default_factory=list)
     words_per_group: int = 3
+    # kinetic text (ops/kinetic.py): animate the text by word / letter / line, each piece `split_anim`-ing in
+    # `stagger` seconds after the previous one, over `split_dur` seconds with `split_ease`
+    split: Literal["none", "word", "letter", "line"] = "none"
+    split_anim: Literal["rise", "drop", "fade", "pop", "mask_up", "slide", "type"] = "rise"
+    stagger: float = 0.06
+    split_dur: float = 0.45
+    split_ease: str = "ease_out"
+    counter: Counter | None = None  # a counting number (text layers)
+    group: str | None = None  # the LayerGroup it belongs to (Project.groups)
+    step_fps: int | None = None  # motion in steps ("on twos": 12) like stop motion / paper cut-out; None = smooth
+    chart: Chart | None = None  # chart layers
+    glass_blur: float = 22.0  # glass layers: how frosted the picture behind is (px; `fill` = its tint, `radius` = corners)
+    iso: IsoScene | None = None  # iso layers: blocks of a little isometric world (ops/iso.py)
+    obj3d: Obj3D | None = None  # obj3d layers: a 3D object (ops/render3d.py); `width` = the size of its turning box
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
     # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
     blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"
@@ -258,12 +422,31 @@ class Layer(_Model):
     chroma: str | None = None  # key colour made transparent, e.g. "#00FF00"
     chroma_similarity: float = 0.25
     # shape layers
-    shape: Literal["rect", "ellipse", "line", "arrow"] = "rect"
+    shape: Literal["rect", "ellipse", "triangle", "diamond", "polygon", "star", "ring", "heart", "bubble", "blob", "line",
+                   "arrow", "path"] = "rect"
+    # path shapes: points in the box as 0..1 fractions [[x, y], ...]; open paths are strokes (lines, brackets,
+    # underlines, a drawing), closed ones are filled outlines
+    path: list[list[float]] | None = None
+    closed: bool = False
+    morph_to: str | None = None  # shape kind this shape turns into as `morph` goes 0 -> 1 (keyframes)
     height: int | None = None  # shape height in canvas px (line / arrow: thickness)
     fill: str | None = "#FFFFFF"  # shape fill (None = outline only, with border_width)
+    fill_gradient: list[str] | None = None  # shape fill as a linear gradient (2+ colours), replaces `fill`
+    gradient_angle: float = 90.0  # degrees: 0 = left -> right, 90 = top -> bottom
+    sides: int = 6  # polygon
+    points: int = 5  # star
+    inner: float = 0.5  # star: inner radius / outer; ring: hole size / outer
     # adjustment layers: filters and a colour grade applied to everything under them (clips and the layers below)
     effects: list[Effect] = Field(default_factory=list)
     grade: Grade | None = None
+
+
+class LayerGroup(_Model):
+    """Layers that belong together (a signature effect's parts). The timeline shows them as one row with one block
+    while `collapsed`; moving the block moves them all (ops/groups.py)."""
+    id: str
+    name: str = "Group"
+    collapsed: bool = True
 
 
 class MusicTrack(_Model):
@@ -288,8 +471,24 @@ class Marker(_Model):
     color: str = "#FBBF24"
 
 
+class Scene(_Model):
+    """A design project's scene ("page"): a stretch of the timeline. Scenes play back to back in list order; a scene's
+    start is the sum of the durations before it (`Project.scene_starts`). Layers point at their scene with
+    `Layer.scene`, and scene ops (`ops/scenes.py`) move those layers' absolute times along when scenes change."""
+
+    id: str
+    name: str = ""
+    dur: float = 5.0
+    background: str | None = None  # hex; drawn as the scene's bottom full-canvas layer (`bg_layer`)
+    bg_layer: str | None = None
+    transition: Literal["cut", "fade", "slide", "zoom", "pop", "wipe"] = "cut"  # how this scene's layers enter
+    notes: str = ""  # storyboard text: what happens / is said in this scene
+    why: str | None = None
+
+
 class Project(_Model):
     version: int = SCHEMA_VERSION
+    kind: Literal["edit", "design"] = "edit"  # design = made in the Design studio: scenes of animated elements
     name: str = "untitled"
     canvas: Canvas = Field(default_factory=Canvas)
     sources: dict[str, Source] = Field(default_factory=dict)
@@ -299,11 +498,46 @@ class Project(_Model):
     notes: EditNotes | None = None
     markers: list[Marker] = Field(default_factory=list)
     main_hidden: bool = False  # main video track hidden (eye): its picture becomes the background; sound still plays
+    # where the clip track (the video track: `clips`, played back to back) sits among the layer tracks: the number of
+    # layer tracks drawn UNDER it. 0 = the video is the bottom track (the old fixed "main track"); layers on tracks
+    # < main_z show through wherever the video is transparent (gaps, letterbox bars, keyed green screen). All tracks
+    # are equal otherwise: the timeline is as long as whatever ends last, and something must start at 0s
+    main_z: int = 0
+    # the social app this video is for (tiktok | reels | shorts | all): its safe zone is where text, stickers and
+    # buttons go (ops/safezone.py; the editor's guides, `vedit safe`, the audit). None = "all apps" on a portrait canvas
+    platform: str | None = None
+    # layer groups (one per effect: a chat, a checklist ...): shown as one collapsible row on the timeline
+    groups: list[LayerGroup] = Field(default_factory=list)
+    # motion style (design/styles.py): a look as numbers (easing, timing, palette, fonts) the AI follows and the
+    # audit checks; None = no style rules
+    motion_style: str | None = None
+    scenes: list[Scene] = Field(default_factory=list)  # design projects only
+
+    def scene_starts(self) -> list[float]:
+        starts, t = [], 0.0
+        for sc in self.scenes:
+            starts.append(round(t, 4))
+            t += sc.dur
+        return starts
+
+    def scene(self, scene_id: str) -> Scene:
+        for sc in self.scenes:
+            if sc.id == scene_id:
+                return sc
+        raise VeditError(f"No scene '{scene_id}'. Scenes: {', '.join(s.id for s in self.scenes) or 'none'}")
 
     # ---- timeline helpers -------------------------------------------------
     @property
-    def duration(self) -> float:
+    def clips_end(self) -> float:
+        """Where the video track's clips end (its gaps included)."""
         return sum(c.duration for c in self.clips)
+
+    @property
+    def duration(self) -> float:
+        """The timeline's length: whatever ends last, clips or a layer with an end time (open-ended layers, end=None,
+        run to this length rather than setting it)."""
+        ends = [l.end for l in self.layers if l.end is not None and not l.hidden]
+        return max([self.clips_end, *ends]) if ends else self.clips_end
 
     def clip_starts(self) -> list[float]:
         starts, t = [], 0.0
@@ -331,6 +565,7 @@ class Project(_Model):
             + [m.id for m in self.music]
             + [k.id for k in self.markers]
             + list(self.sources)
+            + [s.id for s in self.scenes]
         )
         n = 0
         for u in used:
@@ -375,7 +610,12 @@ def find_project_dir(explicit: str | None = None) -> Path:
 
 # project.json format migrations: MIGRATIONS[n] turns a version-n dict into version n+1. When the format changes,
 # bump SCHEMA_VERSION and add a step here, so projects saved by older versions keep opening.
-MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+MIGRATIONS: dict[int, Callable[[dict], dict]] = {
+    1: lambda d: d,  # 2: design projects (kind, scenes), stretch (sx / sy), more shapes, keyframed size / fill
+    2: lambda d: d,  # 3: equal tracks: `main_z` (video track position; default 0 = bottom), timeline = longest track
+    3: lambda d: d,  # 4: motion: draw-on / morph / counters / kinetic text / charts (`draw`, `morph`, `count` keyframes)
+    4: lambda d: d,  # 5: 3D objects (`Layer.obj3d`, type "obj3d") and `yaw` / `pitch` / `roll` keyframes
+}
 
 
 def migrate(data: dict) -> dict:
@@ -428,11 +668,21 @@ def normalize_tracks(project: Project) -> None:
     - tracks are numbered 0..n-1 with no gaps, and project.layers is sorted by track (stable), so the list order the
       renderers use (later = on top) always matches the timeline rows.
     """
-    layers = project.layers
+    gids = {g.id for g in project.groups}
+    for l in project.layers:
+        if l.group and l.group not in gids:
+            l.group = None
+    used = {l.group for l in project.layers if l.group}
+    project.groups = [g for g in project.groups if g.id in used]  # a group whose layers are all gone goes too
+    vids = [l for l in project.layers if l.on_video]  # on the video track: not in the rows
+    layers = [l for l in project.layers if not l.on_video]
     top = max((l.track for l in layers if l.track is not None), default=-1)
     for l in layers:
         if l.track is None:
-            if top >= 0 and not any(o.track == top and spans_overlap(_span(l), _span(o)) for o in layers if o is not l):
+            # (drawn on top of everything: never onto a track under the video track)
+            # a grouped layer only shares a track with its own group (so the group's tracks can collapse into one row)
+            if top >= max(0, project.main_z) and not any(o.track == top and (spans_overlap(_span(l), _span(o)) or o.group != l.group)
+                                                         for o in layers if o is not l):
                 l.track = top
             else:
                 top += 1
@@ -456,9 +706,14 @@ def normalize_tracks(project: Project) -> None:
                 pos[l.id] = t + k / (len(placed) + 1)
     order = sorted(set(pos.values()))
     rank = {v: i for i, v in enumerate(order)}
+    # the video track keeps its place: as many tracks under it as there were before renumbering
+    project.main_z = sum(1 for v in order if v < project.main_z - 1e-9) if order else 0
     for l in layers:
         l.track = rank[pos[l.id]]
-    layers.sort(key=lambda l: l.track)
+    for l in vids:
+        l.track = project.main_z
+    # list order = drawing order: tracks under the video, the video track's own layers, then the tracks over it
+    project.layers.sort(key=lambda l: l.track - 0.5 if l.on_video else l.track)
 
 
 def normalize_gaps(project: Project) -> None:
@@ -478,6 +733,10 @@ def normalize_gaps(project: Project) -> None:
 
 
 def save(pdir: Path, project: Project) -> None:
+    if project.kind == "design" and project.scenes:
+        from .ops.scenes import reconcile
+
+        reconcile(project)
     normalize_tracks(project)
     normalize_gaps(project)
     validate(project)

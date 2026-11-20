@@ -60,3 +60,27 @@ func selfInstall(p paths) error {
 func linkDir(target, link string) {
 	hidden(exec.Command("cmd", "/c", "mklink", "/J", link, target)).Run()
 }
+
+// openWindow shows the setup page in Edge's app mode (always present on Windows 10/11), else Chrome, else the
+// default browser.
+func openWindow(url string, icon []byte) (*exec.Cmd, error) {
+	var cands []string
+	for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"} {
+		if d := os.Getenv(env); d != "" {
+			cands = append(cands, filepath.Join(d, "Microsoft", "Edge", "Application", "msedge.exe"),
+				filepath.Join(d, "Google", "Chrome", "Application", "chrome.exe"))
+		}
+	}
+	var found []string
+	for _, c := range cands {
+		if exists(c) {
+			found = append(found, c)
+		}
+	}
+	if cmd := chromiumApp(found, url); cmd != nil {
+		return cmd, nil
+	}
+	return nil, exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}
+
+func openPath(path string) { exec.Command("explorer", "/select,", path).Start() }

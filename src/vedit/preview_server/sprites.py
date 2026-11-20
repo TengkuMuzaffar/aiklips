@@ -27,26 +27,31 @@ _CACHE_MAX = 600
 _LOCK = threading.Lock()
 
 
-def _key(pdir: Path, layer: dict, scale: float, reveal: int | None, group: int | None, hi: int | None) -> str:
+def _key(pdir: Path, layer: dict, scale: float, reveal: int | None, group: int | None, hi: int | None, motion=None) -> str:
     extra = None
     if layer.get("type") == "image" and layer.get("image"):
         p = resolve_media(pdir, layer["image"])
         extra = p.stat().st_mtime if p.exists() else 0
-    blob = json.dumps([str(pdir), layer, round(scale, 3), reveal, group, hi, extra], sort_keys=True, default=str)
+    blob = json.dumps([str(pdir), layer, round(scale, 3), reveal, group, hi, extra, motion], sort_keys=True, default=str)
     return hashlib.sha1(blob.encode()).hexdigest()
 
 
 def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | None = None,
-               group: int | None = None, hi: int | None = None) -> bytes:
+               group: int | None = None, hi: int | None = None, motion: dict | None = None) -> bytes:
     """PNG of one layer's sprite (tight box, drawn centred on the layer's x/y).
 
     text:     `reveal` = number of characters shown (typewriter); None = all
     captions: `group` = word group index (same grouping as the export), `hi` = highlighted word in it
     image:    the image at its layer width
+    motion:   {draw, morph, count: 0..1, kt: seconds since the layer start (kinetic text, 3D legs / wheels),
+              yaw / pitch / roll: a 3D object's turn in degrees}, the moment's values
     Returns an empty 1x1 PNG when there is nothing to draw.
     """
     scale = max(0.1, min(2.0, float(scale)))
-    k = _key(pdir, layer_data, scale, reveal, group, hi)
+    mo = {k: round(max(0.0, min(1.0 if k != "kt" else 600.0, float(v))), 4) for k, v in (motion or {}).items()
+          if k in ("draw", "morph", "count", "kt") and v is not None}
+    mo.update({k: round(float(v), 2) for k, v in (motion or {}).items() if k in ("yaw", "pitch", "roll") and v is not None})
+    k = _key(pdir, layer_data, scale, reveal, group, hi, mo)
     with _LOCK:
         if k in _CACHE:
             _CACHE.move_to_end(k)
@@ -62,11 +67,29 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
     elif layer.type == "shape":
         from ..ops.overlay_style import render_shape
 
-        img = render_shape(layer, scale)
-    elif layer.type == "video":
-        raise VeditError("Video layers are played by the browser, not drawn as sprites")
+        img = render_shape(layer, scale, draw=mo.get("draw", 1.0), morph=mo.get("morph", 0.0))
+    elif layer.type == "chart":
+        from ..ops.chart import render_chart
+
+        img = render_chart(layer, scale, mo.get("draw", 1.0))
+    elif layer.type == "iso":
+        from ..ops.iso import render_iso
+
+        img = render_iso(layer, scale, mo.get("draw", 1.0))
+    elif layer.type == "obj3d":
+        from ..ops.render3d import render_obj3d
+
+        img = render_obj3d(layer, scale, mo.get("yaw"), mo.get("pitch"), mo.get("roll"), mo.get("kt", 0.0), pdir)
+    elif layer.type in ("video", "glass"):
+        raise VeditError("Video and glass layers are drawn by the browser, not as sprites")
+    elif layer.type == "text" and layer.split != "none" and not layer.counter:
+        from ..ops.motion import Kinetic
+
+        img = Kinetic(layer.text or "", layer.style, scale, layer).frame(mo.get("kt", 600.0))
     elif layer.type == "text":
-        text = layer.text or ""
+        from ..ops.motion import shown_text
+
+        text = shown_text(layer, mo.get("count", 1.0))
         total = sum(len(w) for w in text.split())
         frac = 1.0 if reveal is None or not total else max(0, min(reveal, total)) / total
         img = render_text(text, layer.style, scale, reveal=frac)

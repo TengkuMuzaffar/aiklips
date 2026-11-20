@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from ..library import FORMATS
@@ -44,6 +44,15 @@ class _M(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class Audience(_M):
+    """Who the video is for (ids from generate.brief_tags.AUDIENCE)."""
+    age: list[str] = Field(default_factory=list)
+    who: list[str] = Field(default_factory=list)
+    region: list[str] = Field(default_factory=list)
+    awareness: str | None = None
+    custom: list[str] = Field(default_factory=list, max_length=8, description="The user's own audience words")
+
+
 class Brief(_M):
     goal: Literal["promo", "tutorial", "story", "ugc", "announcement", "other"] = "promo"
     product: str = Field("", max_length=300, description="What the video is about")
@@ -53,11 +62,26 @@ class Brief(_M):
     format: Literal[tuple(FORMATS)] = "reels"  # type: ignore[valid-type]
     language: str = Field("en", max_length=20)
     notes: str = Field("", max_length=1000)
+    # brief tags (generate.brief_tags): clickable choices the prompts and code both use
+    funnel: str | None = Field(None, description="awareness | consideration | conversion | retention")
+    audience: Audience = Field(default_factory=Audience)
+    pace: str = Field("reference", description="reference | very_slow | slow | medium | fast | very_fast | build | pulse")
+    tone: list[str] = Field(default_factory=list)
+    rules: list[str] = Field(default_factory=list, description="Must do / avoid ids")
+
+    @model_validator(mode="after")
+    def _known_tags(self):
+        from . import brief_tags
+
+        self.audience.custom = [c.strip()[:40] for c in self.audience.custom if c.strip()]
+        brief_tags.check(self)
+        return self
 
 
 class BatchSpec(_M):
-    refs: list[int] = Field(min_length=1)
-    lead: int | None = None
+    refs: list[int | str] = Field(min_length=1, description="Reference ids, or media ids of videos to use as references "
+                                                           "(they become references when the batch is created)")
+    lead: int | str | None = None
     footage: list[str] = Field(min_length=1, description="Upload ids used for their pictures")
     sound: list[str] = Field(default_factory=list, max_length=10,
                              description="Upload ids used for their audio only (audio or video); the videos take turns using them")
@@ -114,7 +138,11 @@ class CreativePlan(_M):
 
 class Op(_M):
     """One edit operation. Flat on purpose (LLMs fill flat objects more reliably than unions)."""
-    op: Literal["clip", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit", "move"]
+    op: Literal["clip", "scene", "text", "image", "transition", "jumpcut_zoom", "music", "captions", "fit", "move", "vedit"]
+    command: str | None = Field(None, description="vedit: one vedit CLI command without 'vedit', e.g. "
+                                                   "\"sfx add whoosh --at @C2.start-0.1 --volume 0.5\"")
+    name: str | None = Field(None, description="vedit: a name for the layer this command adds, to refer to it later as @name")
+    fill: str | None = Field(None, description="scene: canvas colour '#hex', or a gradient '#a,#b'")
     file: str | None = None
     start: float | None = None
     end: float | None = None
@@ -166,8 +194,13 @@ class EditPlan(_M):
 class PatchOp(_M):
     """One targeted change to the current plan. Clips are C1..Cn and titles T1..Tn as listed in the prompt."""
     op: Literal["replace_clip", "trim_clip", "move_clip", "remove_clip", "insert_clip", "set_audio",
-                "edit_text", "add_text", "remove_text", "set_music", "set_move"]
-    target: str | None = Field(None, description="C3 / T2: the clip or title it changes (insert_clip: insert BEFORE this clip; empty = at the end)")
+                "edit_text", "add_text", "remove_text", "set_music", "set_move", "add_command", "replace_command", "remove_command",
+                "edit_scene", "remove_scene"]
+    target: str | None = Field(None, description="C3 / T2 / V4 / S1: the clip, title, vedit command or scene it changes (insert_clip: insert BEFORE this clip; empty = at the end)")
+    duration: float | None = Field(None, description="edit_scene: new length in seconds")
+    fill: str | None = Field(None, description="edit_scene: new canvas colour")
+    command: str | None = Field(None, description="add_command / replace_command: a vedit CLI command, same rules as in the plan")
+    name: str | None = Field(None, description="add_command / replace_command: name for the layer it adds (@name)")
     segment: str | None = Field(None, description="replace_clip / insert_clip: footage segment id, e.g. f1.s4")
     start: float | None = Field(None, description="clips: seconds inside the file; titles: timeline seconds")
     end: float | None = None

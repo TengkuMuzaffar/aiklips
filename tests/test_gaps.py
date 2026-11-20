@@ -8,7 +8,7 @@ import pytest
 from vedit import media
 from vedit.editor import actions
 from vedit.ops import cut
-from vedit.project import Clip, Project, Source, load, normalize_gaps, save
+from vedit.project import Clip, Project, Source, VeditError, load, normalize_gaps, save
 
 
 @pytest.fixture
@@ -25,6 +25,7 @@ def layout(p):
 
 
 def test_clip_dropped_later_stays_there(proj):
+    actions.apply(proj, "layer_add_shape", {"shape": "rect", "full": True, "start": 0, "end": 1})  # something stays at 0s
     actions.apply(proj, "clip_place", {"clip": "c1", "start": 4.0})
     p = load(proj)
     # c2 kept its time (2-5); c1 overlapped it in its second half, so it goes after c2
@@ -35,6 +36,9 @@ def test_clip_dropped_later_stays_there(proj):
 
 def test_single_clip_moved_right_leaves_a_leading_gap(proj):
     actions.apply(proj, "remove_clip", {"clip": "c2"})
+    with pytest.raises(VeditError, match="0s"):  # alone at 0s: it can't leave the start empty
+        actions.apply(proj, "clip_place", {"clip": "c1", "start": 1.5})
+    actions.apply(proj, "layer_add_shape", {"shape": "rect", "full": True, "start": 0, "end": 1})  # something stays at 0s
     actions.apply(proj, "clip_place", {"clip": "c1", "start": 1.5})
     p = load(proj)
     assert layout(p) == [("gap", 0, 1.5), ("c1", 1.5, 3.5)]
@@ -61,6 +65,7 @@ def test_gap_renders_and_is_ignored_by_the_audit(proj):
     from vedit.render import graph
 
     actions.apply(proj, "remove_clip", {"clip": "c2"})
+    actions.apply(proj, "layer_add_shape", {"shape": "rect", "full": True, "start": 0, "end": 1})  # something stays at 0s
     actions.apply(proj, "clip_place", {"clip": "c1", "start": 1.0})
     p = load(proj)
     out = proj / "o.mp4"

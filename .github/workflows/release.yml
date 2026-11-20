@@ -78,13 +78,19 @@ jobs:
         working-directory: launcher
         run: |
           LD="-s -w -X main.LauncherVersion=$V -X main.Repo=${{ github.repository }}"
+          # Windows: app icon + version info in the .exe (a .syso resource file that go build picks up)
+          GOBIN=/tmp/gobin go install github.com/tc-hib/go-winres@v0.3.3
+          /tmp/gobin/go-winres simply --arch amd64 --icon ../assets/brand/icon.ico --manifest gui \
+            --product-name aiklips --file-description aiklips --product-version "$V" --file-version "$V" \
+            --original-filename aiklips.exe --copyright "MIT licence"
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LD -H windowsgui" -o ../dist/aiklips-windows-x64.exe .
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LD" -o ../dist/aiklips-linux-x86_64 .
           GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LD" -o ../dist/aiklips-linux-arm64 .
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LD" -o /tmp/cc-arm64 .
           GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LD" -o /tmp/cc-amd64 .
           app=/tmp/mac/aiklips.app
-          mkdir -p "$app/Contents/MacOS"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp ../assets/brand/icon.icns "$app/Contents/Resources/aiklips.icns"
           lipo -create -output "$app/Contents/MacOS/aiklips" /tmp/cc-arm64 /tmp/cc-amd64
           sed "s/@VERSION@/$V/g" macos/Info.plist > "$app/Contents/Info.plist"
           codesign --force --deep --sign - "$app"   # ad-hoc signature: required on Apple silicon (not notarised)

@@ -38,6 +38,9 @@ CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, not_before);
 
 WORKERS = 2
 AUTOSTART = True  # tests turn this off and call drain() instead
+IN_APP = False  # set by the app server: only there may a background study start worker threads. A short CLI command
+                # (`vedit import`) just queues it; threads it started would die with it, and starting them runs
+                # recover(), which would re-queue jobs the open app is running right now
 MAX_RATE_WAITS = 12
 render_lock = threading.Lock()  # one render / export at a time across all jobs
 
@@ -269,3 +272,4 @@ def drain(timeout: float = 600, wait: bool = False) -> None:
 def _load_handlers() -> None:
     from .generate import batch  # noqa: F401  (registers handlers)
     from .references import store  # noqa: F401
+    from . import media_library  # noqa: F401

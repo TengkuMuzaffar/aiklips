@@ -238,4 +238,36 @@ def test_shape_previews(cli, test_clip):
         img = Image.open(io.BytesIO(r.content)).convert("RGB")
         bg = img.getpixel((2, 2))
         assert any(img.getpixel((x, img.height // 2)) != bg for x in range(0, img.width, 4)), f"{key}: nothing drawn"
-    assert client.get("/api/overlays/shape-star/thumb.jpg").status_code == 404
+    assert client.get("/api/overlays/shape-star/thumb.jpg").status_code == 200  # every ops/shapes.py kind
+    assert client.get("/api/overlays/shape-nonsense/thumb.jpg").status_code == 404
+
+
+@needs_ffmpeg
+def test_layers_render_cropped_to_where_they_appear(cli, test_clip):
+    """A small layer is encoded at the size of the area it ever covers (not the whole canvas) and composited back at
+    its offset, normal and blended, still or moving, so it lands exactly where it did before."""
+    from vedit.render.layers import cached_clip, layer_clip
+
+    cli("import", str(test_clip))
+    cli("canvas", "--preset", "reels")
+    a = cli("shape", "add", "rect", "--x", "25%", "--y", "30%", "--width", "200", "--height", "100", "--fill", "#FF0000")["layer"]
+    b = cli("shape", "add", "rect", "--x", "75%", "--y", "60%", "--width", "160", "--height", "160", "--fill", "#0000FF",
+            "--blend", "screen")["layer"]
+    c = cli("shape", "add", "rect", "--x", "50%", "--y", "85%", "--width", "120", "--height", "60", "--fill", "#00FF00",
+            "--preset", "slide_in")["layer"]
+    d = cli.project
+    p = load(d)
+    W, H = p.canvas.width * PREVIEW_SCALE, p.canvas.height * PREVIEW_SCALE
+    for lid in (a, b, c):
+        L = next(l for l in p.layers if l.id == lid)
+        f, x, y = layer_clip(p, d, L, PREVIEW_SCALE)
+        info = media.probe(f)
+        assert info["width"] < W / 2 and info["height"] < H / 2  # cropped, not full canvas
+        assert x % 2 == 0 and y % 2 == 0 and x + info["width"] <= W and y + info["height"] <= H
+        assert cached_clip(p, d, L, PREVIEW_SCALE) == (f, x, y)  # the offset survives in the cache
+    _, (img,) = _frames(d, [2.0])
+    red, blue, green = _px(img, 0.25, 0.30), _px(img, 0.75, 0.60), _px(img, 0.50, 0.85)
+    assert red[0] > 200 and red[1] < 60 and red[2] < 60
+    assert blue[2] > 200  # screen-blended blue over the footage
+    assert green[1] > 200 and green[0] < 80  # the slide-in has finished: where it was placed
+    assert _px(img, 0.25, 0.20)[:3] != red  # nothing red just above the red box (offset not shifted)
