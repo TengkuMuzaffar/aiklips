@@ -517,6 +517,8 @@ body.selecting .card .thumb .hov { display: none; }
   .rows .rh, .rows .row { grid-template-columns: 64px minmax(0, 1fr) 36px; } .rows .c, .rows .rp, .rows .rh .c { display: none; }
 }
 @media (max-width: 560px) { .starts { grid-template-columns: 1fr; } .searchbox input { width: 150px; } }
+/* live updates (polling while something runs) redraw quietly: the fade-up entrance plays once per visit */
+main.settled .card, main.settled .batch, main.settled .intro, main.settled .intro-steps li, main.settled .empty, main.settled .rows .row { animation: none; }
 /* ================= media library ================= */
 .grid.media { grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); }
 .grid.media .thumb { aspect-ratio: 16 / 11; }
@@ -1101,8 +1103,19 @@ const TABS = ["projects", "references", "generate", "design", "media"];
 const BETA_TABS = ["references", "generate"];
 const [HASH_TAB, HASH_REF] = location.hash.slice(1).split("/");
 let TAB = TABS.includes(HASH_TAB) ? HASH_TAB : "projects";
+// Polling without blinking: a poll redraws only when its data changed, and without the entrance animation
+const SHOWN = {};
+function pollRender(view, data, render) {
+  const sig = JSON.stringify(data);
+  if (SHOWN[view] === sig) return;  // nothing changed: leave the page alone
+  SHOWN[view] = sig;
+  render();
+  const m = $(`#view-${view}`);
+  if (m && !m.classList.contains("settled")) setTimeout(() => m.classList.add("settled"), 900);  // after the entrance
+}
 function setTab(t) {
   TAB = t;
+  for (const x of TABS) { $(`#view-${x}`).classList.remove("settled"); delete SHOWN[x]; }  // a visit animates once
   history.replaceState(null, "", t === "projects" ? location.pathname : `#${t}`);
   if (REF_OPEN) closeRef(false);
   for (const x of TABS) $(`#view-${x}`).hidden = x !== t;
@@ -1125,7 +1138,7 @@ async function options() { if (!OPTS) OPTS = await (await fetch("/api/generate/o
 async function loadRefs() {
   REFS = (await (await fetch("/api/references")).json()).references;
   $("#n-refs").textContent = REFS.length ? String(REFS.length) : "";
-  if (TAB === "references") renderRefs();
+  if (TAB === "references") pollRender("references", REFS, renderRefs);
   clearTimeout(refTimer);
   if (REFS.some(refBusy)) refTimer = setTimeout(loadRefs, 2000);
   return REFS;
@@ -1400,7 +1413,7 @@ async function loadBatches() {
   BATCHES = (await (await fetch("/api/batches")).json()).batches;
   const running = BATCHES.filter((b) => ACTIVE.includes(b.status)).length;
   $("#n-gen").textContent = running ? `● ${running}` : "";
-  if (TAB === "generate") renderBatches();
+  if (TAB === "generate") pollRender("generate", [BATCHES, REFS.length], renderBatches);
   clearTimeout(genTimer);
   if (running) genTimer = setTimeout(loadBatches, 2500);
 }
@@ -2012,7 +2025,7 @@ async function loadMedia() {
   const d = await (await fetch("/api/media")).json();
   MEDIA = d.media; MEDIA_BYTES = d.bytes;
   $("#n-media").textContent = MEDIA.length ? String(MEDIA.length) : "";
-  if (TAB === "media") renderMedia();
+  if (TAB === "media") pollRender("media", [MEDIA, MEDIA_BYTES], renderMedia);
   if (MEDIA_OPEN && $("#dlg-media").style.display === "flex") {
     const m = MEDIA.find((x) => x.id === MEDIA_OPEN);
     if (m && m.status !== $("#media-body").dataset.status) openMedia(MEDIA_OPEN);  // its study just finished
