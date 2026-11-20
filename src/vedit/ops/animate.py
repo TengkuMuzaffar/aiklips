@@ -12,7 +12,7 @@ from typing import Callable
 
 from ..project import Canvas, Keyframe, Layer, Preset, VeditError, parse_pos
 
-PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count")
+PROPS = ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count", "yaw", "pitch", "roll")
 PROGRESS = ("draw", "morph", "count")  # 0..1 build-up values (ops/motion.py), clamped
 COLOR_PROPS = ("fill",)
 
@@ -320,6 +320,95 @@ def mix_hex(a: str, b: str, p: float) -> str:
     return "#" + "".join(f"{max(0, min(255, n)):02X}" for n in (v if alpha else v[:3]))
 
 
+# ---- 3D objects (obj3d layers): yaw / pitch / roll in degrees, travel from A to B ----
+
+_AXES = {"y": ("yaw",), "x": ("pitch",), "z": ("roll",), "yx": ("yaw", "pitch"), "xyz": ("yaw", "pitch", "roll")}
+_TUMBLE = {"yaw": 1.0, "pitch": 0.61, "roll": 0.37}  # several axes turn at different speeds (a tumble, not a wobble)
+
+
+def _turn(pr: dict, axis: str, degrees: float) -> None:
+    axes = _AXES.get(str(axis))
+    if axes is None:
+        raise VeditError(f"3D axis must be one of {', '.join(_AXES)}")
+    for a in axes:
+        pr[a] += degrees * (_TUMBLE[a] if len(axes) > 1 else 1.0)
+
+
+def _spin3d(pr, p, t, k, c):
+    per = float(k.get("period", 3.0))
+    if per:
+        _turn(pr, k.get("axis", "y"), 360.0 * t / per)
+
+
+def _spin3d_in(pr, p, t, k, c):
+    _turn(pr, k.get("axis", "y"), -360.0 * float(k.get("turns", 1)) * (1 - ease("ease_out", p)))
+    pr["scale"] *= ease("back_out", p)
+    pr["opacity"] *= min(1.0, p * 3)
+
+
+def _sway3d(pr, p, t, k, c):
+    _turn(pr, k.get("axis", "y"), math.sin(2 * math.pi * t / float(k.get("period", 3.0))) * float(k.get("degrees", 25)))
+
+
+def _xy_param(v, c, default: tuple[str, str]) -> tuple[float, float]:
+    if v is None:
+        v = default
+    if isinstance(v, str):
+        v = [s.strip() for s in v.split(",")]
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        raise VeditError("travel from / to are x,y (px or NN%), e.g. '10%,60%'")
+    return parse_pos(v[0], c.width), parse_pos(v[1], c.height)
+
+
+def travel_at(t: float, k: dict, c) -> tuple[float, float, float, float]:
+    """Where a `travel` preset is at t: (x, y, facing 0..1 = right..left, progress 0..1 of this leg)."""
+    ax, ay = _xy_param(k.get("from"), c, ("15%", "50%"))
+    bx, by = _xy_param(k.get("to"), c, ("85%", "50%"))
+    dur = max(0.05, float(k.get("dur", 3.0)))
+    loop = str(k.get("loop", "once"))
+    left = 1.0 if bx < ax else 0.0  # heading left (facing flips when `face`)
+    if loop == "continue":  # keep going past B at the same speed; wrap round the canvas edges
+        q = t / dur
+        x, y = ax + (bx - ax) * q, ay + (by - ay) * q
+        m = float(k.get("margin", 0.25))
+        W0, W1, H0, H1 = -m * c.width, c.width * (1 + m), -m * c.height, c.height * (1 + m)
+        if bx != ax:
+            x = W0 + (x - W0) % (W1 - W0)
+        if by != ay:
+            y = H0 + (y - H0) % (H1 - H0)
+        return x, y, left, q % 1.0
+    q = t / dur
+    leg = math.floor(q)
+    u = q - leg
+    e = str(k.get("ease", "ease_in_out" if loop == "once" else "linear"))
+    if loop == "once":
+        u, leg = (min(1.0, q), 0)
+    back = loop == "pingpong" and leg % 2 == 1
+    f = ease(e, u)
+    if back:
+        f = 1 - f
+    facing = (1 - left) if back else left
+    if loop == "pingpong" and leg >= 1 and u < 0.12:  # turn round smoothly at the ends
+        prev = left if back else 1 - left
+        facing = prev + (facing - prev) * ease("ease_in_out", u / 0.12)
+    return ax + (bx - ax) * f, ay + (by - ay) * f, facing, u
+
+
+def _travel(pr, p, t, k, c):
+    x, y, facing, u = travel_at(t, k, c)
+    pr["x"], pr["y"] = x, y
+    if k.get("face", True):
+        pr["yaw"] += 180.0 * facing
+    hop = float(k.get("hop", 0))
+    if hop:
+        pr["y"] -= abs(math.sin(math.pi * t / float(k.get("hop_period", 0.45)))) * hop
+    s0, s1 = float(k.get("scale_from", 1)), float(k.get("scale_to", 1))
+    if s0 != 1 or s1 != 1:
+        loop = str(k.get("loop", "once"))
+        f = u if loop != "pingpong" or math.floor(t / max(0.05, float(k.get("dur", 3.0)))) % 2 == 0 else 1 - u
+        pr["scale"] *= s0 + (s1 - s0) * f
+
+
 def _draw(pr, p, t, k, c):
     pr["draw"] *= ease(str(k.get("ease", "ease_in_out")), p)
 
@@ -369,6 +458,12 @@ PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "draw_out": ("out", 0.6, _draw, "Undraw: the outline / chart retracts. params: ease"),
     "count_up": ("in", 1.2, _count, "A counter counts from its `from` to its `to`. params: ease=expo_out"),
     "morph_loop": ("loop", 0.0, _morph_loop, "Shape morphs to its morph_to kind and back. params: period=2.4"),
+    "spin3d": ("loop", 0.0, _spin3d, "3D objects: turn round and round (360 degrees per period). params: axis=y|x|z|yx|xyz, period=3 (negative = the other way)"),
+    "spin3d_in": ("in", 0.8, _spin3d_in, "3D objects: spin in while growing. params: axis=y, turns=1"),
+    "sway3d": ("loop", 0.0, _sway3d, "3D objects: turn a little back and forth (showcase). params: axis=y, degrees=25, period=3"),
+    "travel": ("loop", 0.0, _travel, "Move from A to B (3D objects face where they go). params: from='15%,50%', to='85%,50%', dur=3, "
+               "loop=once|repeat|pingpong|continue (continue = keep going past B, wrapping round the edges), face=true, "
+               "hop=0 (px bounce, walking), hop_period=0.45, scale_from=1, scale_to=1 (further / nearer), ease"),
 }
 
 
@@ -447,6 +542,9 @@ def props_at(layer: Layer, t: float, duration: float, canvas: Canvas) -> dict:
         "draw": 1.0,
         "morph": 0.0,
         "count": 1.0,
+        "yaw": layer.obj3d.yaw if layer.obj3d else 0.0,
+        "pitch": layer.obj3d.pitch if layer.obj3d else 0.0,
+        "roll": layer.obj3d.roll if layer.obj3d else 0.0,
     }
     for prop in PROPS:
         total = canvas.width if prop == "x" else canvas.height

@@ -114,3 +114,41 @@ def test_executor_runs_vedit_ops_with_references(test_clip, tmp_path):
     assert len(p.music) == 1 and abs(p.music[0].start - 1.8) < 0.05  # the whoosh, 0.2 s before the cut
     assert len(rep["skipped"]) == 2 and "@nope" in rep["skipped"][0] and "export" in rep["skipped"][1]
     assert sum(1 for s in history.log(pdir) if "AI:" not in s.get("message", "")) >= 4  # one undo step per command
+
+
+def test_generate_can_use_3d_objects():
+    ok = commands.parse("3d add car --param style=sport --from -30%,68%", FILES)
+    assert ok[:2] == ["3d", "add"]
+    with pytest.raises(ValueError, match="3D models from files"):
+        commands.parse("3d add model --src /etc/x.glb", FILES)
+    ref = commands.reference()
+    assert "3d add KIND" in ref and "3d move LAYER" in ref and "dog (ears=floppy" in ref
+    assert "title_3d" in planner._moves_text(planner.StyleDNA())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_executor_builds_3d_moments(test_clip, tmp_path):
+    from vedit import media
+    from vedit.project import load
+
+    info = media.probe(test_clip)
+    files = {"f1": {"path": str(test_clip), "kind": "video", "duration": info["duration"], "width": info.get("width"),
+                    "height": info.get("height"), "fps": info.get("fps"), "has_audio": True}}
+    plan = EditPlan(ops=[
+        Op(op="clip", file="f1", start=0, end=2), Op(op="clip", file="f1", start=3, end=5),
+        Op(op="move", type="title_3d", start=0.1, text="NEW DROP"),
+        Op(op="move", type="drive_by_3d", start=2.2, text="car #E11D48"),
+        Op(op="vedit", name="coin", command="3d add coin --y 40% --width 400 --start @C2.start --end @C2.end --no-intro"),
+        Op(op="vedit", command="3d spin @coin --axis x --period 1.2"),
+        Op(op="vedit", command="3d move @coin --from 20%,40% --to 80%,40% --loop pingpong --dur 1"),
+    ])
+    pdir = tmp_path / "v01"
+    rep = executor.execute(plan, pdir, files, "test", "reels")
+    assert not rep["skipped"], rep["skipped"]
+    p = load(pdir)
+    objs = {l.obj3d.kind: l for l in p.layers if l.type == "obj3d"}
+    assert set(objs) == {"text", "car", "coin"}
+    assert objs["text"].obj3d.text == "NEW DROP" and objs["car"].obj3d.color == "#E11D48"
+    assert any(pr.name == "travel" for pr in objs["car"].presets)
+    coin = objs["coin"]
+    assert abs(coin.start - 2.0) < 0.05 and {pr.name for pr in coin.presets} == {"spin3d", "travel"}

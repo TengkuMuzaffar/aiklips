@@ -239,6 +239,19 @@ def _iso_thumb(kind: str, theme: str) -> bytes:
     return iso_items.thumb(kind, theme)
 
 
+def _obj3d_thumb(kind: str) -> bytes:
+    import io
+
+    from ..ops.render3d import thumbnail
+
+    buf = io.BytesIO()
+    thumbnail(kind, 240).save(buf, "PNG")
+    return buf.getvalue()
+
+
+MODEL_EXTS = (".glb", ".gltf", ".obj", ".stl", ".ply")
+
+
 def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, dev: bool = False) -> FastAPI:
     app = FastAPI(title="aiklips")
     host = Host(watch, chat, dev)
@@ -1292,6 +1305,45 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             raise HTTPException(404, "No such item")
         data = await asyncio.to_thread(_iso_thumb, kind, theme)
         return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/api/obj3d-kinds")
+    def obj3d_kinds() -> dict:
+        """What the 3D tab can add: kinds, their settings and default colours."""
+        from ..ops import items3d
+
+        return {"kinds": items3d.catalog()}
+
+    @app.get("/api/obj3d-item/{name}")
+    async def obj3d_item_thumb(name: str):
+        """One 3D kind drawn by the export's renderer (PNG), for the 3D tab."""
+        from ..ops import items3d
+
+        kind = name.removesuffix(".png")
+        if kind not in ("text", "model", *items3d.ITEMS3D):
+            raise HTTPException(404, "No such 3D kind")
+        data = await asyncio.to_thread(_obj3d_thumb, kind)
+        return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    @app.post("/api/obj3d-model")
+    async def obj3d_model(file: UploadFile = File(...)) -> dict:
+        """A 3D model file for the 3D tab: saved in the project's models/ folder; returns the path to use as `src`."""
+        from ..project import store_media_path
+
+        d = host.need()
+        name = Path(file.filename or "model.glb").name
+        if Path(name).suffix.lower() not in MODEL_EXTS:
+            raise HTTPException(400, f"3D models: {', '.join(MODEL_EXTS)}")
+        out_dir = d / "models"
+        out_dir.mkdir(exist_ok=True)
+        out = out_dir / name
+        n = 2
+        while out.exists():
+            out = out_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
+            n += 1
+        with out.open("wb") as fh:
+            while chunk := await file.read(1 << 20):
+                fh.write(chunk)
+        return {"src": store_media_path(d, out)}
 
     @app.get("/api/move-thumb/{name}")
     async def move_thumb(name: str):

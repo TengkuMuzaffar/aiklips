@@ -47,8 +47,13 @@ MOVES: dict[str, tuple[str, str]] = {
     "dolly_zoom": ("at", "Dolly zoom (vertigo): the person stays the same size while the background rushes in (--amount 1.4)"),
     "frame_break": ("at", "Frame break: the shot sits in a frame and the person steps out over its edge (--text caption)"),
     "studio_reveal": ("at", "Studio reveal: the background wipes away to a lit studio set while the person stays"),
+    # 3D objects (ops/render3d.py)
+    "title_3d": ("at+text", "3D title: chunky 3D letters spin in and sway, turning in perspective (hooks, launches, big reveals)"),
+    "drive_by_3d": ("at", "3D drive-by: a 3D car / truck / bus / plane / rocket / dog / cat / bird / fish crosses the frame facing its way, "
+                          "wheels turning / legs walking (--text kind [colour], e.g. 'car #E11D48'; speed, travel, delivery, pets)"),
+    "spin_3d": ("at", "3D hero object turning 360 in the middle: coin flip, gem, heart, star, cube, rocket (--text kind [colour]; money, value, likes, ratings)"),
 }
-ALIASES = {"frame_escape": "frame_break", "vertigo": "dolly_zoom", "glass": "liquid_glass", "isometric": "iso_world"}
+ALIASES = {"text_3d": "title_3d", "3d_title": "title_3d", "drive_by": "drive_by_3d", "coin_flip": "spin_3d", "frame_escape": "frame_break", "vertigo": "dolly_zoom", "glass": "liquid_glass", "isometric": "iso_world"}
 # how each effect is shown in the editor: category for the Effects tab
 CATEGORY = {k: "Camera" for k in ("punch_in", "snap_zoom", "digital_zoom", "zoom_out_reveal", "speed_ramp")} | {
     k: "Graphics" for k in ("growth_curve", "checklist", "checklist_pop", "headline_storm", "keyword_pop", "freeze_title")} | {
@@ -56,7 +61,7 @@ CATEGORY = {k: "Camera" for k in ("punch_in", "snap_zoom", "digital_zoom", "zoom
     "chat_takeover": "Graphics", "phone_mockup": "Frames", "magazine_cover": "Frames",
     "cursor_click": "Kits", "hud_lock": "Kits", "paper_title": "Kits",
     "liquid_glass": "Graphics", "iso_world": "Graphics", "orbit": "Subject", "dolly_zoom": "Subject", "frame_break": "Subject",
-    "studio_reveal": "Subject"}
+    "studio_reveal": "Subject", "title_3d": "3D", "drive_by_3d": "3D", "spin_3d": "3D"}
 # what Generate plans / reference Style DNA may name: moves that need nothing but a clip, a moment and a text
 MOVE_NAMES = tuple(k for k, v in MOVES.items() if "+source" not in v[0])
 
@@ -649,6 +654,68 @@ def _iso_world(p: Project, at: float, text=None, dur=None, **_) -> str:
     return f"isometric {kind} at {at:.2f}s ({l.id}): builds itself block by block"
 
 
+def _kind_color(text: str | None, default: str, allowed: tuple[str, ...]) -> tuple[str, str | None]:
+    words = (text or "").split()
+    kind = (words[0].lower() if words else default)
+    if kind not in allowed:
+        raise VeditError(f"Pick one of {', '.join(allowed)} (got '{kind}')")
+    color = next((w for w in words[1:] if w.startswith("#")), None)
+    return kind, color
+
+
+def _title_3d(p: Project, at: float, text=None, dur=None, amount=None, **_) -> str:
+    from . import objects3d
+
+    W = p.canvas.width
+    words = (text or "").strip()
+    l = objects3d.add_object(p, "text", text=words, font="anton" if len(words) <= 14 else "poppins-black", start=round(at, 3),
+                             end=_layer_end(p, at, dur or 3.0), x="50%", y="30%", width=round(W * 0.84), intro=False, depth=0.45)
+    l.presets = [Preset(name="spin3d_in", duration=0.9, params={"turns": 1}), Preset(name="sway3d", params={"degrees": 18, "period": 3.2}),
+                 Preset(name="pop_out", duration=0.25)]
+    return f"3D title '{words}' at {at:.2f}s ({l.id})"
+
+
+VEHICLES_3D = ("car", "truck", "bus", "plane", "rocket", "dog", "cat", "bird", "fish")
+
+
+def _drive_by_3d(p: Project, at: float, text=None, dur=None, amount=None, **_) -> str:
+    from . import objects3d
+
+    W = p.canvas.width
+    W = min(p.canvas.width, p.canvas.height)  # the short side: also fits landscape canvases
+    kind, color = _kind_color(text, "car", VEHICLES_3D)
+    d = dur or 2.4
+    y = {"plane": "28%", "bird": "32%", "rocket": "50%", "fish": "50%"}.get(kind, "62%")
+    size = {"bus": 0.8, "truck": 0.75, "plane": 0.7, "rocket": 0.5, "bird": 0.4, "fish": 0.45, "cat": 0.45, "dog": 0.5}.get(kind, 0.62)
+    l = objects3d.add_object(p, kind, color=color, start=round(at, 3), end=_layer_end(p, at, d), x="50%", y=y,
+                             width=round(W * size), intro=False, yaw=-15)
+    if kind == "rocket":
+        objects3d.move_object(l, "50%,115%", "50%,-15%", d, "once", face=False, ease_name="ease_in")
+    else:
+        hop = {"dog": 10, "cat": 6, "bird": 30}.get(kind, 0)
+        off = round(size * W / p.canvas.width * 55)  # far enough out that it starts / ends off-screen
+        objects3d.move_object(l, f"-{off}%,{y}", f"{100 + off}%,{y}", d, "once", hop=hop,
+                              ease_name="linear" if kind in ("dog", "cat", "bird", "fish") else "ease_in_out")
+    return f"3D {kind} crosses the frame {at:.2f}-{at + d:.2f}s ({l.id})"
+
+
+SPINNERS_3D = ("coin", "gem", "heart", "star", "cube", "sphere", "rocket", "car", "dog", "cat")
+
+
+def _spin_3d(p: Project, at: float, text=None, dur=None, amount=None, **_) -> str:
+    from . import objects3d
+
+    W = p.canvas.width
+    W = min(p.canvas.width, p.canvas.height)
+    kind, color = _kind_color(text, "coin", SPINNERS_3D)
+    l = objects3d.add_object(p, kind, color=color, start=round(at, 3), end=_layer_end(p, at, dur or 2.5), x="50%", y="45%",
+                             width=round(W * 0.5), intro=False, yaw=0 if kind == "coin" else -25, pitch=0 if kind == "coin" else 18)
+    l.presets = [Preset(name="spin3d_in", duration=0.6), Preset(name="spin3d", params={"axis": "x" if kind == "coin" else "y",
+                                                                                      "period": amount or (1.2 if kind == "coin" else 2.5)}),
+                 Preset(name="float", params={"amplitude": 12, "degrees": 0}), Preset(name="pop_out", duration=0.25)]
+    return f"3D {kind} spinning at {at:.2f}s ({l.id})"
+
+
 def _orbit(p: Project, at: float, text=None, dur=None, amount=None, **_) -> str:
     """Words on a tilted ring around the person: each word is two layers, one under the person (shown while it is
     behind) and one over (while in front), so it really passes behind them."""
@@ -750,8 +817,8 @@ EFFECTS = {
     "chat_takeover": _chat_takeover, "phone_mockup": _phone_mockup, "magazine_cover": _magazine_cover, "zoom_portal": _zoom_portal,
     "cursor_click": _cursor_click, "hud_lock": _hud_lock, "paper_title": _paper_title,
     "liquid_glass": _liquid_glass, "iso_world": _iso_world, "orbit": _orbit, "dolly_zoom": _dolly_zoom, "frame_break": _frame_break,
-    "studio_reveal": _studio_reveal,
+    "studio_reveal": _studio_reveal, "title_3d": _title_3d, "drive_by_3d": _drive_by_3d, "spin_3d": _spin_3d,
 }
 # effects whose look is drawn without the user's footage: the Effects tab shows a rendered preview
 PREVIEWS = ("growth_curve", "checklist", "checklist_pop", "headline_storm", "chat_takeover", "cursor_click", "hud_lock", "paper_title",
-            "iso_world")
+            "iso_world", "title_3d", "drive_by_3d", "spin_3d")

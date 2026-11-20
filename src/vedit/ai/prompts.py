@@ -134,13 +134,16 @@ Available operations (the field `op` picks one; leave unrelated fields null):
 - fit: {type: cover|contain|blur}  how footage fills the frame.
 - move: {type: move name, into?, start?, text?, why}  a signature move from the move library. Clip moves (speed_ramp,
   flash_cut, whip, before_after, zoom_out_reveal) use `into` = index of the clip (0 = first clip); moment moves
-  (punch_in, freeze_title, keyword_pop) use `start` = timeline seconds; freeze_title and keyword_pop need `text`.
+  (punch_in, freeze_title, keyword_pop, title_3d, drive_by_3d, spin_3d) use `start` = timeline seconds;
+  freeze_title, keyword_pop and title_3d need `text` (the words); drive_by_3d / spin_3d take `text` = the object
+  and an optional colour ('car #E11D48', 'dog', 'plane', 'coin', 'gem #5EEAD4').
   Use the concept's signature move once, where it lands hardest; 2-4 moves / effects per 30 s in total (move ops
   plus `fx apply` commands).
 - vedit: {command, name?}  any command from the VEDIT COMMANDS list, exactly as the editor's own AI would run it
   (without "vedit"). This is how you reach everything the editor can do: shapes and title cards, sound effects,
   synth music loops, filters and adjustment layers, colour looks, overlays from the library, kinetic text,
-  counters, charts, iso worlds, every signature effect (`fx apply`), text looks, layer animation and keyframes.
+  counters, charts, iso worlds, 3D objects (`3d add|move|spin|set`), every signature effect (`fx apply`), text
+  looks, layer animation and keyframes.
   They run in order AFTER the clips, titles, music, captions and colour grade are built, so they can build on
   them. Refer to things by reference, never by guessed ids or seconds:
     @C3 = the plan's 3rd clip, @T1 = its 1st title, @captions = the captions layer, @name = the layer an earlier
@@ -155,6 +158,16 @@ Available operations (the field `op` picks one; leave unrelated fields null):
   serve a beat; skip anything that would only decorate. Keep sound effects subtle (volume 0.4-0.8) and sparse,
   at most one texture overlay, everything inside the safe zone, and text readable against what is behind it.
   If a music op is given, don't add a second music track.
+  3D objects are real turning 3D, generated from code (no files): 3D text, car / truck / bus / plane / rocket,
+  dog / cat / bird / fish (legs walk, wheels turn, wings flap), coin / gem / heart / star / cube / sphere. Give one a
+  name and then motion: "3d add car --param style=sport --color #E11D48 --y 68% --width 560 --start @C2.start
+  --end @C2.end --no-intro" (name: car), "3d move @car --from -30%,68% --to 130%,68% --dur 1.8" (drives through,
+  facing its way), "3d spin @coin --axis x --period 1.2" (coin flip), "3d add text --text 'NEW DROP' --font anton
+  --y 25% --start 0 --end 2.5" (spins in). `--loop continue` keeps it going past B and back in from the other side;
+  `--loop pingpong` goes back and forth turning round; `--hop 8` makes animals step. Settings per kind are in
+  NAMES. Use 3D for ONE hero moment that serves a beat (the hook title, the product's value, a speed / travel
+  claim), in the edit's colours, inside the safe zone while it matters; never several 3D objects at once over a
+  talking person.
 
 Structure first: write `beats`, the edit's beat sheet in order (b1, b2, ...). The first beat is the hook. Each beat
 has a role (hook, problem, setup, demo, proof, benefit, payoff, cta, other) and a one-line purpose: what the viewer
@@ -182,6 +195,9 @@ Return only JSON."""
 CONCEPTS = """You are a creative director. For ONE short-form video variation, write 3 concepts that are clearly
 different ideas, not three wordings of one idea. A concept is: a title, an emotional arc, a visual motif that recurs,
 ONE signature editing move from the move library (or none), the exact opening (first 1.5 s), and why it would work.
+The library includes real 3D (title_3d: a 3D title spinning in; drive_by_3d: a 3D car / plane / animal crossing the
+frame; spin_3d: a coin / gem / heart / star turning): bold, toy-like and memorable, best for hooks, launches, value,
+speed or travel ideas. A 3D object can also be the recurring visual motif (the same coin, the same little dog).
 Rules:
 - Only promise what the footage can show (read the shot descriptions).
 - Respect the variation's angle, hook line and axes; the structure hint, if given, is binding.

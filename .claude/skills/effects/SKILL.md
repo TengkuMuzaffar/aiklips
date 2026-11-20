@@ -30,6 +30,9 @@ afterwards in the editor (Effects tab shows the same effects, with previews).
 | A warm, crafted title (paper cut-out kit) | **paper_title** | `fx apply paper_title --at 0.3 --text "Grandma's recipe; since 1962"` |
 | A premium caption / stat on the footage | **liquid_glass** (frosted panel) | `fx apply liquid_glass --at 2 --text "Built in a day; no code"` |
 | A product world, "how it works", a place | **iso_world** (isometric, builds block by block) | `fx apply iso_world --at 1 --text city|island|desk|stack` |
+| A launch, a hook title that must feel big | **title_3d** (3D letters spin in, sway) | `fx apply title_3d --at 0 --text "NEW DROP"` |
+| Speed, delivery, travel, pets | **drive_by_3d** (3D car / plane / dog ... crosses the frame) | `fx apply drive_by_3d --at 2 --text 'car #E11D48'` |
+| Money, value, likes, ratings | **spin_3d** (coin flip, gem, heart, star turning) | `fx apply spin_3d --at 4 --text coin` |
 | Keywords about the person (traits, features) | **orbit** (words circle them, behind and in front) | `fx apply orbit --at 3 --text "fast; fun; free" [--amount 3.2 = seconds per turn]` |
 | A realisation, shock, "wait what" | **dolly_zoom** (vertigo) | `fx apply dolly_zoom --at 5 --dur 1.5 [--amount 1.4]` |
 | The person bursting out of a moment / photo | **frame_break** (alias frame_escape) | `fx apply frame_break --at 2 --dur 2.5 --text "Out of the frame"` |

@@ -51,6 +51,15 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 - **Sound.** Speech clips keep their sound and the music ducks under them; b-roll noise (wind, traffic, hum) is
   muted so the music carries those parts. `vedit sound report` shows each clip's sound, `vedit sound auto` applies
   those defaults, `vedit volume 0 --clip cX` mutes one clip. Never cut a speaking clip mid-word.
+- **3D objects.** `vedit 3d add <kind>` makes a real 3D object from code (nothing downloaded): 3D text, vehicles,
+  animals, shapes, or the user's .glb / .obj (`--src`, needs the `ai` extra). It turns in perspective (`--yaw/--pitch`),
+  spins 360 (`3d spin`), and travels from A to B (`3d move --loop continue` keeps going and wraps round; vehicles and
+  animals face where they go, their wheels / legs / wings move). Use it for one hero moment (a title that spins in,
+  a car driving through, a coin flipping), not as decoration everywhere. Load the `3d` skill first. Iso worlds stay for
+  whole miniature scenes; 3D objects are single things that move and turn.
+  One-step versions: `fx apply title_3d --at T --text "WORDS"`, `fx apply drive_by_3d --at T --text 'car #E11D48'`
+  (car | truck | bus | plane | rocket | dog | cat | bird | fish), `fx apply spin_3d --at T --text coin` (coin | gem |
+  heart | star | cube | sphere ...). Generate uses the same moves and `3d` commands.
 - **Signature moves / effects.** One memorable move beats five generic ones: `vedit fx apply <move>` (2-4 per 30 s;
   load the `effects` skill for which effect fits which moment). An effect's layers form one **group** (one row on the
   timeline, `[gN]` in `info`): move / retime it with `group move gN --to T`, delete it with `group remove gN`; edit a
@@ -162,7 +171,7 @@ music styles | music make [style] [--bpm --key Am --scale --chords '1,6,4,5' --b
 music add <file> [--volume 0.2 --duck/--no-duck --offset S] | music set <id> [--volume --start --offset S --end T|none --duck/--no-duck --loop/--no-loop] | music remove <id>
 audit [--no-render --ai] | why <clip|layer> "reason" [--role hook|problem|setup|demo|proof|benefit|payoff|cta --beat b2]
 audit-settings [--threshold 80 --max-rounds 3] | sound report | sound auto
-fx list | fx apply punch_in|snap_zoom|digital_zoom|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal|growth_curve|checklist|checklist_pop|headline_storm|broll_overlay|chat_takeover|phone_mockup|magazine_cover|zoom_portal|cursor_click|hud_lock|paper_title|liquid_glass|iso_world|orbit|dolly_zoom|frame_break|studio_reveal [--clip ID --at T --text W|'a; b; c' --source sN --dur S --amount X --box x,y,w,h]
+fx list | fx apply punch_in|snap_zoom|digital_zoom|speed_ramp|freeze_title|flash_cut|whip|keyword_pop|before_after|zoom_out_reveal|growth_curve|checklist|checklist_pop|headline_storm|broll_overlay|chat_takeover|phone_mockup|magazine_cover|zoom_portal|cursor_click|hud_lock|paper_title|liquid_glass|iso_world|title_3d|drive_by_3d|spin_3d|orbit|dolly_zoom|frame_break|studio_reveal [--clip ID --at T --text W|'a; b; c' --source sN --dur S --amount X --box x,y,w,h]
 fx filters | fx add <filter> [--clip ID | --layer ID --set amount=20 ... --start S --end S --fade-in S --fade-out S]
 fx set <fxN> amount=30 on=false start=1 end=2.5 fade_in=0.3 | fx replace <fxN> <filter> | fx move <fxN> <index> | fx copy --from ID [--to ID] | fx remove <fxN|all>
 taste [--clear] | ai-models [--vision --planner --editor --auditor <provider/model> --clear]   (saved default model per role)
@@ -173,6 +182,8 @@ sound fade [--clip ID] --in S --out S | sound voice clean|studio|off [--clip ID]
 style list | style show <key> | style set <key|none>
 iso items [--category] | iso add <world|empty> [--theme pastel|bright|corporate|night --start --end --x --y --width] | iso list <id> | iso set <id> [--theme --world --light --outline/--no-outline --build drop|grow|pop] | iso scene <id> scene.json
 iso item add <id> <kind> [--at x,y --z --rot 0-3 --size --color --color2 --label --param k=v] | iso item set <id> <n> [...] | iso item remove <id> <n>
+3d kinds | 3d add text|car|truck|bus|plane|rocket|dog|cat|bird|fish|cube|sphere|gem|coin|heart|star|model [--text --font --src FILE --color --color2 --param k=v --start --end --x --y --width --yaw --pitch --roll --depth --spin S --no-intro] | 3d show <id>
+3d set <id> [--kind --text --font --color --color2 --param k=v --yaw --pitch --roll --depth --fov --light --outline --gait/--no-gait] | 3d move <id> --from x,y --to x,y [--dur --loop once|repeat|pingpong|continue --no-face --hop PX --scale-from --scale-to --ease --off] | 3d spin <id> [--axis y|x|z|yx|xyz --period S --sway DEG --off]
 group list | group make <ids...> [--name] | group set <g> [--name --collapsed/--expanded] | group move <g> --to T|--by S | group ungroup <g> | group remove <g>
 motion set <id> [--split word|letter|line --anim --stagger --dur --ease --morph-to KIND --path 'x,y ...' --closed] | motion draw <id> [--dur --ease --out] | motion morph <id> --to KIND [--at --dur --ease | --loop --period]
 counter add <to> [--from --decimals --prefix --suffix --sep --dur --ease --x --y --size --color --font] | counter set <id> [... | --off]
@@ -253,6 +264,7 @@ Detailed recipes live in `.claude/skills/`:
 - `transitions`
 - `effects`: signature effects (snap / digital zoom, growth curve, checklists, headline storm, b-roll overlay ...): which one for which moment, and their numbers
 - `color`: match clips to each other or a reference, grade with looks, LUTs
+- `3d`: 3D objects (text, vehicles, animals, shapes, your own model): which kind, how to spin / move them, recipes
 - `motion`: design projects (Design studio): scenes, shapes, stretch / size / colour motion, and whole videos in one MotionPlan
 
 Load the relevant one before doing that kind of edit.
@@ -317,6 +329,13 @@ Load the relevant one before doing that kind of edit.
     render need an `if __name__ == "__main__"` guard). The composite reads layers with `-itsoffset` + an `enable`
     window (half a frame of slack) and overlays in `format=yuv420`; previews use a hardware encoder (`media.hw_h264`).
     Check speed changes on a many-layer project and compare frames with the old code (PSNR) before trusting them.
+  - 3D objects: `Layer.type == "obj3d"` + `Layer.obj3d` (`Obj3D` in project.py). Recipes (meshes from code, with
+    gait over time) `ops/items3d.py`, mesh primitives + 3D text from glyph outlines (fontTools) `ops/mesh3d.py`, the CPU
+    perspective renderer (painter's algorithm, flat light, square sprite of `width` so turning never jitters)
+    `ops/render3d.py` (bump `VERSION` when drawing changes), edits `ops/objects3d.py` (CLI `3d` + editor `obj3d_*` ops).
+    Motion is props `yaw` / `pitch` / `roll` + presets `spin3d`, `spin3d_in`, `sway3d`, `travel` in `ops/animate.py`
+    **and** `static/animate.js`. Export: `render/layers.py` (cached per quarter degree + gait frame); preview: sprites
+    with `motion` {yaw, pitch, roll, kt}, the 3D tab, ⟲ orbit knob and A / B path dots in index.html.
   - Motion graphics (no browser): `ops/motion.py` (counters, kinetic text = `render_text(spans=)` pieces composed
     per frame, field validation), `ops/chart.py` (charts), paths / trim / morph outlines in `ops/shapes.py`, drawn
     in `overlay_style.render_shape(draw=, morph=)`; progress props `draw` / `morph` / `count` + cubic-bezier easing in

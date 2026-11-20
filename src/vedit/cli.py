@@ -56,6 +56,8 @@ scene_app = typer.Typer(help="Design projects: scenes (pages) played back to bac
 iso_app = typer.Typer(help="Isometric worlds: ready-made scenes or your own, from a library of 60+ items (`iso items`)")
 iso_item_app = typer.Typer(help="The items of an iso world: add / set (move, turn, recolour, label, settings) / remove")
 iso_app.add_typer(iso_item_app, name="item")
+obj3d_app = typer.Typer(help="3D objects that turn in perspective: 3D text, cars, trucks, planes, rockets, dogs, cats, birds, fish, "
+                              "shapes, or your own .glb / .obj; spin them 360 and move them from A to B (`3d kinds`)")
 group_app = typer.Typer(help="Layer groups: an effect's layers as one row on the timeline (move / rename / ungroup / delete together)")
 style_app = typer.Typer(help="Motion styles: a look as numbers (easing, timing, palette, fonts) the AI follows and the audit checks")
 motion_app = typer.Typer(help="Motion graphics on the tracks: kinetic text (by word / letter / line), draw-on, morph, paths")
@@ -70,7 +72,7 @@ for name, sub in [("text", text_app), ("image", image_app), ("layer", layer_app)
                   ("overlay", overlay_app), ("shape", shape_app), ("marker", marker_app), ("proxy", proxy_app), ("adjust", adjust_app),
                   ("version", version_app), ("template", template_app), ("track", track_app), ("scene", scene_app),
                   ("safe", safe_app), ("motion", motion_app), ("chart", chart_app), ("counter", counter_app),
-                  ("style", style_app), ("group", group_app), ("iso", iso_app)]:
+                  ("style", style_app), ("group", group_app), ("iso", iso_app), ("3d", obj3d_app)]:
     app.add_typer(sub, name=name)
 text_app.add_typer(look_app, name="look")
 
@@ -1068,6 +1070,118 @@ def iso_scene(layer: str, scene_file: Path = typer.Argument(..., help="JSON: {th
     with edit(f"iso scene {layer}") as tx:
         _iso(tx.project, layer).iso = sc
     emit({"layer": layer, "items": len(sc.items)}, f"{layer}: {len(sc.items)} items")
+
+
+@obj3d_app.command("kinds")
+def obj3d_kinds():
+    """What can be made in 3D: each kind, its settings (--param k=v) and colours."""
+    from .ops import items3d
+
+    rows = items3d.catalog()
+    emit({"kinds": rows, "presets": ["spin3d", "spin3d_in", "sway3d", "travel"]},
+         "\n".join(f"  {r['kind']:<8} {r['category']:<9} {r['note']}" + (f"\n           settings: {', '.join(f'{k}={v!r}' for k, v in r['params'].items())}"
+                                                                         if r["params"] else "") for r in rows))
+
+
+def _obj_params(param: Optional[list[str]]) -> dict:
+    from .ops import iso_items
+
+    return iso_items.parse_params(param)
+
+
+@obj3d_app.command("add")
+def obj3d_add(kind: str = typer.Argument(..., help="text | car | truck | bus | plane | rocket | dog | cat | bird | fish | cube | sphere | gem | coin | heart | star | model"),
+              text: Optional[str] = typer.Option(None, help="kind text: the words"),
+              font: Optional[str] = typer.Option(None, help="kind text: a font key (`vedit fonts`)"),
+              src: Optional[Path] = typer.Option(None, help="kind model: a .glb / .gltf / .obj / .stl file"),
+              color: Optional[str] = None, color2: Optional[str] = None,
+              param: Optional[list[str]] = typer.Option(None, "--param", help="The kind's own settings: style=sport, ears=pointy ... (`3d kinds`)"),
+              start: float = 0.0, end: Optional[float] = None, x: str = "50%", y: str = "50%",
+              width: Optional[int] = typer.Option(None, help="Size on the canvas (px): the box it turns in"),
+              yaw: Optional[float] = typer.Option(None, help="Resting turn round its up axis (degrees; 0 = side on, facing right)"),
+              pitch: Optional[float] = typer.Option(None, help="Tip towards the camera (degrees; default 18)"),
+              roll: Optional[float] = None,
+              depth: Optional[float] = typer.Option(None, help="kind text: letter depth (fraction of the height, default 0.35)"),
+              spin: Optional[float] = typer.Option(None, help="Keep turning: seconds per 360 (negative = the other way)"),
+              intro: bool = typer.Option(True, "--intro/--no-intro", help="Spin in while growing at the start"),
+              scene: Optional[str] = typer.Option(None, help="Design: the scene to put it in")):
+    """Add a 3D object (generated from code: nothing to download). Then `3d move` (A -> B) / `3d spin`."""
+    from .ops import objects3d, scenes
+
+    d = pdir()
+    src_s = None
+    if src is not None:
+        sp = src.expanduser().resolve()
+        if not sp.exists():
+            raise VeditError(f"3D model not found: {sp}")
+        src_s = store_media_path(d, sp)
+    with edit(f"3d add {kind}") as tx:
+        l = objects3d.add_object(tx.project, kind, text=text, font=font, src=src_s, color=color, color2=color2, params=_obj_params(param),
+                                 start=start, end=end, x=x, y=y, width=width, pdir=d, spin=spin, intro=intro, yaw=yaw, pitch=pitch,
+                                 roll=roll, depth=depth)
+        scenes.place_in_scene(tx.project, l, scene)
+    emit({"layer": l.id, "kind": kind, "width": l.width}, f"Added 3D {kind} {l.id}")
+
+
+@obj3d_app.command("set")
+def obj3d_set(layer: str, kind: Optional[str] = None, text: Optional[str] = None, font: Optional[str] = None,
+              src: Optional[Path] = None, color: Optional[str] = None, color2: Optional[str] = None,
+              param: Optional[list[str]] = typer.Option(None, "--param", help="k=v (k=default removes one)"),
+              yaw: Optional[float] = None, pitch: Optional[float] = None, roll: Optional[float] = None,
+              depth: Optional[float] = None, fov: Optional[float] = typer.Option(None, help="Lens 5-100: small = flat, large = strong perspective"),
+              light: Optional[float] = typer.Option(None, help="0-1: how much the light shapes it"),
+              outline: Optional[str] = typer.Option(None, help="Edge line colour (#RRGGBBAA) or none"),
+              gait: Optional[bool] = typer.Option(None, "--gait/--no-gait", help="Legs / wheels / wings move over time")):
+    """Change a 3D object (its turn, colours, lens, light, kind settings)."""
+    from .ops import objects3d
+
+    d = pdir()
+    src_s = store_media_path(d, src.expanduser().resolve()) if src is not None else None
+    with edit(f"3d set {layer}") as tx:
+        ob = objects3d.set_object(objects3d.obj_layer(tx.project, layer), _obj_params(param) or None, kind, pdir=d, text=text, font=font,
+                                  src=src_s, color=color, color2=color2, outline=outline, depth=depth, yaw=yaw, pitch=pitch, roll=roll,
+                                  fov=fov, light=light, gait=gait)
+    emit({"layer": layer, "obj3d": ob.model_dump(exclude_defaults=True)}, f"{layer}: 3D {ob.kind} updated")
+
+
+@obj3d_app.command("move")
+def obj3d_move(layer: str, from_: str = typer.Option("15%,50%", "--from", help="Point A: x,y (px or NN%)"),
+               to: str = typer.Option("85%,50%", help="Point B: x,y"),
+               dur: Optional[float] = typer.Option(None, help="Seconds from A to B (default: the layer's length for once, else 3)"),
+               loop: str = typer.Option("once", help="once | repeat | pingpong | continue (keeps going past B, wraps round)"),
+               face: bool = typer.Option(True, "--face/--no-face", help="Turn to face where it goes (cars, animals)"),
+               hop: float = typer.Option(0.0, help="Bounce height in px while moving (walking / hopping)"),
+               scale_from: float = typer.Option(1.0, help="Size at A (smaller = further away)"), scale_to: float = typer.Option(1.0, help="Size at B"),
+               ease_name: Optional[str] = typer.Option(None, "--ease", help="Easing A -> B (default ease_in_out for once, else linear)"),
+               off: bool = typer.Option(False, "--off", help="Stop travelling")):
+    """Move a 3D object from A to B (and keep going, back and forth or round again)."""
+    from .ops import objects3d
+
+    with edit(f"3d move {layer}") as tx:
+        pr = objects3d.move_object(objects3d.obj_layer(tx.project, layer), from_, to, dur, loop, face, hop, scale_from, scale_to, ease_name, off)
+    emit({"layer": layer, "travel": pr.params if pr else None}, f"{layer}: " + ("stopped" if off else f"{from_} -> {to} ({loop})"))
+
+
+@obj3d_app.command("spin")
+def obj3d_spin(layer: str, axis: str = typer.Option("y", help="y (turntable) | x (flip) | z (roll) | yx | xyz (tumble)"),
+               period: float = typer.Option(3.0, help="Seconds per full 360 turn (negative = the other way)"),
+               sway: Optional[float] = typer.Option(None, help="Instead of spinning, turn this many degrees back and forth"),
+               off: bool = typer.Option(False, "--off", help="Stop spinning / swaying")):
+    """Spin a 3D object round and round (360), or sway it."""
+    from .ops import objects3d
+
+    with edit(f"3d spin {layer}") as tx:
+        objects3d.spin_object(objects3d.obj_layer(tx.project, layer), axis, period, off, sway)
+    emit({"layer": layer}, f"{layer}: " + ("no spin" if off else (f"sway {sway} deg" if sway else f"spin {axis} every {period:g}s")))
+
+
+@obj3d_app.command("show")
+def obj3d_show(layer: str):
+    """A 3D object's settings and motion."""
+    from .ops import objects3d
+
+    info = objects3d.describe(objects3d.obj_layer(load(pdir()), layer))
+    emit(info, json.dumps(info, indent=1))
 
 
 @group_app.command("list")

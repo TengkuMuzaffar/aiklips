@@ -17,6 +17,7 @@ dependencies = [
     "pywebview>=6.2.1",
     "python-multipart>=0.0.33",
     "websockets>=12",
+    "fonttools>=4.40",  # 3D text: glyph outlines (ops/mesh3d.py)
 ]
 
 [project.optional-dependencies]

@@ -600,6 +600,14 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 #pv-selbox .th.rot::after { content: ""; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 14px; margin-left: -.75px; background: var(--sel); pointer-events: none; }
 #pv-selbox.small .th.side { display: none; }
 #pv-guides { position: absolute; z-index: 2; pointer-events: none; display: none; overflow: visible; }
+#pv-selbox .th.orbit { width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; top: calc(100% + 24px); left: 50%; cursor: move; display: none;
+  background: var(--sel); color: #fff; font-size: 12px; line-height: 15px; text-align: center; }
+#pv-selbox.o3d .th.orbit { display: block; }
+#pv-path { position: absolute; inset: 0; z-index: 4; pointer-events: none; display: none; }
+#pv-path svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+#pv-path .pl { stroke: var(--sel); stroke-width: 1.5; stroke-dasharray: 6 5; }
+#pv-path .pd { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: #111c; border: 2px solid var(--sel);
+  color: #fff; font: 600 11px/16px system-ui; text-align: center; pointer-events: auto; cursor: grab; touch-action: none; box-shadow: 0 1px 4px #0009; }
 #pv-snap { position: absolute; z-index: 3; pointer-events: none; display: none; overflow: visible; }
 .seg-row { display: flex; gap: 4px; flex-wrap: wrap; }
 .seg-row button { padding: 3px 8px; font-size: 11.5px; }
@@ -882,7 +890,7 @@ header #status.error { color: var(--danger); }
   <!-- 1. project / inspector -->
   <section class="pane" id="p-insp">
     <div class="pane-h">
-      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="elements" title="Elements: colour screens, light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture. Click to add at the playhead, or drag onto a track">Elements</button><button class="tab" data-tab="sound" title="Sound effects: whoosh, pop, riser, impact... made by aiklips' own synth. Describe one for the AI, tweak pitch and length, add at the playhead">Sound</button><button class="tab" data-tab="music" title="Music: make your own original looping track (lofi, trap, house, synthwave, chiptune...) with drums, chords, bass and a melody. Free to use, no downloads">Music</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
+      <div class="tabs"><button class="tab on" data-tab="inspector" title="Settings of the selected clip, layer or music">Properties</button><button class="tab" data-tab="effects" title="Effects: blur, glow, grain, film, VHS, shake... and signature moves. Search, then click or drag onto a clip">Effects</button><button class="tab" data-tab="elements" title="Elements: colour screens, light leaks, dust, grain, frames, stickers, shapes, and your videos as picture-in-picture. Click to add at the playhead, or drag onto a track">Elements</button><button class="tab" data-tab="3d" title="3D: text, cars, planes, animals, shapes or your own model, drawn in 3D. Spin them 360° and move them from A to B">3D</button><button class="tab" data-tab="sound" title="Sound effects: whoosh, pop, riser, impact... made by aiklips' own synth. Describe one for the AI, tweak pitch and length, add at the playhead">Sound</button><button class="tab" data-tab="music" title="Music: make your own original looping track (lofi, trap, house, synthwave, chiptune...) with drums, chords, bass and a melody. Free to use, no downloads">Music</button><button class="tab" data-tab="media" title="All imported media files">Media</button><button class="tab" data-tab="history" title="Edit history: jump back to any step">History</button></div>
     </div>
     <div id="insp-body"></div>
     <div class="ai-lock slim" id="insp-lock" hidden><div class="ai-card"><span class="ai-orb"></span><span>AI is editing, so properties are locked</span></div></div>
@@ -899,6 +907,7 @@ header #status.error { color: var(--danger); }
       <svg id="pv-guides"></svg>
       <div id="pv-hit" title="Click text, images or videos to select them, drag to move (snaps to the centre and the safe zone)"></div>
       <div id="pv-selbox"></div>
+      <div id="pv-path"><svg><line class="pl"/></svg><div class="pd" data-p="from">A</div><div class="pd" data-p="to">B</div></div>
       <svg id="pv-snap"></svg>
       <div id="pv-busy" hidden><div class="pv-card"><span class="spin big"></span><div><b id="pv-title">Updating preview</b><span id="pv-sub"></span></div><span id="pv-time"></span><div class="pv-bar"></div></div></div>
       <div id="pv-ai" hidden><i></i>AI is editing</div>
@@ -1328,7 +1337,7 @@ function contentKey(l) {
       shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner,
       // motion (ops/motion.py, ops/chart.py)
       path: l.path, closed: l.closed, morph_to: l.morph_to, split: l.split, sa: l.split_anim, stg: l.stagger, sd: l.split_dur, se: l.split_ease,
-      counter: l.counter, chart: l.chart, iso: l.iso });
+      counter: l.counter, chart: l.chart, iso: l.iso, o3d: l.obj3d });
     CONTENT.set(l, k);
   }
   return k;
@@ -1372,6 +1381,17 @@ function spriteFor(l, T, pr) {
     return [spriteFetch(l, Object.keys(m).length ? { motion: m } : {}), 1];
   }
   if (l.type === "chart" || l.type === "iso") return [spriteFetch(l, pr.draw < 0.9995 ? { motion: { draw: q2(pr.draw) } } : {}), 1];
+  if (l.type === "obj3d") { // a sprite per turn (3° steps while playing, exact when paused) and per gait step (legs, wheels)
+    const playing = !video.paused, st = playing ? 3 : 0.5, q = (v) => Math.round(v / st) * st;
+    const gait = l.obj3d && l.obj3d.gait !== false && GAITED3D.has(l.obj3d.kind);
+    const kt = gait ? Math.round(Math.max(0, T - l.start) * (playing ? 15 : 30)) / (playing ? 15 : 30) : 0;
+    const m = { yaw: q(pr.yaw), pitch: q(pr.pitch), roll: q(pr.roll), kt };
+    if (playing) { // warm up the next moment
+      const ldur = Math.max(0.01, layerEnd(l) - l.start), nx = VAnim.propsAt(l, Math.min(ldur, T - l.start + 0.12), ldur, P().canvas);
+      spriteFetch(l, { motion: { yaw: q(nx.yaw), pitch: q(nx.pitch), roll: q(nx.roll), kt: gait ? kt + 2 / 15 : 0 } });
+    }
+    return [spriteFetch(l, { motion: m }), 1];
+  }
   if (l.type === "text" && l.split && l.split !== "none" && !l.counter) { // kinetic text: one sprite per 1/30 s while it moves
     const t = T - l.start, end = KEND.get(contentKey(l)) ?? 10;
     if (t >= end) return [spriteFetch(l, { motion: { kt: 600 } }), 1];
@@ -1615,7 +1635,7 @@ const TH = [["nw", -1, -1], ["n", 0, -1], ["ne", 1, -1], ["e", 1, 0], ["se", 1, 
 function drawSelBox() {
   const sb = $("#pv-selbox"), l = SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id), el = l && l.type !== "adjust" && layerEl(l.id);
   const g = el && LV.get(l.id)?.g;
-  if (!g || DRAW) { sb.style.display = "none"; return; }
+  if (!g || DRAW) { sb.style.display = "none"; $("#pv-path").style.display = "none"; return; }
   if (!sb.children.length) { // build the handles once
     for (const [k, hx, hy] of TH) {
       const t = h("div", { class: "th" + (hx && hy ? "" : " side"), "data-h": k, style: { left: `${(hx + 1) * 50}%`, top: `${(hy + 1) * 50}%` } });
@@ -1625,7 +1645,12 @@ function drawSelBox() {
     const r = h("div", { class: "th rot", "data-h": "rot", title: "Drag to rotate (snaps to 0 / 45 / 90°, Shift = 15° steps)" });
     r.addEventListener("pointerdown", (e) => transformDrag(e, "rot", 0, 0));
     sb.append(r);
+    const o = h("div", { class: "th orbit", "data-h": "orbit", title: "3D: drag to turn it (left / right = yaw, up / down = pitch, Shift = roll)" }, "⟲");
+    o.addEventListener("pointerdown", orbitDrag);
+    sb.append(o);
   }
+  sb.classList.toggle("o3d", l.type === "obj3d");
+  drawPath3D(l);
   const box = videoBox();
   Object.assign(sb.style, { display: "block", left: `${box.left + g.x * box.sc - g.w / 2}px`, top: `${box.top + g.y * box.sc - g.h / 2}px`,
     width: `${g.w}px`, height: `${g.h}px`, transform: `rotate(${g.rot}deg)` });
@@ -1634,6 +1659,71 @@ function drawSelBox() {
     const k = t.dataset.h, cur = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 }[k];
     if (cur != null) t.style.cursor = ["ns-resize", "nesw-resize", "ew-resize", "nwse-resize"][Math.round(((cur + g.rot) % 180 + 180) % 180 / 45) % 4];
   }
+}
+// 3D objects: the ⟲ knob turns the object itself (yaw / pitch, Shift = roll); one undo step per drag
+function orbitDrag(e) {
+  e.preventDefault(); e.stopPropagation();
+  if (!ST || aiBlocked()) return;
+  const l = SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id);
+  if (!l || l.type !== "obj3d") return;
+  const ob0 = { yaw: l.obj3d.yaw ?? -25, pitch: l.obj3d.pitch ?? 18, roll: l.obj3d.roll ?? 0 }, x0 = e.clientX, y0 = e.clientY;
+  const tgt = e.currentTarget; tgt.setPointerCapture(e.pointerId);
+  let moved = false;
+  const wrap = (a) => +((((a + 180) % 360) + 360) % 360 - 180).toFixed(1);
+  const mv = (ev) => {
+    const dx = ev.clientX - x0, dy = ev.clientY - y0;
+    if (!moved && Math.hypot(dx, dy) < 2) return;
+    moved = true; PVD.drag = { id: l.id };
+    const nv = ev.shiftKey ? { ...ob0, roll: wrap(ob0.roll + dx * 0.6) }
+      : { ...ob0, yaw: wrap(ob0.yaw + dx * 0.6), pitch: Math.max(-90, Math.min(90, +(ob0.pitch + dy * 0.4).toFixed(1))) };
+    l.obj3d = { ...l.obj3d, ...nv }; markDirty(l);
+  };
+  tgt.addEventListener("pointermove", mv);
+  tgt.addEventListener("pointerup", async () => {
+    tgt.removeEventListener("pointermove", mv); PVD.drag = null;
+    if (moved) await op("obj3d_set", { layer: l.id, yaw: l.obj3d.yaw, pitch: l.obj3d.pitch, roll: l.obj3d.roll });
+  }, { once: true });
+}
+// 3D objects that travel: points A and B on the preview, dashed line between; drag a point to move it
+function drawPath3D(l) {
+  const pp = $("#pv-path"), tr = l && l.type === "obj3d" && travelOf(l);
+  if (!tr) { pp.style.display = "none"; return; }
+  const box = videoBox(), cv = P().canvas;
+  const pt = (v) => { const [x, y] = (Array.isArray(v) ? v : String(v).split(",")).map((s) => String(s).trim());
+    return [VAnim.parsePos(x, cv.width), VAnim.parsePos(y, cv.height)]; };
+  const k = tr.params || {}, A = pt(k.from ?? "15%,50%"), B = pt(k.to ?? "85%,50%");
+  const scr = ([x, y]) => [box.left + x * box.sc, box.top + y * box.sc];
+  const [ax, ay] = scr(A), [bx, by] = scr(B);
+  pp.style.display = "block";
+  const ln = pp.querySelector(".pl");
+  ln.setAttribute("x1", ax); ln.setAttribute("y1", ay); ln.setAttribute("x2", bx); ln.setAttribute("y2", by);
+  for (const d of pp.querySelectorAll(".pd")) {
+    const [x, y] = d.dataset.p === "from" ? [ax, ay] : [bx, by];
+    d.style.left = `${x}px`; d.style.top = `${y}px`;
+    if (!d._wired) { d._wired = true; d.addEventListener("pointerdown", pathDrag); }
+  }
+}
+function pathDrag(e) {
+  e.preventDefault(); e.stopPropagation();
+  if (!ST || aiBlocked()) return;
+  const l = SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id), tr = l && travelOf(l);
+  if (!tr) return;
+  const which = e.currentTarget.dataset.p, box = videoBox(), st = $("#stage").getBoundingClientRect();
+  const tgt = e.currentTarget; tgt.setPointerCapture(e.pointerId);
+  let moved = false;
+  const mv = (ev) => {
+    moved = true; PVD.drag = { id: l.id };
+    const x = Math.round((ev.clientX - st.left - box.left) / box.sc), y = Math.round((ev.clientY - st.top - box.top) / box.sc);
+    tr.params = { ...tr.params, [which]: `${x},${y}` }; // live: the preview follows the new path
+  };
+  tgt.addEventListener("pointermove", mv);
+  tgt.addEventListener("pointerup", async () => {
+    tgt.removeEventListener("pointermove", mv); PVD.drag = null;
+    if (!moved) return;
+    const k = tr.params;
+    await op("obj3d_move", { layer: l.id, from: k.from, to: k.to, dur: k.dur, loop: k.loop || "once", face: k.face ?? true, hop: k.hop || 0,
+      scale_from: k.scale_from ?? 1, scale_to: k.scale_to ?? 1, ease: k.ease });
+  }, { once: true });
 }
 // Drag a transform handle. Corners scale uniformly about the opposite corner; sides stretch about the opposite side
 // (shapes: their real width / height, so the outline stays crisp; others: sx / sy); "rot" rotates about the centre.
@@ -1867,6 +1957,7 @@ function layerLabel(l) {
   if (l.type === "shape") return l.morph_to ? `${l.shape} → ${l.morph_to}` : l.shape;
   if (l.type === "glass") return "liquid glass";
   if (l.type === "iso") return `iso world (${(l.iso?.blocks || []).length} blocks)`;
+  if (l.type === "obj3d") return `3D ${l.obj3d?.kind === "text" ? `“${l.obj3d.text || ""}”` : l.obj3d?.kind || ""}`;
   if (l.type === "chart") return `${l.chart?.kind || "bar"} chart: ${(l.chart?.items || []).map((i) => i.label || i.value).slice(0, 4).join(", ")}`;
   if (l.type === "adjust") return [l.grade?.look, ...(l.effects || []).filter((e) => e.type === "fx").map((e) => e.params.key), l.grade && !l.grade.look ? "colour" : null].filter(Boolean).join(" + ") || "adjustment";
   return l.words.slice(0, 6).map((w) => w.text).join(" ");
@@ -2144,6 +2235,7 @@ function renderInspector() {
   if (TAB === "media") return body.append(...renderMedia());
   if (TAB === "effects") return body.append(...renderEffects());
   if (TAB === "elements") return body.append(...renderElements());
+  if (TAB === "3d") return body.append(...render3D());
   if (TAB !== "music" && MUS_AUDIO && !MUS_AUDIO.paused) musStop();
   if (TAB === "sound") return body.append(...renderSound());
   if (TAB === "music") return body.append(...renderLoops());
@@ -2301,7 +2393,7 @@ function renderEffects() {
     if (!FX_CAT || FX_CAT === "Signature moves") {
       const moves = FX.moves.filter((m) => match(`${m.name.replace(/_/g, " ")} ${m.about} ${m.category} signature move effect`));
       n += moves.length;
-      for (const cat of ["Camera", "Graphics", "Subject", "Frames", "Kits", "B-roll", "Transitions", "Moves"]) {
+      for (const cat of ["Camera", "Graphics", "3D", "Subject", "Frames", "Kits", "B-roll", "Transitions", "Moves"]) {
         const ms = moves.filter((m) => (m.category || "Moves") === cat);
         if (!ms.length) continue;
         grid.append(h("div", { class: "fx-cat" }, `Signature · ${cat}`), h("div", { class: "fx-grid" }, ms.map((m) => {
@@ -3427,7 +3519,7 @@ function renderLayer(l) {
   const lst = (k) => (v) => { l.style[k] = v; markDirty(l); };
   const presets = ["fade_in", "pop_in", "slide_in", "zoom_in", "rise_in", "wipe_in", "grow_in", "stretch_in", "punch", "spin_in", "drop_in", "typewriter",
     "fade_out", "pop_out", "slide_out", "wipe_out", "shake", "bob", "pulse", "wiggle", "spin", "float", "breathe",
-    ...(["shape", "chart", "iso"].includes(l.type) ? ["draw_in", "draw_out"] : []), ...(l.counter ? ["count_up"] : []), ...(l.morph_to ? ["morph_loop"] : [])];
+    ...(["shape", "chart", "iso"].includes(l.type) ? ["draw_in", "draw_out"] : []), ...(l.type === "obj3d" ? ["spin3d_in"] : []), ...(l.counter ? ["count_up"] : []), ...(l.morph_to ? ["morph_loop"] : [])];
   const mset = (args) => op("motion_set", { layer: l.id, ...args });
   const hasPreset = (n) => l.presets.some((x) => x.name === n);
   const togglePreset = (n) => (hasPreset(n) ? op("preset_remove", { layer: l.id, name: n }) : op("preset_add", { layer: l.id, name: n }));
@@ -3480,11 +3572,11 @@ function renderLayer(l) {
     field("Grow in", h("button", { class: "ghost" + (hasPreset("draw_in") ? " on" : ""), onclick: () => togglePreset("draw_in") }, hasPreset("draw_in") ? "Growing in ✓" : "Grow it in")),
   ] : [];
   const frameFields = [
-    h("label", { class: "full sec" }, isText || ["chart", "iso", "glass"].includes(l.type) ? "Blend" : "Frame & blend"),
+    h("label", { class: "full sec" }, isText || ["chart", "iso", "glass", "obj3d"].includes(l.type) ? "Blend" : "Frame & blend"),
     field("Blend", selectIn(l.blend || "normal", [["normal", "Normal"], ["screen", "Screen (lighten: leaks, dust, glow)"], ["add", "Add (brighter)"],
       ["overlay", "Overlay (texture, contrast)"], ["multiply", "Multiply (darken: paper, shadows)"], ["lighten", "Lighten"], ["darken", "Darken"]], (v) => set({ blend: v }))),
-    !isText && !["chart", "iso"].includes(l.type) && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
-    !isText && !["chart", "iso", "glass"].includes(l.type) ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
+    !isText && !["chart", "iso", "obj3d"].includes(l.type) && !(l.type === "shape" && l.shape !== "rect") ? field("Corners", rangeIn(l.radius || 0, 0, 200, 1, (v) => set({ radius: v }), lf("radius"))) : null,
+    !isText && !["chart", "iso", "glass", "obj3d"].includes(l.type) ? field("Border", h("div", { class: "pair" }, colorIn(l.border_color, (v) => set({ border_color: v }), lf("border_color")),
       numIn(l.border_width || 0, (v) => set({ border_width: v }), 1, { min: 0, max: 60, title: "Border width px (inside the edge)" }))) : null,
     l.type === "image" || l.type === "video" ? field("Circle", h("input", { type: "checkbox", checked: l.mask === "circle", title: "Cut it out as a circle (face cam)",
       onchange: (e) => set({ mask: e.target.checked ? "circle" : "rect" }) })) : null,
@@ -3516,7 +3608,7 @@ function renderLayer(l) {
     field("Frost", rangeIn(l.glass_blur ?? 22, 0, 80, 1, (v) => set({ glass_blur: v }), lf("glass_blur"))),
     field("Tint", colorIn(l.fill || "#FFFFFF1C", (v) => set({ fill: v }), lf("fill"))),
     field("Note", h("span", { class: "hint" }, "Glass blurs whatever is under it. It fades in and out; position, size and corners are fixed (no motion presets).")),
-  ] : l.type === "iso" ? isoFields(l, set, hasPreset, togglePreset) : l.type === "chart" ? chartFields : l.type === "shape" ? [
+  ] : l.type === "iso" ? isoFields(l, set, hasPreset, togglePreset) : l.type === "obj3d" ? obj3dFields(l, set) : l.type === "chart" ? chartFields : l.type === "shape" ? [
     field("Shape", selectIn(l.shape, [["rect", "Box"], ["ellipse", "Ellipse / ring"], ["line", "Line"], ["arrow", "Arrow"],
       ...(SHAPE_KIND_LABELS[l.shape] && !["rect", "ellipse", "line", "arrow"].includes(l.shape) ? [[l.shape, SHAPE_KIND_LABELS[l.shape]]] : [])], (v) => set({ shape: v }))),
     field("Size", h("div", { class: "pair" }, numIn(l.width ?? 400, (v) => set({ width: v }), 10, { title: "Width px" }),
@@ -3628,6 +3720,120 @@ function isoFields(l, set, hasPreset, togglePreset) {
     h("label", { class: "full sec" }, `Items (${sc.items.length})`),
     h("div", { class: "iso-list full" }, ...rows, h("button", { class: "iso-row add", onclick: () => isoPicker(l) }, icon("plus"), h("span", {}, "Add item…"))),
     ...itemEd,
+  ];
+}
+
+// ---------- 3D objects (ops/render3d.py): the 3D tab and the inspector of an obj3d layer ----------
+let K3D = null; // GET /api/obj3d-kinds
+const GAITED3D = new Set(["car", "truck", "bus", "plane", "rocket", "dog", "cat", "bird", "fish"]);
+fetch("/api/obj3d-kinds").then((r) => r.json()).then((d) => { K3D = d.kinds; if (TAB === "3d") renderInspector(); }).catch(() => {});
+const CAT3D = [["text", "3D text"], ["vehicles", "Vehicles"], ["animals", "Animals"], ["shapes", "Shapes"], ["import", "Your model"]];
+// ready-made motion: what the card's "move" button applies right after adding
+const MOTION3D = {
+  text: { spin: 4 }, car: { move: { from: "-10%,62%", to: "110%,62%", loop: "continue", dur: 3 } },
+  truck: { move: { from: "-15%,62%", to: "115%,62%", loop: "continue", dur: 4 } }, bus: { move: { from: "-20%,62%", to: "120%,62%", loop: "continue", dur: 4.5 } },
+  plane: { move: { from: "-15%,30%", to: "115%,22%", loop: "continue", dur: 3.5 } }, rocket: { move: { from: "50%,110%", to: "50%,-10%", loop: "repeat", dur: 2.5, face: false } },
+  dog: { move: { from: "-10%,60%", to: "110%,60%", loop: "continue", dur: 4, hop: 8 } }, cat: { move: { from: "-10%,60%", to: "110%,60%", loop: "continue", dur: 5, hop: 5 } },
+  bird: { move: { from: "-10%,30%", to: "110%,38%", loop: "continue", dur: 4, hop: 25 } }, fish: { move: { from: "15%,50%", to: "85%,55%", loop: "pingpong", dur: 3 } },
+};
+function render3D() {
+  if (!K3D) return [h("div", { class: "empty" }, "Loading 3D…")];
+  const at = () => +video.currentTime.toFixed(3);
+  const add = async (k, withMotion) => {
+    const args = { kind: k.kind, start: at() };
+    if (k.kind === "text") { const t = prompt("3D text: the words", "HELLO"); if (!t) return; args.text = t; }
+    if (k.kind === "model") return pickModel3D();
+    const r = await addAndSelect("obj3d_add", args);
+    const m = withMotion && MOTION3D[k.kind], l = r && SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id);
+    if (!m || !l) return;
+    if (m.spin) await op("obj3d_spin", { layer: l.id, period: m.spin });
+    if (m.move) await op("obj3d_move", { layer: l.id, ...m.move });
+  };
+  const grid = h("div");
+  for (const [cat, name] of CAT3D) {
+    const ks = K3D.filter((k) => k.category === cat);
+    if (!ks.length) continue;
+    grid.append(h("div", { class: "fx-cat" }, name), h("div", { class: "fx-grid" }, ks.map((k) => {
+      const c = h("button", { class: "fx-card", title: `${k.note}\nClick: adds at the playhead · ${MOTION3D[k.kind] ? "↻ / → adds it already moving" : ""}`, onclick: () => add(k, false),
+        draggable: k.kind !== "model" && k.kind !== "text", ondragstart: (e) => { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("application/x-vedit-element", JSON.stringify({ op: "obj3d_add", a: { kind: k.kind } })); } },
+        h("div", { class: "fx-th", style: { background: `#1d2233 url(/api/obj3d-item/${k.kind}.png) center / contain no-repeat` } },
+          MOTION3D[k.kind] ? h("span", { class: "fx-badge", title: "Add it already moving (spin / drive / walk / fly)", style: { cursor: "pointer" },
+            onclick: (e) => { e.stopPropagation(); add(k, true); } }, MOTION3D[k.kind].spin ? "↻ spin" : "→ move") : null),
+        h("div", { class: "fx-nm" }, k.kind === "model" ? "Import .glb / .obj" : k.kind[0].toUpperCase() + k.kind.slice(1)), h("div", { class: "fx-ab" }, k.note));
+      return c;
+    })));
+  }
+  return [h("div", { class: "fx-search" }, h("div", { class: "fx-target" }, `3D objects are made from code (nothing to download) and drawn by the same renderer as the export. Click to add at the playhead (${fmt(video.currentTime)}); select it to turn it, colour it, spin it 360° or move it from A to B. In the preview: drag the ⟲ knob under it to turn it in 3D, drag the A / B dots to change its path.`)), grid];
+}
+function pickModel3D(layerId = null) {
+  const inp = h("input", { type: "file", accept: ".glb,.gltf,.obj,.stl,.ply", style: { display: "none" } });
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    toast(`Importing ${f.name}…`);
+    const fd = new FormData(); fd.append("file", f);
+    const r = await fetch("/api/obj3d-model", { method: "POST", body: fd });
+    if (!r.ok) { let d = "Import failed"; try { d = (await r.json()).detail; } catch {} return toast(d, true); }
+    const { src } = await r.json();
+    if (layerId) await op("obj3d_set", { layer: layerId, kind: "model", src });
+    else await addAndSelect("obj3d_add", { kind: "model", src, start: +video.currentTime.toFixed(3) });
+  };
+  document.body.append(inp); inp.click(); setTimeout(() => inp.remove(), 60000);
+}
+function travelOf(l) { return l.presets.find((x) => x.name === "travel"); }
+function obj3dFields(l, set) {
+  const ob = l.obj3d || {}, kind = (K3D || []).find((k) => k.kind === ob.kind) || { params: {}, colors: ["#FFFFFF", ""] };
+  const o = (args) => op("obj3d_set", { layer: l.id, ...args });
+  const live = (k) => (v) => { l.obj3d = { ...l.obj3d, [k]: v }; markDirty(l); }; // turn while dragging the slider
+  const tr = travelOf(l)?.params, spin = l.presets.find((x) => x.name === "spin3d" || x.name === "sway3d");
+  const mv = (args) => op("obj3d_move", { layer: l.id, from: tr?.from || "15%,50%", to: tr?.to || "85%,50%", dur: tr?.dur, loop: tr?.loop || "once",
+    face: tr?.face ?? true, hop: tr?.hop || 0, scale_from: tr?.scale_from ?? 1, scale_to: tr?.scale_to ?? 1, ease: tr?.ease, ...args });
+  const here = () => { const ldur = Math.max(0.01, layerEnd(l) - l.start), pr = VAnim.propsAt({ ...l, presets: [] }, Math.max(0, video.currentTime - l.start), ldur, P().canvas);
+    return `${Math.round(pr.x)},${Math.round(pr.y)}`; };
+  const sp = (args) => op("obj3d_spin", { layer: l.id, axis: spin?.params?.axis || "y", period: spin?.params?.period ?? 3, sway: spin?.name === "sway3d" ? spin.params.degrees : null, ...args });
+  return [
+    field("Object", h("div", { class: "pair" }, selectIn(ob.kind, (K3D || []).filter((k) => k.kind !== "model" || ob.kind === "model").map((k) => [k.kind, k.kind[0].toUpperCase() + k.kind.slice(1)]),
+      (v) => o({ kind: v, ...(v === "text" && !ob.text ? { text: "HELLO" } : {}) })),
+      h("button", { class: "ghost", title: "Use your own .glb / .obj / .stl", onclick: () => pickModel3D(l.id) }, "Import…"))),
+    ...(ob.kind === "text" ? [
+      field("Text", textIn(ob.text || "", (v) => v && o({ text: v }))),
+      field("Font", TYPO ? fontIn(ob.font || "poppins-black", (v) => o({ font: v }), ob.text || "3D") : h("span", { class: "hint" }, "…")),
+      field("Depth", rangeIn(ob.depth ?? 0.35, 0.05, 1.5, 0.05, (v) => o({ depth: v }), live("depth"))),
+    ] : []),
+    ...(ob.kind === "model" ? [field("File", h("span", { class: "hint" }, ob.src || "none"))] : []),
+    field("Colours", h("div", { class: "pair" }, colorIn(ob.color || kind.colors[0] || "#FFFFFF", (v) => o({ color: v }), live("color")),
+      colorIn(ob.color2 || kind.colors[1] || "#FFFFFF", (v) => o({ color2: v }), live("color2")),
+      h("button", { class: "ghost", title: "Back to its own colours", onclick: () => o({ color: "none", color2: "none" }) }, "Default"))),
+    ...Object.entries(kind.params || {}).map(([k, d]) => field(k[0].toUpperCase() + k.slice(1).replace(/_/g, " "), typeof d === "boolean"
+      ? h("input", { type: "checkbox", checked: !!(ob.params?.[k] ?? d), onchange: (e) => o({ params: { [k]: e.target.checked } }) })
+      : textIn(String(ob.params?.[k] ?? d), (v) => o({ params: { [k]: typeof d === "number" ? +v : v } })))),
+    h("label", { class: "full sec" }, "Turn (or drag the ⟲ knob in the preview)"),
+    field("Yaw ↔", rangeIn(ob.yaw ?? -25, -180, 180, 1, (v) => o({ yaw: v }), live("yaw"))),
+    field("Pitch ↕", rangeIn(ob.pitch ?? 18, -90, 90, 1, (v) => o({ pitch: v }), live("pitch"))),
+    field("Roll", rangeIn(ob.roll ?? 0, -180, 180, 1, (v) => o({ roll: v }), live("roll"))),
+    field("Lens", rangeIn(ob.fov ?? 30, 5, 100, 1, (v) => o({ fov: v }), live("fov"))),
+    field("Light · lines", h("div", { class: "pair" }, rangeIn(ob.light ?? 0.45, 0, 1, 0.05, (v) => o({ light: v }), live("light")),
+      h("input", { type: "checkbox", title: "Edge lines", checked: !!ob.outline, onchange: (e) => o({ outline: e.target.checked ? "#00000038" : "none" }) }))),
+    GAITED3D.has(ob.kind) ? field("Moves its parts", h("input", { type: "checkbox", title: "Legs walk, wheels turn, wings flap, propellers spin", checked: ob.gait !== false, onchange: (e) => o({ gait: e.target.checked }) })) : null,
+    field("Size", numIn(l.width ?? 600, (v) => set({ width: v }), 10, { title: "The box it turns in (px)" })),
+    h("label", { class: "full sec" }, "Spin 360°"),
+    field("Spin", h("div", { class: "pair" }, selectIn(spin ? spin.params?.axis || "y" : "", [["", "Off"], ["y", "Turntable (y)"], ["x", "Flip (x)"], ["z", "Roll (z)"], ["yx", "Two axes"], ["xyz", "Tumble"]],
+      (v) => (v ? sp({ axis: v }) : op("obj3d_spin", { layer: l.id, off: true }))),
+      spin ? numIn(spin.name === "sway3d" ? spin.params.period ?? 3 : spin.params?.period ?? 3, (v) => sp({ period: +v }), 0.1, { title: "Seconds per turn (negative = the other way)" }) : null)),
+    spin ? field("Sway instead", h("div", { class: "pair" }, h("input", { type: "checkbox", checked: spin.name === "sway3d", title: "Turn back and forth instead of round and round",
+      onchange: (e) => sp({ sway: e.target.checked ? 25 : null }) }), spin.name === "sway3d" ? numIn(spin.params.degrees ?? 25, (v) => sp({ sway: +v }), 1, { title: "Degrees" }) : null)) : null,
+    h("label", { class: "full sec" }, "Move from A to B"),
+    tr ? [
+      field("A → B", h("div", { class: "pair" }, textIn(tr.from, (v) => mv({ from: v }), { title: "Point A: x,y (px or %)" }), textIn(tr.to, (v) => mv({ to: v }), { title: "Point B: x,y" }))),
+      field("Set", h("div", { class: "pair" }, h("button", { class: "ghost", title: "A = where it is now", onclick: () => mv({ from: here() }) }, "A = here"),
+        h("button", { class: "ghost", title: "B = where it is now", onclick: () => mv({ to: here() }) }, "B = here"))),
+      field("Loop", h("div", { class: "pair" }, selectIn(tr.loop || "once", [["once", "Once"], ["repeat", "Repeat A→B"], ["pingpong", "Back and forth"], ["continue", "Keep going"]], (v) => mv({ loop: v })),
+        numIn(tr.dur ?? 3, (v) => mv({ dur: +v }), 0.1, { title: "Seconds from A to B" }))),
+      field("Face the way", h("input", { type: "checkbox", checked: tr.face !== false, onchange: (e) => mv({ face: e.target.checked }) })),
+      field("Hop · depth", h("div", { class: "pair" }, numIn(tr.hop || 0, (v) => mv({ hop: +v }), 1, { title: "Bounce height (px)" }),
+        numIn(tr.scale_from ?? 1, (v) => mv({ scale_from: +v }), 0.1, { title: "Size at A" }), numIn(tr.scale_to ?? 1, (v) => mv({ scale_to: +v }), 0.1, { title: "Size at B" }))),
+      h("div", { class: "btnrow full" }, h("button", { class: "danger", onclick: () => op("obj3d_move", { layer: l.id, off: true }) }, "Stop moving")),
+    ].flat() : h("div", { class: "btnrow full" }, h("button", { onclick: () => mv({ from: "15%," + Math.round(VAnim.parsePos(l.y, P().canvas.height) / P().canvas.height * 100) + "%",
+      to: "85%," + Math.round(VAnim.parsePos(l.y, P().canvas.height) / P().canvas.height * 100) + "%" }) }, "Move it A → B")),
   ];
 }
 function isoPicker(l) { // the item library: pick one, it lands on a free spot of the floor
@@ -4649,7 +4855,7 @@ function renderTimeline() {
   // times don't overlap; drag a block up / down to put it above or below others, or onto "New track"
   const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
     video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"],
-    chart: ["chart", "Chart", "var(--shp-b)"], glass: ["panels", "Glass", "var(--adj-b)"], iso: ["shape", "Iso world", "var(--shp-b)"] };
+    chart: ["chart", "Chart", "var(--shp-b)"], glass: ["panels", "Glass", "var(--adj-b)"], iso: ["shape", "Iso world", "var(--shp-b)"], obj3d: ["shape", "3D", "var(--shp-b)"] };
   const rowLayers = p.layers.filter((l) => !l.on_video); // the video track's own elements are drawn in its lane
   const nTracks = rowLayers.length ? Math.max(...rowLayers.map((l) => l.track ?? 0)) + 1 : 0;
   const trackLanes = [], MZ = Math.min(p.main_z || 0, nTracks);

@@ -126,7 +126,7 @@ def layer_box(p: Project, pdir: Path | None, l: Layer) -> tuple[float, float, fl
         return _rotated(cx, cy, w * k * l.sx, h * k * l.sy, l.rotation)
     if l.type == "glass":
         return _rotated(cx, cy, (l.width or 600) * k * l.sx, (l.height or 300) * k * l.sy, l.rotation)
-    if l.type in ("shape", "image", "chart", "iso"):
+    if l.type in ("shape", "image", "chart", "iso", "obj3d"):
         from .overlay_style import render_shape, style_frame
         from .text import render_image
 
@@ -139,6 +139,10 @@ def layer_box(p: Project, pdir: Path | None, l: Layer) -> tuple[float, float, fl
                 from .iso import render_iso
 
                 img = render_iso(l, MEASURE)
+            elif l.type == "obj3d":
+                from .render3d import render_obj3d
+
+                img = render_obj3d(l, MEASURE, pdir=pdir)
             elif l.type == "shape":
                 img = render_shape(l, MEASURE)
             else:

@@ -54,11 +54,20 @@ def _layers() -> list[Layer]:
             Keyframe(t=0, x=0, ease="expo_out"), Keyframe(t=0.6, x=400, ease="circ_out"), Keyframe(t=1.2, x=100, ease="smooth"),
             Keyframe(t=1.8, x=600, ease="bezier:0.1,0.9,0.9,0.1"), Keyframe(t=2.6, x=50)]),
     ]
-    params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20}}
+    params = {"slide_in": {"direction": "left", "distance": 300}, "slide_out": {"direction": "down"}, "shake": {"amplitude": 20},
+              "spin3d": {"axis": "xyz", "period": -1.7}, "travel": {"from": "90%,20%", "to": [100, "70%"], "dur": 0.9, "loop": "pingpong",
+                                                                    "hop": 30, "scale_from": 0.6, "scale_to": 1.3}}
     for name in PRESETS:  # every preset, alone and with a custom duration
         out.append(Layer(id=f"p-{name}", type="text", text="Hello", x=400, y="30%", scale=1.1, rotation=5,
                          presets=[Preset(name=name, params=params.get(name, {}))]))
         out.append(Layer(id=f"d-{name}", type="text", text="Hello", presets=[Preset(name=name, duration=0.9)]))
+    from vedit.project import Obj3D
+
+    for i, k in enumerate(({"loop": "continue", "to": "40%,10%", "dur": 0.7}, {"loop": "repeat", "face": False, "ease": "ease_out"},
+                           {"loop": "once", "dur": 2})):
+        out.append(Layer(id=f"3d-{i}", type="obj3d", obj3d=Obj3D(kind="car", yaw=10, pitch=-5, roll=3),
+                         keyframes=[Keyframe(t=0, yaw=0), Keyframe(t=2, yaw=90, pitch=30, roll=-40, ease="back_out")],
+                         presets=[Preset(name="travel", params=k), Preset(name="sway3d"), Preset(name="spin3d_in")]))
     out.append(Layer(id="stack", type="text", text="stack", presets=[Preset(name="pop_in"), Preset(name="bob"),
                                                                       Preset(name="wiggle"), Preset(name="slide_out")]))
     return out
@@ -83,7 +92,8 @@ def test_js_props_at_matches_python():
     js = json.loads(res.stdout)
     for lid, frames in py.items():
         for t, a, b in zip(times, frames, js[lid]):
-            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count"):
+            for k in ("x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count", "yaw", "pitch",
+                      "roll"):
                 if a[k] is None:
                     assert b[k] is None, f"{lid} {k} at t={t:.2f}: python None js {b[k]}"
                     continue

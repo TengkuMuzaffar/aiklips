@@ -31,7 +31,7 @@ from ..project import Project, VeditError, load
 ALLOWED = {
     "place", "to-overlay", "to-clip", "paste", "volume", "fit", "zoom", "jumpcut-zoom", "transition", "why", "platform",
     "text", "image", "layer", "animate", "captions", "music", "color", "fx", "sound", "sfx", "overlay", "shape",
-    "marker", "adjust", "track", "safe", "motion", "chart", "counter", "style", "group", "iso",
+    "marker", "adjust", "track", "safe", "motion", "chart", "counter", "style", "group", "iso", "3d",
 }
 # command -> why it is not available in a generated plan
 DENIED = {
@@ -80,6 +80,8 @@ def parse(command: str, files: dict[str, dict]) -> list[str]:
     for s in SUB_DENIED.get(cmd, ()):
         if sub == s or sub.startswith(s + " "):
             raise ValueError(f"`{cmd} {s}` is not available here")
+    if cmd == "3d" and any(a == "--src" or a.startswith("--src=") for a in args):
+        raise ValueError("3D models from files are not available here: use a 3D kind made from code (`3d add car`, `text`, ...)")
     if (cmd, args[1] if len(args) > 1 else "") in FILE_CMDS:
         args = _file_arg(args, files)
     return args
@@ -222,7 +224,7 @@ def reference() -> str:
 def _names() -> str:
     from .. import musicmaker, sfx
     from ..design import styles
-    from ..ops import animate, color, fx_filters, moves, overlays, text_looks
+    from ..ops import animate, color, fx_filters, items3d, moves, overlays, text_looks
 
     return "\n".join([
         "NAMES:",
@@ -235,4 +237,9 @@ def _names() -> str:
         "- text look apply: " + ", ".join(text_looks.BUILTIN),
         "- animate preset / text --preset: " + ", ".join(animate.PRESETS),
         "- style set: " + ", ".join(styles.STYLES),
+        "- 3d add kinds (--param settings, defaults): " + "; ".join(
+            f"{r['kind']}" + (f" ({', '.join(f'{k}={v}' for k, v in r['params'].items())})" if r["params"] else "")
+            for r in items3d.catalog() if r["kind"] != "model"),
+        "- 3d motion presets (animate preset): spin3d (axis, period), spin3d_in (turns), sway3d (degrees, period), "
+        "travel (from, to, dur, loop, face, hop, scale_from, scale_to)",
     ])

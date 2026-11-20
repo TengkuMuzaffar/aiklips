@@ -41,6 +41,12 @@ def _cache_key(project: Project, pdir: Path, layer: Layer, scale: float) -> str:
         media_path = resolve_media(pdir, layer.image)
     elif layer.type == "video" and layer.source in project.sources:
         media_path = resolve_media(pdir, project.sources[layer.source].path)
+    elif layer.type == "obj3d" and layer.obj3d and layer.obj3d.src:
+        media_path = resolve_media(pdir, layer.obj3d.src)
+    if layer.type == "obj3d":
+        from ..ops.render3d import VERSION as R3D
+
+        extra["r3d"] = R3D
     if media_path is not None:
         extra["mtime"] = media_path.stat().st_mtime if media_path.exists() else 0
     total = project.duration
@@ -149,7 +155,7 @@ class _VideoFrames:
 
 class _SpriteSource:
     def __init__(self, project: Project, pdir: Path, layer: Layer, scale: float, dur: float = 0.0):
-        self.layer, self.scale = layer, scale
+        self.layer, self.scale, self.pdir = layer, scale, pdir
         self.cache: dict = {}
         self.video: _VideoFrames | None = None
         if layer.type == "image":
@@ -205,6 +211,18 @@ class _SpriteSource:
                 if len(self.cache) > 256:
                     self.cache.clear()
                 self.cache[key] = render_iso(L, self.scale, key[1])
+            return self.cache[key], 1.0
+        if L.type == "obj3d":
+            from ..ops.render3d import GAIT_FPS, animated, render_obj3d
+
+            pr = pr or {}
+            q = lambda v: round(float(v) * 4) / 4  # noqa: E731  quarter degrees: a steady spin reuses frames
+            gt = round((t_abs - L.start) * GAIT_FPS) / GAIT_FPS if L.obj3d and animated(L.obj3d) else 0.0
+            key = ("obj3d", q(pr.get("yaw", 0)), q(pr.get("pitch", 0)), q(pr.get("roll", 0)), gt)
+            if key not in self.cache:
+                if len(self.cache) > 256:
+                    self.cache.clear()
+                self.cache[key] = render_obj3d(L, self.scale, key[1], key[2], key[3], gt, self.pdir)
             return self.cache[key], 1.0
         if L.type == "chart":
             from ..ops.chart import render_chart

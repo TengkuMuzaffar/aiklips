@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 4  # 4 also has Clip.zoom_ease (additive, default linear)
+SCHEMA_VERSION = 5  # 4 also has Clip.zoom_ease (additive, default linear); 5: 3D object layers (obj3d, yaw / pitch / roll)
 
 
 class VeditError(Exception):
@@ -202,6 +202,10 @@ class Keyframe(_Model):
     draw: float | None = None
     morph: float | None = None
     count: float | None = None
+    # 3D objects (obj3d layers): turn in degrees around the object's own up (yaw), side (pitch) and front (roll) axes
+    yaw: float | None = None
+    pitch: float | None = None
+    roll: float | None = None
     # easing used from this keyframe to the next: a name (ease_out, snap, expo_out ...) or "cubic-bezier(a,b,c,d)"
     ease: str = "ease_in_out"
 
@@ -280,6 +284,32 @@ class IsoScene(_Model):
     build: Literal["drop", "grow", "pop"] = "drop"  # how each item arrives
 
 
+OBJ3D_KINDS = ("text", "car", "truck", "bus", "plane", "rocket", "dog", "cat", "bird", "fish", "cube", "sphere", "gem", "coin",
+               "heart", "star", "model")
+
+
+class Obj3D(_Model):
+    """A 3D object (ops/render3d.py): generated from a recipe (ops/items3d.py), never stored as a file, except
+    `kind="model"` (a .glb / .obj / .stl the user brings). Drawn low-poly, flat-shaded, in perspective. Its turn is
+    yaw / pitch / roll here plus the layer's keyframes / presets (spin3d, travel). Front = +x (cars drive, animals walk
+    that way at yaw 0), up = +y."""
+    kind: str = "cube"
+    text: str | None = None  # kind text
+    font: str | None = None  # kind text (a font key from `vedit fonts`)
+    src: str | None = None  # kind model: a .glb / .gltf / .obj / .stl path
+    color: str | None = None  # main colour (None = the recipe's own)
+    color2: str | None = None  # second colour (windows, belly, sides of 3D text ...)
+    depth: float = 0.35  # text: how deep the letters are, as a fraction of their height
+    params: dict[str, Any] = Field(default_factory=dict)  # the recipe's own settings (`vedit 3d kinds`)
+    yaw: float = -25.0  # resting turn in degrees (keyframes / presets add to it)
+    pitch: float = 18.0
+    roll: float = 0.0
+    fov: float = 30.0  # camera lens: small = flat / telephoto, large = strong perspective
+    light: float = 0.45  # how much the light shapes it (0 = flat colour, 1 = deep shadows)
+    outline: str | None = "#00000038"  # thin edge lines (None = none)
+    gait: bool = True  # animals / vehicles move their legs / wheels / wings / propellers over time
+
+
 class Preset(_Model):
     name: str
     duration: float | None = None
@@ -331,7 +361,7 @@ class Layer(_Model):
     order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart", "glass", "iso"]
+    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart", "glass", "iso", "obj3d"]
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
@@ -369,6 +399,7 @@ class Layer(_Model):
     chart: Chart | None = None  # chart layers
     glass_blur: float = 22.0  # glass layers: how frosted the picture behind is (px; `fill` = its tint, `radius` = corners)
     iso: IsoScene | None = None  # iso layers: blocks of a little isometric world (ops/iso.py)
+    obj3d: Obj3D | None = None  # obj3d layers: a 3D object (ops/render3d.py); `width` = the size of its turning box
     why: str | None = None  # why this overlay is here (generation / `vedit why`)
     # how it mixes with what is under it (screen for light leaks / dust, multiply for paper / shadows ...)
     blend: Literal["normal", "screen", "multiply", "overlay", "add", "lighten", "darken"] = "normal"
@@ -583,6 +614,7 @@ MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     1: lambda d: d,  # 2: design projects (kind, scenes), stretch (sx / sy), more shapes, keyframed size / fill
     2: lambda d: d,  # 3: equal tracks: `main_z` (video track position; default 0 = bottom), timeline = longest track
     3: lambda d: d,  # 4: motion: draw-on / morph / counters / kinetic text / charts (`draw`, `morph`, `count` keyframes)
+    4: lambda d: d,  # 5: 3D objects (`Layer.obj3d`, type "obj3d") and `yaw` / `pitch` / `roll` keyframes
 }
 
 

@@ -106,6 +106,58 @@
     return "#" + (alpha ? v : v.slice(0, 3)).map((n) => Math.max(0, Math.min(255, n)).toString(16).toUpperCase().padStart(2, "0")).join("");
   }
   const wipe = (pr, p) => { pr.reveal *= ease("ease_in_out", p); };
+  // 3D objects (obj3d layers), as animate.py
+  const AXES = { y: ["yaw"], x: ["pitch"], z: ["roll"], yx: ["yaw", "pitch"], xyz: ["yaw", "pitch", "roll"] };
+  const TUMBLE = { yaw: 1.0, pitch: 0.61, roll: 0.37 };
+  function turn(pr, axis, deg) {
+    const axes = AXES[String(axis)];
+    if (!axes) return;
+    for (const a of axes) pr[a] += deg * (axes.length > 1 ? TUMBLE[a] : 1);
+  }
+  const pmod = (a, b) => ((a % b) + b) % b; // Python's % (always >= 0)
+  function xyParam(v, canvas, def) {
+    if (v == null) v = def;
+    if (typeof v === "string") v = v.split(",").map((s) => s.trim());
+    return [parsePos(v[0], canvas.width), parsePos(v[1], canvas.height)];
+  }
+  function travelAt(t, k, canvas) {
+    const [ax, ay] = xyParam(k.from, canvas, ["15%", "50%"]), [bx, by] = xyParam(k.to, canvas, ["85%", "50%"]);
+    const dur = Math.max(0.05, num(k.dur, 3.0)), loop = String(k.loop ?? "once"), left = bx < ax ? 1 : 0;
+    if (loop === "continue") {
+      const q = t / dur;
+      let x = ax + (bx - ax) * q, y = ay + (by - ay) * q;
+      const m = num(k.margin, 0.25), W0 = -m * canvas.width, W1 = canvas.width * (1 + m), H0 = -m * canvas.height, H1 = canvas.height * (1 + m);
+      if (bx !== ax) x = W0 + pmod(x - W0, W1 - W0);
+      if (by !== ay) y = H0 + pmod(y - H0, H1 - H0);
+      return [x, y, left, pmod(q, 1)];
+    }
+    const q = t / dur;
+    let leg = Math.floor(q), u = q - leg;
+    const e = String(k.ease ?? (loop === "once" ? "ease_in_out" : "linear"));
+    if (loop === "once") { u = Math.min(1, q); leg = 0; }
+    const back = loop === "pingpong" && leg % 2 === 1;
+    let f = ease(e, u);
+    if (back) f = 1 - f;
+    let facing = back ? 1 - left : left;
+    if (loop === "pingpong" && leg >= 1 && u < 0.12) {
+      const prev = back ? left : 1 - left;
+      facing = prev + (facing - prev) * ease("ease_in_out", u / 0.12);
+    }
+    return [ax + (bx - ax) * f, ay + (by - ay) * f, facing, u];
+  }
+  function travel(pr, p, t, k, canvas) {
+    const [x, y, facing, u] = travelAt(t, k, canvas);
+    pr.x = x; pr.y = y;
+    if (k.face ?? true) pr.yaw += 180 * facing;
+    const hop = num(k.hop, 0);
+    if (hop) pr.y -= Math.abs(Math.sin((Math.PI * t) / num(k.hop_period, 0.45))) * hop;
+    const s0 = num(k.scale_from, 1), s1 = num(k.scale_to, 1);
+    if (s0 !== 1 || s1 !== 1) {
+      const loop = String(k.loop ?? "once");
+      const f = loop !== "pingpong" || Math.floor(t / Math.max(0.05, num(k.dur, 3.0))) % 2 === 0 ? u : 1 - u;
+      pr.scale *= s0 + (s1 - s0) * f;
+    }
+  }
   const PRESETS = {
     fade_in: ["in", 0.4, fade], fade_out: ["out", 0.4, fade],
     pop_in: ["in", 0.35, pop], pop_out: ["out", 0.25, pop],
@@ -142,6 +194,10 @@
     draw_out: ["out", 0.6, (pr, p, t, k) => { pr.draw *= ease(String(k.ease ?? "ease_in_out"), p); }],
     count_up: ["in", 1.2, (pr, p, t, k) => { pr.count *= ease(String(k.ease ?? "expo_out"), p); }],
     morph_loop: ["loop", 0, (pr, p, t, k) => { const per = num(k.period, 2.4); if (per > 0) pr.morph = 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / per); }],
+    spin3d: ["loop", 0, (pr, p, t, k) => { const per = num(k.period, 3.0); if (per) turn(pr, k.axis ?? "y", (360 * t) / per); }],
+    spin3d_in: ["in", 0.8, (pr, p, t, k) => { turn(pr, k.axis ?? "y", -360 * num(k.turns, 1) * (1 - ease("ease_out", p))); pr.scale *= ease("back_out", p); pr.opacity *= Math.min(1, p * 3); }],
+    sway3d: ["loop", 0, (pr, p, t, k) => { turn(pr, k.axis ?? "y", Math.sin((2 * Math.PI * t) / num(k.period, 3.0)) * num(k.degrees, 25)); }],
+    travel: ["loop", 0, travel],
   };
 
   function presetDuration(layer, preset) {
@@ -181,7 +237,7 @@
     return mixHex(last, last, 0);
   }
 
-  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count"];
+  const PROPS = ["x", "y", "scale", "rotation", "opacity", "reveal", "w", "h", "sx", "sy", "draw", "morph", "count", "yaw", "pitch", "roll"];
   const PROGRESS = ["draw", "morph", "count"];
   function propsAt(layer, t, duration, canvas) {
     if (layer.step_fps) t = Math.floor(t * layer.step_fps + 1e-9) / layer.step_fps; // stop-motion steps, as animate.py
@@ -192,6 +248,8 @@
       sx: layer.sx == null ? 1 : Number(layer.sx), sy: layer.sy == null ? 1 : Number(layer.sy),
       fill: layer.fill === undefined ? null : layer.fill,
       draw: 1, morph: 0, count: 1,
+      yaw: layer.obj3d ? Number(layer.obj3d.yaw ?? -25) : 0, pitch: layer.obj3d ? Number(layer.obj3d.pitch ?? 18) : 0,
+      roll: layer.obj3d ? Number(layer.obj3d.roll ?? 0) : 0,
     };
     for (const prop of PROPS) {
       const v = interp(layer.keyframes || [], prop, t, prop === "x" ? canvas.width : canvas.height);
@@ -203,9 +261,9 @@
       const P = PRESETS[preset.name];
       if (!P) continue;
       const [phase, , fn] = P, d = presetDuration(layer, preset), k = preset.params || {};
-      if (phase === "in") { if (t < d) fn(pr, t / d, t, k); }
-      else if (phase === "out") { if (t > duration - d) fn(pr, Math.max(0, (duration - t) / d), t, k); }
-      else fn(pr, 1, t, k);
+      if (phase === "in") { if (t < d) fn(pr, t / d, t, k, canvas); }
+      else if (phase === "out") { if (t > duration - d) fn(pr, Math.max(0, (duration - t) / d), t, k, canvas); }
+      else fn(pr, 1, t, k, canvas);
     }
     pr.opacity = clamp01(pr.opacity); pr.reveal = clamp01(pr.reveal); pr.scale = Math.max(0, pr.scale);
     pr.sx = Math.max(0, pr.sx); pr.sy = Math.max(0, pr.sy);
@@ -250,7 +308,7 @@
     return `${c.prefix ?? ""}${v < 0 && n > 0 ? "-" : ""}${ip}${frac}${c.suffix ?? ""}`;
   }
 
-  const api = { counterText, ease, parsePos, propsAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
+  const api = { counterText, ease, parsePos, propsAt, travelAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.VAnim = api;
 })(typeof window !== "undefined" ? window : globalThis);

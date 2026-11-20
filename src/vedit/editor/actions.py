@@ -741,6 +741,63 @@ def _iso_scene_set(p: Project, a: dict) -> str:
     return f"{l.id}: world settings"
 
 
+def _bool(v) -> bool | None:
+    if v is None or v == "":
+        return None
+    return v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+
+
+@op("obj3d_add")
+def _obj3d_add(p: Project, a: dict) -> str:
+    """3D tab: a 3D object (text, vehicle, animal, shape, or the user's model) at the playhead (`vedit 3d add`)."""
+    from ..ops import objects3d, scenes
+
+    l = objects3d.add_object(p, a.get("kind") or "cube", text=a.get("text"), font=a.get("font"), src=a.get("src"),
+                             color=a.get("color"), color2=a.get("color2"), params=a.get("params") if isinstance(a.get("params"), dict) else None,
+                             start=float(a.get("start") or 0), end=_num(a, "end"), x=a.get("x") or "50%", y=a.get("y") or "50%",
+                             width=int(a["width"]) if a.get("width") else None, spin=_num(a, "spin"),
+                             intro=_bool(a.get("intro")) is not False, **{k: _num(a, k) for k in ("yaw", "pitch", "roll", "depth")})
+    scenes.place_in_scene(p, l, a.get("scene"))
+    _drop_on_track(p, l, a)
+    return f"add 3D {l.obj3d.kind} {l.id}"
+
+
+@op("obj3d_set")
+def _obj3d_set(p: Project, a: dict) -> str:
+    """Change a 3D object: kind, text, font, colours, resting turn, lens, light, settings (`vedit 3d set`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    fields = {k: a.get(k) for k in ("text", "font", "src", "color", "color2", "outline")}
+    fields.update({k: _num(a, k) for k in ("depth", "yaw", "pitch", "roll", "fov", "light")})
+    fields["gait"] = _bool(a.get("gait"))
+    objects3d.set_object(l, a.get("params") if isinstance(a.get("params"), dict) else None, a.get("kind"), **fields)
+    return f"{l.id}: 3D settings"
+
+
+@op("obj3d_move")
+def _obj3d_move(p: Project, a: dict) -> str:
+    """A 3D object travels from A to B (once / repeat / pingpong / continue), facing where it goes (`vedit 3d move`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    objects3d.move_object(l, a.get("from") or "15%,50%", a.get("to") or "85%,50%", _num(a, "dur"), a.get("loop") or "once",
+                          _bool(a.get("face")) is not False, _num(a, "hop") or 0.0, _num(a, "scale_from") or 1.0,
+                          _num(a, "scale_to") or 1.0, a.get("ease") or None, bool(a.get("off")))
+    return f"{l.id}: " + ("stop travelling" if a.get("off") else f"travel {a.get('from')} -> {a.get('to')}")
+
+
+@op("obj3d_spin")
+def _obj3d_spin(p: Project, a: dict) -> str:
+    """A 3D object turns round and round (or sways) on an axis (`vedit 3d spin`)."""
+    from ..ops import objects3d
+
+    l = objects3d.obj_layer(p, a["layer"])
+    objects3d.spin_object(l, a.get("axis") or "y", _num(a, "period") if a.get("period") not in (None, "") else 3.0, bool(a.get("off")),
+                          _num(a, "sway"))
+    return f"{l.id}: " + ("no spin" if a.get("off") else "spin")
+
+
 @op("group_make")
 def _group_make(p: Project, a: dict) -> str:
     """Group the selected layers (`vedit group make`)."""

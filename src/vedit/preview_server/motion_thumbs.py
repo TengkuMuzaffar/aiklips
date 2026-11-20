@@ -135,9 +135,9 @@ def _fit_box(img: Image.Image) -> tuple[int, int, int, int]:
     return round(left), round(top), round(left + w), round(top + h)
 
 
-_STILL = {"cursor_click": 1.05}  # the moment that shows the effect best (the click's ripple)
+_STILL = {"cursor_click": 1.05, "drive_by_3d": 2.0, "spin_3d": 1.0}  # the moment that shows the effect best (the click's ripple)
 _SAMPLE = {"chat_takeover": "them: did you see this?; me: no what; them: we went viral!", "cursor_click": "35%,70% > 62%,42%",
-           "hud_lock": "TARGET ACQUIRED", "paper_title": "Hello there; a little story", "iso_world": "island",
+           "hud_lock": "TARGET ACQUIRED", "paper_title": "Hello there; a little story", "iso_world": "island", "title_3d": "WOW", "drive_by_3d": "car", "spin_3d": "coin",
            "growth_curve": "+340%", "checklist": "Plan; Shoot; Edit", "checklist_pop": "Fast; Cheap; Easy",
            "headline_storm": "AI took my job; Is editing dead?; Everyone is switching; The new way to edit"}
 

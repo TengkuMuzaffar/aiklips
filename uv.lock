@@ -22,6 +22,7 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "fonttools" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow" },
@@ -61,6 +62,7 @@ requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.182" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "faster-whisper", marker = "extra == 'captions'", specifier = ">=1.0" },
+    { name = "fonttools", specifier = ">=4.40" },
     { name = "mediapipe", marker = "extra == 'ai'", specifier = ">=0.10.14" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10.3" },

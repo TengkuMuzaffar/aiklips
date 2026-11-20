@@ -43,12 +43,14 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
     text:     `reveal` = number of characters shown (typewriter); None = all
     captions: `group` = word group index (same grouping as the export), `hi` = highlighted word in it
     image:    the image at its layer width
-    motion:   {draw, morph, count: 0..1, kt: seconds since the layer start (kinetic text)}, the moment's values
+    motion:   {draw, morph, count: 0..1, kt: seconds since the layer start (kinetic text, 3D legs / wheels),
+              yaw / pitch / roll: a 3D object's turn in degrees}, the moment's values
     Returns an empty 1x1 PNG when there is nothing to draw.
     """
     scale = max(0.1, min(2.0, float(scale)))
     mo = {k: round(max(0.0, min(1.0 if k != "kt" else 600.0, float(v))), 4) for k, v in (motion or {}).items()
           if k in ("draw", "morph", "count", "kt") and v is not None}
+    mo.update({k: round(float(v), 2) for k, v in (motion or {}).items() if k in ("yaw", "pitch", "roll") and v is not None})
     k = _key(pdir, layer_data, scale, reveal, group, hi, mo)
     with _LOCK:
         if k in _CACHE:
@@ -74,6 +76,10 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
         from ..ops.iso import render_iso
 
         img = render_iso(layer, scale, mo.get("draw", 1.0))
+    elif layer.type == "obj3d":
+        from ..ops.render3d import render_obj3d
+
+        img = render_obj3d(layer, scale, mo.get("yaw"), mo.get("pitch"), mo.get("roll"), mo.get("kt", 0.0), pdir)
     elif layer.type in ("video", "glass"):
         raise VeditError("Video and glass layers are drawn by the browser, not as sprites")
     elif layer.type == "text" and layer.split != "none" and not layer.counter:
