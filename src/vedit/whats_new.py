@@ -9,6 +9,11 @@ from . import __version__
 from .updater import parse_version
 
 NOTES: list[dict] = [
+    {"version": "0.2.5", "items": [
+        {"icon": "film", "title": "Your media library in the editor", "body": "The Media tab shows everything you uploaded, already studied. Drag it in, and the AI editor can use it too."},
+        {"icon": "spark", "title": "Generate uses your AI", "body": "With DeepSeek or another provider set up, Generate now uses it instead of asking for a Claude login, and shows the real error if a call fails."},
+        {"icon": "monitor", "title": "Dark on Windows", "body": "A dark title bar, no grey menu strip and dark dialogs: aiklips looks the same on Windows as on Mac."},
+    ]},
     {"version": "0.2.4", "items": [
         {"icon": "monitor", "title": "The window shows on Windows", "body": "aiklips started but its window stayed invisible on Windows. It now opens in front."},
     ]},
