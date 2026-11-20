@@ -9,6 +9,9 @@ from . import __version__
 from .updater import parse_version
 
 NOTES: list[dict] = [
+    {"version": "0.2.4", "items": [
+        {"icon": "monitor", "title": "The window shows on Windows", "body": "aiklips started but its window stayed invisible on Windows. It now opens in front."},
+    ]},
     {"version": "0.2.3", "items": [
         {"icon": "monitor", "title": "Windows opens again", "body": "aiklips 0.2.2 closed right after starting on Windows. Fixed."},
     ]},
