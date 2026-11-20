@@ -512,6 +512,7 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
   font-size: 12px; background: #1d2a3a; color: #9cc8ff; border: 1px solid #2c4a6e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; cursor: default; }
 .pill svg { width: 12px; height: 12px; flex: none; }
 .pill.ref { background: #241d36; color: #cdb4ff; border-color: #4d3d7a; }
+.pill.media { background: #2a2414; color: #f2cf86; border-color: #5a4a22; }
 .pill.time, .pill.range { background: #1c2a14; color: var(--accent); border-color: #2f4a1f; }
 .m-user .pill { line-height: 17px; }
 .cmp-box:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -4040,7 +4041,7 @@ function updateCtx() {
   if (c) c.textContent = `📎 ${fmt(video.currentTime)}${s ? " · " + s : ""}`; else renderAtts();
 }
 // ---- attachments: several clips / layers / ranges / moments / markers / reference videos sent with one message
-let ATT = [], REFS = null;
+let ATT = [], REFS = null, LIBVID = null; // LIBVID: videos in the media library (any of them can become a reference)
 const attKey = (a) => `${a.kind}:${a.id ?? a.t ?? a.start}`;
 function attLabel(a) {
   if (a.kind === "layer") { const l = P().layers.find((x) => x.id === a.id); return `${l?.type || "layer"} ${a.id}${l ? " “" + (layerLabel(l) || "").slice(0, 18) + "”" : ""}`; }
@@ -4049,6 +4050,7 @@ function attLabel(a) {
   if (a.kind === "time") return `at ${fmt(a.t)}`;
   if (a.kind === "marker") return `marker ${a.label || a.id}`;
   if (a.kind === "ref") return `ref: ${a.name}`;
+  if (a.kind === "media") return `media: ${a.name}`;
   return `${a.kind} ${a.id}`;
 }
 // Attachments live in the message itself as pills (contenteditable=false spans); ATT is kept in step with them.
@@ -4058,11 +4060,12 @@ document.addEventListener("selectionchange", () => {
   const sel = getSelection();
   if (sel.rangeCount && PR()?.contains(sel.anchorNode)) CARET = sel.getRangeAt(0).cloneRange();
 });
-const ATT_ICON = { clip: "film", layer: "layers", marker: "flag", ref: "sparkle", time: "clock", range: "scissors" };
+const ATT_ICON = { clip: "film", layer: "layers", marker: "flag", ref: "sparkle", media: "film", time: "clock", range: "scissors" };
 function attToken(a) { // what the AI reads in the message text
   if (a.kind === "time") return `@${fmt(a.t)}`;
   if (a.kind === "range") return `@${fmt(a.start)}–${fmt(a.end)}`;
   if (a.kind === "ref") return `@ref${a.id}`;
+  if (a.kind === "media") return `@media${a.id}`;
   return `@${a.id}`;
 }
 function pillEl(a) {
@@ -4159,11 +4162,23 @@ function attachMenu() {
   items.push({ icon: "clock", text: `This moment`, sub: fmt(video.currentTime), act: () => attach({ kind: "time", t: +video.currentTime.toFixed(2) }) });
   if (MARK.in != null || MARK.out != null) { const a = MARK.in ?? 0, b = MARK.out ?? dur(); items.push({ icon: "scissors", text: "In–out range", sub: `${fmt(a)}–${fmt(b)}`, act: () => attach({ kind: "range", start: +a.toFixed(2), end: +b.toFixed(2) }) }); }
   else items.push({ hint: "Mark a range with I and O to attach it" });
-  items.push({ icon: "film", text: "Reference video…", sub: "style to follow", act: openRefs });
-  items.push({ hint: "Tip: type @ in your message to mention a clip, layer, marker or reference" });
+  items.push({ icon: "film", text: "Reference video…", sub: "style to follow, from your media", act: openRefs });
+  items.push({ hint: "Tip: type @ in your message to mention a clip, layer, marker, reference or any video in your media" });
   const m = popUnder("att-menu", items, (it) => { m.close(); it.act(); });
 }
-async function loadRefs() { try { REFS = (await (await fetch("/api/references")).json()).references || []; } catch { REFS = REFS || []; } return REFS; }
+async function loadRefs() {
+  try { REFS = (await (await fetch("/api/references")).json()).references || []; } catch { REFS = REFS || []; }
+  try { LIBVID = (await (await fetch("/api/media?kind=video")).json()).media || []; } catch { LIBVID = LIBVID || []; }
+  return REFS;
+}
+async function makeRef(m) { // a media video becomes a style reference (no copy; its style study starts)
+  const r = await fetch(`/api/media/${m.id}/reference`, { method: "POST" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(d.detail || "Couldn't use it as a reference", true); return null; }
+  if (d.status !== "ready") toast(`Studying the style of “${d.name}” (about a minute). You can send now: the AI is told.`);
+  await loadRefs();
+  return { kind: "ref", id: d.id, name: d.name };
+}
 // @ mentions in the prompt: clips, layers, markers and reference videos; picking one attaches it
 let MENTION = null;
 function mentionCands(q) {
@@ -4171,7 +4186,13 @@ function mentionCands(q) {
   p.clips.forEach((c, i) => { if (!c.gap) out.push({ a: { kind: "clip", id: c.id }, text: `${c.id} · ${sourceName(p.sources[c.source])}`, sub: fmt(ST.starts[i]), icon: "film" }); });
   for (const l of p.layers) out.push({ a: { kind: "layer", id: l.id }, text: `${l.id} · ${l.type} ${(layerLabel(l) || "").slice(0, 24)}`, sub: fmt(l.start), icon: "layers" });
   for (const m of p.markers || []) out.push({ a: { kind: "marker", id: m.id, label: m.label }, text: `${m.id} · marker ${m.label || ""}`, sub: fmt(m.t), icon: "flag" });
-  for (const r of REFS || []) out.push({ a: { kind: "ref", id: r.id, name: r.name }, text: `ref · ${r.name}`, sub: r.status === "ready" ? "reference" : r.status, icon: "sparkle", token: `ref${r.id}` });
+  for (const r of REFS || []) out.push({ a: { kind: "ref", id: r.id, name: r.name }, text: `ref · ${r.name}`, sub: r.status === "ready" ? "style reference" : r.status, icon: "sparkle", token: `ref${r.id}` });
+  // any video in the media library: as a style reference (made one when picked) or as footage to use
+  const inProject = new Set(Object.values(p.sources || {}).map((s) => (String(s.path).match(/uploads\/([0-9a-f]{16})\//) || [])[1]).filter(Boolean));
+  for (const m of LIBVID || []) {
+    if (!m.ref_id) out.push({ a: { kind: "ref", id: null, name: m.name }, media: m, text: `style · ${m.name}`, sub: "use as style reference", icon: "sparkle", token: `ref ${m.name}` });
+    if (!inProject.has(m.id)) out.push({ a: { kind: "media", id: m.id, name: m.name }, text: `media · ${m.name}`, sub: "footage from your media", icon: "film", token: `media ${m.name}` });
+  }
   // ids starting with what was typed first (@t -> t1, t2 ...), then anything containing it
   const rank = (c) => (String(c.token || c.a.id).toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1);
   return out.filter((c) => !q || has(c.text)).sort((a, b) => rank(a) - rank(b)).slice(0, 9);
@@ -4186,6 +4207,11 @@ function mentionCheck() {
   const pick = (c) => { // the typed "@que" becomes the pill
     const r = document.createRange(); r.setStart(node, off - m[2].length - 1); r.setEnd(node, Math.min(off, node.textContent.length));
     MENTION?.close(); MENTION = null;
+    if (c.media) { // not a reference yet: make it one, then attach it where the @ was typed
+      r.deleteContents();
+      makeRef(c.media).then((a) => a && attach(a));
+      return;
+    }
     if (ATT.some((x) => attKey(x) === attKey(c.a))) { r.deleteContents(); return; }
     attach(c.a, r);
   };
@@ -4208,7 +4234,7 @@ async function openRefs() {
   let timer = null;
   const draw = () => {
     grid.innerHTML = "";
-    if (!REFS.length) grid.append(h("div", { class: "hint" }, "No reference videos yet. Add a video whose style you like: the AI studies its pacing, hook, text, captions and sound."));
+    if (!REFS.length && !(LIBVID || []).length) grid.append(h("div", { class: "hint" }, "No videos in your media yet. Add a video whose style you like: the AI studies its pacing, hook, text, captions and sound."));
     for (const r of REFS) {
       const on = ATT.some((a) => a.kind === "ref" && a.id === r.id), ready = r.status === "ready";
       const toggle = () => { on ? detach(`ref:${r.id}`) : attach({ kind: "ref", id: r.id, name: r.name }); draw(); };
@@ -4219,18 +4245,27 @@ async function openRefs() {
         h("b", {}, r.name),
         h("span", {}, ready ? (r.dna?.summary || "Studied") : r.status === "error" ? `Couldn't study: ${r.error || "error"}` : `Studying${r.progress != null ? ` ${Math.round(r.progress * 100)}%` : "…"}`)));
     }
+    const others = (LIBVID || []).filter((m) => !m.ref_id);
+    if (others.length) grid.append(h("div", { class: "hint", style: { gridColumn: "1 / -1" } }, "From your media (not studied for style yet: picking one studies it, about a minute)"));
+    for (const m of others) {
+      const pick = async () => { const a = await makeRef(m); if (a) attach(a); draw(); };
+      grid.append(h("div", { class: "ref-card", role: "button", tabindex: 0, title: m.digest?.summary || m.name,
+        onclick: pick, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } } },
+        h("div", { class: "th", style: { backgroundImage: `url(/api/media/${m.id}/thumb.jpg)` } }, h("span", { class: "tick" }, "✓")),
+        h("b", {}, m.name), h("span", {}, "Use as style reference")));
+    }
     clearTimeout(timer);
-    if (REFS.some((r) => !["ready", "error"].includes(r.status))) timer = setTimeout(async () => { await loadRefs(); if (document.body.contains(grid)) draw(); }, 3000);
+    if (REFS.some((r) => !["ready", "error", "failed"].includes(r.status))) timer = setTimeout(async () => { await loadRefs(); if (document.body.contains(grid)) draw(); }, 3000);
   };
   file.onchange = async () => {
     const fd = new FormData(); for (const f of file.files) fd.append("files", f);
-    toast(`Adding ${file.files.length} reference video(s)…`);
-    const r = await fetch("/api/references", { method: "POST", body: fd });
+    toast(`Adding ${file.files.length} video(s) to your media as references…`);
+    const r = await fetch("/api/references", { method: "POST", body: fd }); // lands in the media library, then becomes a reference
     if (!r.ok) toast("Couldn't add the reference", true);
     file.value = ""; await loadRefs(); draw();
   };
   const body = h("div", { class: "refs-dlg" }, h("h3", {}, "Reference videos"),
-    h("p", { class: "hint" }, "Pick the videos whose style the AI should follow. They're attached to your next message (the AI reads each one's Style DNA and recipe)."),
+    h("p", { class: "hint" }, "Pick the videos whose style the AI should follow, from your media. They're attached to your next message (the AI reads each one's Style DNA and recipe)."),
     grid, h("div", { class: "refs-foot" }, file, h("button", { class: "ghost", onclick: () => file.click() }, icon("plus"), "Add reference video"),
       h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => dlg.close() }, "Done")));
   const dlg = AK.modal(body, { onClose: () => { clearTimeout(timer); PR().focus(); if (CARET) { const s = getSelection(); s.removeAllRanges(); s.addRange(CARET); } } });
@@ -4531,13 +4566,17 @@ document.addEventListener("pointerdown", (e) => {
   if (!b.hidden && !b.contains(e.target) && !e.target.closest("#b-chats")) b.hidden = true;
 });
 
-const PILL_RE = /(@(?:ref\d+|[a-z]+\d+|\d+:\d{2}\.\d{2}(?:–\d+:\d{2}\.\d{2})?))/;
+const PILL_RE = /(@(?:ref\d+|media[0-9a-f]{16}|[a-z]+\d+|\d+:\d{2}\.\d{2}(?:–\d+:\d{2}\.\d{2})?))/;
 function withPills(text) { // a sent message: its @mentions shown as the same pills as in the message box
   return String(text || "").split(PILL_RE).map((part, i) => {
     if (i % 2 === 0) return part;
     if (/^@ref\d+$/.test(part)) {
       const r = (REFS || []).find((x) => `@ref${x.id}` === part);
       return h("span", { class: "pill ref", title: `reference #${part.slice(4)}` }, icon(ATT_ICON.ref), r ? `ref · ${r.name}` : part.slice(1));
+    }
+    if (/^@media[0-9a-f]{16}$/.test(part)) {
+      const m = (LIBVID || []).find((x) => `@media${x.id}` === part);
+      return h("span", { class: "pill media", title: "from your media" }, icon(ATT_ICON.media), m ? `media · ${m.name}` : part.slice(1));
     }
     const k = /^@ref\d+$/.test(part) ? "ref" : /^@\d/.test(part) ? (part.includes("–") ? "range" : "time") : /^@m\d/.test(part) ? "marker" : "layer";
     return h("span", { class: `pill ${k}` }, icon(ATT_ICON[k]), part.slice(1));

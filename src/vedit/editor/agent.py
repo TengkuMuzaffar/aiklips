@@ -566,7 +566,7 @@ def _result_text(content: Any) -> str:
     return ""
 
 
-def _attachment(p, n: int, a: dict) -> str:
+def _attachment(p, n: int, a: dict, pdir: Path | None = None) -> str:
     """One line of <editor_context> for something the user attached to their message (chat composer chips)."""
     kind, aid = a.get("kind"), a.get("id")
     try:
@@ -591,6 +591,15 @@ def _attachment(p, n: int, a: dict) -> str:
             from ..references import store
 
             try:
+                r = store.get(int(aid))
+            except Exception:
+                r = {}
+            if r and r.get("status") != "ready":  # just made a reference from a media video: style not studied yet
+                return (f"{n}. reference video {aid} \"{a.get('name') or r.get('name') or ''}\" (@ref{aid}): its style is still being "
+                        f"studied ({r.get('status')}{', ' + r['progress'] if r.get('progress') else ''}). Meanwhile "
+                        + (f"`vedit media show {r['media_id']}` shows what is in it; " if r.get("media_id") else "")
+                        + f"run `vedit ref show {aid}` again in a minute for its Style DNA and contact sheets.")
+            try:
                 sheets = store.sheet_paths(int(aid))
             except Exception:
                 sheets = []
@@ -600,8 +609,25 @@ def _attachment(p, n: int, a: dict) -> str:
                     + f". `vedit ref show {aid}` = its Style DNA (edit + `design`: layout, type system, elements, motion, "
                     f"rules); `vedit ref recipe {aid}` = commands to cut footage like it. The audit compares your edit with it.")
         if kind == "source":
+            from .. import media_library
+
             s = p.sources[aid]
-            return f"{n}. media file {aid} ({Path(s.path).name}, {s.duration:.2f}s)"
+            line = f"{n}. media file {aid} ({Path(s.path).name}, {s.duration:.2f}s)"
+            try:
+                m = media_library.project_media(pdir, p).get(aid) if pdir else None
+            except Exception:
+                m = None
+            if m:
+                line += "; study:" + media_library.media_line("", "", m).split(":", 1)[1] + f" (`vedit media show {aid}` for every shot)"
+            return line
+        if kind == "media":  # a file from the media library that isn't in this project yet
+            from .. import media_library
+
+            m = media_library.get(str(aid))
+            dg = m.get("digest") or {}
+            return (f"{n}. library media {aid} \"{m['name']}\" ({m['kind']}, {m.get('duration') or 0:.1f}s, not in this project yet)"
+                    + (f": {dg.get('summary')}" if dg.get("summary") else "")
+                    + f". `vedit media show {aid}` = every shot; to use it: `vedit import {m['path']}` (or `overlay add` for b-roll).")
     except Exception:
         pass
     return f"{n}. {kind} {aid or ''} (no longer in the project)"
@@ -1033,7 +1059,7 @@ class ChatSession:
             atts = [x for x in (ctx.get("attachments") or []) if isinstance(x, dict)][:24]
             if atts:
                 lines.append("attached by the user (\"these\", \"the first / second one\", \"like the reference\" refer to these, in this order):")
-                lines += ["  " + _attachment(p, i + 1, x) for i, x in enumerate(atts)]
+                lines += ["  " + _attachment(p, i + 1, x, self.pdir) for i, x in enumerate(atts)]
         except Exception as e:  # never block a message because context failed
             lines.append(f"(context unavailable: {e})")
         lines += [n for n in (MODE_NOTES.get(getattr(self, "mode", "auto")), AUDIT_NOTES.get(getattr(self, "auditor", "checks"))) if n]
