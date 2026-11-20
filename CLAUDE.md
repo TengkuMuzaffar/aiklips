@@ -225,7 +225,9 @@ gen run --ref <ref id|media id|sN|file> [--ref ...] -f <footage/music/image>... 
 - Give the estimate and ask before running it with `--count` above 3.
 - Four AI roles: Watcher (studies references, logs footage; needs vision), Creative director (angles, hooks,
   concepts), Editor (builds and revises edits), Auditor (watches renders; needs vision). Precedence: this
-  generation's `--model` > the user's saved default (`vedit ai-models`) > the quality tier. Say which models you used.
+  generation's `--model` > the user's saved default (`vedit ai-models`) > the user's chat model when it isn't a
+  Claude one (only DeepSeek set up = DeepSeek everywhere; without vision the frames are left out) > the quality
+  tier. Say which models you used.
 - To change one generated video, open its project folder with `vedit use` and edit it like any other project.
 - To keep the AI improving one generated video that's below the pass mark (and not edited by hand):
   `vedit gen improve <variation id> [--rounds 3]`. It revises from that video's best version.

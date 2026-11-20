@@ -73,6 +73,9 @@ QUALITY = {
 }
 TIER_NAMES = ("vision", "planner", "editor", "auditor")
 MAX_IMAGES = 4
+# one AI call that never answers (a provider that stalls, a CLI subprocess stuck on Windows) must not hold a job
+# worker forever: Generate would sit on its last message with no way to tell. Override with AIKLIPS_AI_TIMEOUT (s).
+CALL_TIMEOUT = float(os.environ.get("AIKLIPS_AI_TIMEOUT") or 420)
 IMAGE_MAX_PX = 1568
 _SEM = threading.BoundedSemaphore(2)
 _backend: Callable[..., dict] | None = None
@@ -142,7 +145,17 @@ def model_for(task: str, quality: str = "balanced") -> str:
     if os.environ.get("VEDIT_AI_MODEL"):
         return os.environ["VEDIT_AI_MODEL"]
     chosen = (getattr(_local, "models", None) or {}).get(tier)
-    return chosen or settings().get(tier) or QUALITY.get(quality, QUALITY["balanced"])[tier]
+    return chosen or settings().get(tier) or _default(tier, quality)
+
+
+def _default(tier: str, quality: str, saved: dict | None = None) -> str:
+    """A role nobody picked a model for: the quality tier's Claude model, unless the user's chat model is from
+    another provider (only DeepSeek set up, say). Then Generate uses that one too instead of a Claude login the
+    user may not have (on Windows that was a silent `exit code 1`)."""
+    chat = str((settings() if saved is None else saved).get("chat") or "")
+    if chat and not chat.startswith("anthropic/"):
+        return chat
+    return QUALITY.get(quality, QUALITY["balanced"])[tier]
 
 
 def roles(quality: str = "balanced") -> list[dict]:
@@ -151,7 +164,7 @@ def roles(quality: str = "balanced") -> list[dict]:
     out = []
     for r in ROLES:
         t = r["tier"]
-        tier_default = QUALITY.get(quality, QUALITY["balanced"])[t]
+        tier_default = _default(t, quality, saved)
         out.append({**r, "tier_default": tier_default, "saved": saved.get(t), "effective": saved.get(t) or tier_default})
     return out
 
@@ -284,7 +297,8 @@ def _log(line: str) -> None:
         pass
 
 
-async def _sdk(model_key: str, system: str, prompt: str, schema: dict, images: list[Path]) -> tuple[Any, dict]:
+async def _sdk(model_key: str, system: str, prompt: str, schema: dict, images: list[Path],
+               err: list[str] | None = None) -> tuple[Any, dict]:
     from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
     from ..editor import models as registry
@@ -304,7 +318,7 @@ async def _sdk(model_key: str, system: str, prompt: str, schema: dict, images: l
     opts = ClaudeAgentOptions(
         model=model["id"], system_prompt=system, tools=[], allowed_tools=[], setting_sources=[], cwd=str(work),
         env=env, max_turns=3, output_format={"type": "json_schema", "schema": schema},
-        max_buffer_size=32 * 1024 * 1024, stderr=_log,
+        max_buffer_size=32 * 1024 * 1024, stderr=lambda line: (_log(line), err is not None and err.append(line)),
     )
     text, result, usage = [], None, {}
     async for msg in query(prompt=stream(), options=opts):
@@ -338,14 +352,20 @@ def _parse(raw: Any) -> Any:
 def _once(task: str, model_key: str, system: str, prompt: str, schema: dict, images: list[Path]) -> tuple[Any, dict]:
     if _backend is not None:
         return _backend(task=task, system=system, prompt=prompt, schema=schema, images=images, model=model_key), {}
+    err: list[str] = []  # the CLI's stderr: a failed call says why instead of "Check stderr output for details"
     try:
-        return asyncio.run(_sdk(model_key, system, prompt, schema, images))
+        return asyncio.run(asyncio.wait_for(_sdk(model_key, system, prompt, schema, images, err), CALL_TIMEOUT))
     except AIError:
         raise
+    except (asyncio.TimeoutError, TimeoutError):
+        _log(f"timeout: {task} on {model_key} gave no answer in {CALL_TIMEOUT:.0f}s")
+        raise AIError(f"{model_key} gave no answer to the {task} step in {CALL_TIMEOUT / 60:.0f} min. The provider may be "
+                      "down or too slow for this model; try again, or pick another model in Settings → Models.") from None
     except ImportError as e:
         raise AIUnavailable(f"Claude Agent SDK missing: {e}") from None
     except Exception as e:  # CLINotFoundError, ProcessError, CLIConnectionError ...
-        raise _classify(f"{type(e).__name__}: {e}") from None
+        tail = " | ".join(x.strip() for x in err[-6:] if x.strip())[-800:]
+        raise _classify(f"{type(e).__name__}: {e}" + (f" — {tail}" if tail else "")) from None
 
 
 def vision_ok(model_key: str) -> bool:

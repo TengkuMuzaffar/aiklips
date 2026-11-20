@@ -56,12 +56,16 @@ def parse_srt(text: str) -> list[Word]:
     return words
 
 
-def transcribe(audio_src: Path, model: str = "small", language: str | None = None) -> list[Word]:
+def transcribe(audio_src: Path, model: str = "small", language: str | None = None, install: bool = True) -> list[Word]:
+    """`install=False` (background studies): raise ImportError instead of installing the extra, which takes minutes
+    with no progress the user can see."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         from .. import updater
 
+        if not install:
+            raise
         if not updater.enabled():
             raise VeditError("Auto-captions need the 'captions' extra. Run: uv sync --extra captions") from None
         updater.install_extra("captions")

@@ -441,7 +441,7 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
             from ..ops import captions as caps
 
             say("Transcribing speech")
-            words = caps.transcribe(path, "base")
+            words = caps.transcribe(path, "base", install=False)  # never a silent install mid-study
             text = " ".join(w.text for w in words)[:3000] or None
             if words:
                 text_words = [{"t": round(w.start, 2), "w": w.text} for w in words[:400]]

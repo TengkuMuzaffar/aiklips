@@ -115,3 +115,20 @@ def test_list_models_bad_key_and_no_list(monkeypatch):
     monkeypatch.setattr(reg, "_get_json", lambda u, k: (_ for _ in ()).throw(_http_error(404)))
     with pytest.raises(reg.RegistryError, match="Type a model id"):
         reg.list_models("p")
+
+
+def test_generate_roles_follow_a_non_claude_chat_model(home, monkeypatch):
+    """Only DeepSeek set up: Generate's roles nobody picked a model for use it too, not a Claude login the user
+    may not have. A Claude chat model keeps the quality tiers; a role picked by hand always wins."""
+    import json
+
+    from vedit.ai import client as ai
+
+    monkeypatch.delenv("VEDIT_AI_MODEL", raising=False)
+    ai.settings_path().write_text(json.dumps({"chat": "deepseek/deepseek-chat"}))
+    assert {ai.model_for(t) for t in ("study", "planner", "editor", "auditor")} == {"deepseek/deepseek-chat"}
+    assert {r["effective"] for r in ai.roles()} == {"deepseek/deepseek-chat"}
+    ai.settings_path().write_text(json.dumps({"chat": "deepseek/deepseek-chat", "planner": "anthropic/claude-opus-5-5"}))
+    assert ai.model_for("planner") == "anthropic/claude-opus-5-5"
+    ai.settings_path().write_text(json.dumps({"chat": "anthropic/claude-sonnet-5-5"}))
+    assert ai.model_for("planner") == ai.QUALITY["balanced"]["planner"]
