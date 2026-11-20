@@ -3241,16 +3241,43 @@ def media_show(ref: str = typer.Argument(..., help="Library id, or a source of t
     uid = _media_id(ref)
     note = media_library.study_now(uid)  # not studied yet (e.g. imported with the app closed): study it here
     m = media_library.get(uid, full=True)
-    out = {k: m.get(k) for k in ("id", "name", "kind", "duration", "status", "error", "tags", "digest", "used_in")}
+    out = {k: m.get(k) for k in ("id", "name", "kind", "duration", "status", "error", "tags", "digest", "used_in", "ref_id", "ref_status")}
     if note:
         out["note"] = note
     if m.get("segments"):
         out["segments"] = [{k: v for k, v in sg.items() if k != "id"} | {"k": int(sg["id"].split(".s")[1])} for sg in m["segments"]]
-    human = [f"{m['name']}  ({m['kind']}, {m['status']})"]
+    human = [f"{m['name']}  ({m['kind']}, {m['status']})"
+             + (f"  · style reference #{m['ref_id']} ({m['ref_status']}): vedit ref show {m['ref_id']}" if m.get("ref_id") else "")]
     if m.get("digest"):
         human.append("  " + json.dumps({k: v for k, v in m["digest"].items() if k not in ("kind", "name")}))
     human += ["  " + planner._shot_line(sg | {"id": f"s{sg['id'].split('.s')[1]}"}) for sg in m.get("segments") or []]
     emit(out, "\n".join(human))
+
+
+@media_app.command("ref")
+def media_ref(ref: str = typer.Argument(..., help="Library id, or a source of this project (s1); must be a video"),
+              off: bool = typer.Option(False, "--off", help="Stop using it as a reference (the file stays)"),
+              wait: bool = typer.Option(False, help="Study its style now and wait (otherwise the app studies it)")):
+    """Use a video from the media library as a style reference too: no second copy, a style study (Style DNA) is added
+    next to it. Then `vedit ref show <id>`, `ref target`, or `gen run --ref`."""
+    from . import jobs
+    from .references import store
+
+    uid = _media_id(ref)
+    if off:
+        rid = store.for_media(uid)
+        if rid is not None:
+            store.delete(rid)
+        emit({"media": uid, "ref_id": None}, f"{uid} is no longer a reference" if rid is not None else f"{uid} wasn't a reference")
+        return
+    if wait:
+        jobs.AUTOSTART = False
+    r = store.promote(uid)
+    if wait and r["status"] != "ready":
+        jobs.drain(timeout=3600, wait=True)
+        r = store.get(r["id"])
+    emit({"media": uid, "ref_id": r["id"], "status": r["status"], "summary": r.get("summary")},
+         f"{r['name']} is reference #{r['id']} ({r['status']})" + (f": {r['summary']}" if r.get("summary") else ""))
 
 
 @media_app.command("restudy")
@@ -3289,20 +3316,30 @@ def media_note(ref: str, segment: int = typer.Argument(..., help="Segment number
 
 # ---- references + generation ------------------------------------------------------------
 
-ref_app = typer.Typer(help="Reference library: videos the AI studies for style (pacing, text, animation, sound)")
+ref_app = typer.Typer(help="References: videos in the media library the AI also studies for style (pacing, text, animation, sound)")
 gen_app = typer.Typer(help="Generate N different edits of your footage in the style of references")
 app.add_typer(ref_app, name="ref")
 app.add_typer(gen_app, name="gen")
 
 
+def _project_dir_or_none() -> Path | None:
+    try:
+        return pdir()
+    except (VeditError, SystemExit):
+        return None
+
+
 @ref_app.command("add")
-def ref_add(files: list[str], wait: bool = typer.Option(True, help="Study now and wait (otherwise the app studies them)")):
-    """Add reference videos and study them (measure + AI)."""
+def ref_add(files: list[str] = typer.Argument(..., help="Video files, media library ids, or sources of this project (s1)"),
+            wait: bool = typer.Option(True, help="Study now and wait (otherwise the app studies them)")):
+    """Use videos as references and study their style (measure + AI). A file goes into the media library first;
+    something already there is used as it is (no second copy)."""
     from . import jobs
     from .references import store
 
     jobs.AUTOSTART = False
-    rows = [store.add(Path(f)) for f in files]
+    here = _project_dir_or_none() if any(f[:1] == "s" and f[1:].isdigit() for f in files) else None
+    rows = [store.get(store.resolve(f, here)) for f in files]
     if wait:
         jobs.drain(timeout=3600, wait=True)
         rows = [store.get(r["id"]) for r in rows]
@@ -3328,7 +3365,7 @@ def ref_show(ref_id: int):
     r = store.get(ref_id, full=True)
     look = ("Read these contact sheets before building anything like it: they are the reference itself (the DNA is a "
             "summary). sheet-1 = the opening at 4 fps, sheet-2 = one frame per shot, sheet-3 = the whole video.")
-    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps",
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "media_id", "status", "summary", "dna", "overrides", "error", "recipe", "gaps",
                                               "sheets", "stale")}, "look_first": look},
          f"#{r['id']} {r['name']} ({r['status']})" + (" · studied with an older study prompt: `vedit ref restudy`" if r.get("stale") else "")
          + "\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
@@ -3393,7 +3430,7 @@ def ref_set(ref_id: int, trait: str = typer.Argument(..., help="Dotted path, e.g
 
 @ref_app.command("remove")
 def ref_remove(ref_id: int):
-    """Delete a reference."""
+    """Stop using a video as a reference (its style study goes; the file stays in the media library)."""
     from .references import store
 
     store.delete(ref_id)
