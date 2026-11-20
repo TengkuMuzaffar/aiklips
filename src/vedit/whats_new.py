@@ -10,11 +10,17 @@ from .updater import parse_version
 
 NOTES: list[dict] = [
     {"version": "0.2.2", "items": [
-        {"icon": "spark", "title": "Design studio", "body": "Make motion-design videos on a canvas: scenes of shapes, text and media you stretch, rotate and animate with presets or keyframes."},
-        {"icon": "wand", "title": "Storyboard with any AI", "body": "Turn a brief into scenes, design a scene from its notes, or animate a selection, with whichever AI model you've connected."},
-        {"icon": "film", "title": "Beta labels", "body": "References and Generate are marked beta while they keep improving."},
-        {"icon": "film", "title": "References live in your Media", "body": "Any video in your Media can be a style reference: no second upload. Your existing references were moved there, with their style kept."},
+        {"icon": "film", "title": "Media library", "body": "Every file you add is studied once (shots, motion, light, speech) and ready in any project or generation."},
+        {"icon": "spark", "title": "References live in your Media", "body": "Any video in your Media can be a style reference, with no second upload. Your existing references were moved there, their style kept."},
         {"icon": "list", "title": "Tell Generate who it's for", "body": "Pick the funnel stage, the audience, a detailed pace, the tone and must-dos with one click each."},
+        {"icon": "wand", "title": "Signature effects", "body": "Snap zooms, checklists, liquid glass, orbiting words, dolly zoom and more, each one a single move grouped on the timeline."},
+        {"icon": "spark", "title": "3D objects", "body": "3D titles, cars, animals and shapes that turn in perspective, spin and travel across the frame."},
+        {"icon": "sliders", "title": "Motion graphics", "body": "Kinetic text, counters, charts that grow, lines that draw themselves and shapes that morph."},
+        {"icon": "play", "title": "Sound effects and music loops", "body": "Make whooshes, hits and ambiences, or an original music loop in a style you pick, right in the editor."},
+        {"icon": "layers", "title": "Tracks and elements", "body": "The video track can sit among the other tracks, with colour screens and shapes from the new Elements tab."},
+        {"icon": "monitor", "title": "Safe zones", "body": "Set TikTok, Reels or Shorts and see what their buttons cover; text is kept out of the way."},
+        {"icon": "brush", "title": "Resize in the preview", "body": "Drag to resize, stretch and rotate anything right on the video, and style text with bold, lists and alignment."},
+        {"icon": "film", "title": "Beta labels", "body": "References and Generate are marked beta while they keep improving."},
     ]},
     {"version": "0.2.1", "items": [
         {"icon": "home", "title": "A new home", "body": "Start a project from a format or by dropping a video, and find recent work in a grid or list."},
