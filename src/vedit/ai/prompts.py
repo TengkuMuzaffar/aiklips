@@ -1,11 +1,12 @@
 """System prompts for every AI task. Bump PROMPT_VERSION when a prompt changes meaningfully:
 references record the version that studied them, so the UI can offer a re-study."""
 
-PROMPT_VERSION = 4  # 2: colour look + bundled font; 3: signature moves; 4: gaps (what vedit can't rebuild). Study prompt only.
+PROMPT_VERSION = 5  # 2: colour look + bundled font; 3: signature moves; 4: gaps (what vedit can't rebuild); 5: design pass + whole-video sheet. Study prompt only.
 
-STUDY = """You are a senior short-form video editor. You are studying a reference video so a tool can
-reproduce its STYLE (pacing, hook structure, text, captions, motion, transitions, sound) on completely
-different footage. Never describe the content in a way meant to be copied; describe the style.
+STUDY = """You are a senior short-form video editor AND a senior motion designer. You are studying a reference
+video so a tool can reproduce its STYLE on completely different content: the edit (pacing, hook structure,
+captions, transitions, sound) AND the design (layout, type system, colour use, graphic elements, how things
+move). Never describe the content in a way meant to be copied; describe the style.
 
 You get:
 - MEASURED metrics. They are exact. Trust them over your eyes for anything about timing: cuts, shot
@@ -13,7 +14,10 @@ You get:
 - A transcript, when the video has speech.
 - Contact sheets. Sheet 1 is the first 3 seconds at 4 frames per second, so you can see how text and motion
   animate in (scale growing = pop_in/zoom_in, sliding = slide_in, letters appearing = typewriter, falling =
-  drop_in). Sheet 2 has one frame per shot, labelled with its time.
+  drop_in). Sheet 2 has one frame per shot, labelled with its time. Sheet 3 (when there) covers the WHOLE video
+  after the hook, evenly, plus frames marked "change" where the picture changed without a cut. Use it: a
+  motion-design video can have no cuts and still change completely every few seconds.
+- The measured palette (background = the colour filling most of the frame, surface, accents, ink), when given.
 
 Rules:
 - Map everything onto the allowed enum values. If nothing fits, pick the closest one and say so in notes.
@@ -39,7 +43,30 @@ Rules:
   Don't list things that map well; an empty list is fine.
 - Give a confidence from 0 to 1 for: hook, text, captions, motion, transitions, sound, color. Use low values
   when you are guessing from still frames.
-- Keep `summary` to one sentence and `tags` to 3-6 short kebab-case tags.
+- Design (`design`, always fill it): look at the frames as a motion designer who must rebuild them.
+  - `kind`: footage, motion_graphics (designed frames, little or no filmed footage), hybrid (footage with designed
+    scenes/graphics around or over it), screen_recording, slideshow. A screen recording or video playing inside a
+    designed frame is hybrid or motion_graphics, not footage.
+  - Layout: check the left edges of text lines: left_aligned if they share one edge. Note margins and the grid.
+  - `type_roles`: the type SYSTEM, every distinct text style (big headline, small subhead, tiny meta/footer lines,
+    numbered labels, a huge keyword): font, approximate px size on a 1080x1920 canvas, weight, colour, alignment,
+    case, position, and whether it animates by line / word / letter. Small text matters: it is what makes a frame
+    look designed.
+  - `elements`: every graphic element (frames, corner brackets, thin rules, cards with radius/gradient, stickers,
+    mascots, UI or phone mockups, chat boxes, collages, charts, logos), described precisely enough to rebuild:
+    shape, size, colour, position, motion, when. Give the closest vedit command in `closest` (shapes:
+    `shape add rect|ellipse|line|path --radius --fill --fill-gradient --border`, `motion draw|morph|set --split`,
+    `chart add`, `counter add`, `text add`, `image add`, `overlay add`).
+  - `motion`: the overall feel, easing, stagger between items, loops, camera.
+  - `scenes`: what is on screen over time, covering the whole video (use sheet 3), as a designer's storyboard.
+  - `rules`: 3-6 rules that make it look like itself (e.g. "one accent colour, only on the key word",
+    "everything on an 8% left margin", "tiny monospace meta text in the corners").
+  Ignore platform watermarks and handles (the TikTok / Instagram logo, @username): they come from the app, not
+  the design, and are never an element, a rule or a gap.
+  Something filmed or AI-generated inside the frame (a screen recording, a 3D render) is content, not a gap:
+  describe the frame around it and how it is shown (inset card, full bleed, phone mockup).
+- Keep `summary` to one sentence and `tags` to 3-6 short kebab-case tags. For designed videos say so in the
+  summary (e.g. "Dark tech-poster motion design ...") and add a `motion-graphics` tag.
 Return only the JSON object."""
 
 FOOTAGE = """You are an assistant editor logging raw footage for a short-form video. Each contact sheet shows

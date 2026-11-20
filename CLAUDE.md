@@ -338,7 +338,10 @@ Load the relevant one before doing that kind of edit.
     reference in `store.palette_of`) goes to `scene` ops: a gap on the video track + full-screen canvas + kinetic text
     (`executor._scene`), in sequence with the clips (`timing.sequence`; trimming to length cuts footage, never scenes).
     No song uploaded = a `music make` loop (`directives` `music_make`); sound effects are never counted as music
-    (`sound.is_sfx`). `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+    (`sound.is_sfx`). The study (prompts.STUDY, `PROMPT_VERSION`; older studies are re-queued at app start by
+    `store.restudy_stale`) fills `StyleDNA.design` (kind, layout, type_roles, elements, motion, scenes, rules) from three
+    sheets, the third covering the whole video (`analysis.timeline_times`: even frames + changes without a cut).
+    `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
   - Distribution: `launcher/` (Go: install, signed updates, rollback), `updater.py` (check + stage + on-demand extras,
     `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
     `docs/design/distribution.md` before changing any of them; a `project.json` format change needs `SCHEMA_VERSION`

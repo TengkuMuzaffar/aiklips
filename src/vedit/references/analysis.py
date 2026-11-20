@@ -350,6 +350,49 @@ def make_sheets(path: Path, duration: float, shots: list[float], out_dir: Path) 
     return sheets
 
 
+TIMELINE_FRAMES = 20
+
+
+def timeline_times(duration: float, cuts: list[float] | None = None, energy: list[float] | None = None,
+                   fps: float = 10, n: int = TIMELINE_FRAMES) -> list[tuple[float, str]]:
+    """Frames across the WHOLE video after the hook: an even grid plus the moments the picture changes without a cut
+    (motion-energy peaks: a scene animating in, a card swapping). Motion design changes a lot with no cuts at all,
+    so one frame per shot misses most of it."""
+    if duration <= 3.5:
+        return []
+    cuts = cuts or []
+    changes: list[float] = []
+    if energy:
+        mean = sum(energy) / len(energy) or 1e-6
+        for i in range(1, len(energy) - 1):
+            t = (i + 1) / fps
+            if (t > 3.0 and energy[i] > 3 * mean and energy[i] >= energy[i - 1] and energy[i] >= energy[i + 1]
+                    and not any(abs(t - c) < 0.4 for c in cuts) and not any(abs(t - x) < 1.0 for x in changes)):
+                changes.append(round(min(t + 0.4, duration - 0.05), 2))  # just after the change: the new state
+        changes = sorted(sorted(changes, key=lambda t: -energy[min(len(energy) - 1, int(t * fps))])[:6])
+    grid_n = max(4, n - len(changes))
+    step = (duration - 3.0) / grid_n
+    grid = [round(3.0 + step * (i + 0.5), 2) for i in range(grid_n)]
+    grid = [t for t in grid if not any(abs(t - c) < step * 0.35 for c in changes)]
+    out = [(t, f"{t:.1f}s") for t in grid] + [(t, f"{t:.1f}s change") for t in changes]
+    return sorted(out)[:n]
+
+
+def make_timeline_sheet(path: Path, duration: float, out_dir: Path, cuts: list[float] | None = None,
+                        energy: list[float] | None = None, fps: float = 10) -> str | None:
+    """Sheet 3: the whole video after the hook (see timeline_times)."""
+    marks = timeline_times(duration, cuts, energy, fps)
+    if not marks:
+        return None
+    frames = sample_frames(path, [t for t, _ in marks], out_dir / "frames", "tl")
+    if not frames:
+        return None
+    dest = out_dir / "sheet-3.jpg"
+    _tile([(p, label) for p, (_, label) in zip(frames, marks)], dest, cols=5, width=240,
+          title=f"WHOLE VIDEO: {len(frames)} frames from 3s to the end ('change' = the picture changed without a cut)")
+    return dest.name
+
+
 # ---- everything -----------------------------------------------------------------------------
 
 def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = None, transcript: bool = True) -> dict:
@@ -378,6 +421,14 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
     col = color_profile(path, dur)
     say("Making contact sheets")
     sheets = make_sheets(path, dur, pace["shots"], out_dir)
+    tl = make_timeline_sheet(path, dur, out_dir, cuts, mot.get("energy"), mot.get("fps") or 10)
+    if tl:
+        sheets.append(tl)
+    say("Measuring the palette")
+    try:
+        pal = palette(path, dur)
+    except (VeditError, OSError):
+        pal = None
     text = None
     if transcript and info["has_audio"] and dur <= 240:
         try:
@@ -396,7 +447,7 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         "motion_energy": mot.get("energy", []), "audio": audio,
         "cuts_on_beat": sync, "cuts_on_beat_chance": chance, "first_cut_s": cuts[0] if cuts else None,
         "flashes_on_beat": near_beat_ratio(mot.get("flashes", []), beats), "sheets": sheets, "transcript": text,
-        "color": col,
+        "color": col, "palette": pal,
     }
     (out_dir / "metrics.json").write_text(json.dumps(metrics))
     return metrics
@@ -418,4 +469,5 @@ def summary_for_ai(m: dict) -> dict:
         "flashes_on_beat": m.get("flashes_on_beat"), "first_cut_s": m.get("first_cut_s"),
         "transcript": m.get("transcript"),
         "color": m.get("color"),
+        "palette": m.get("palette"),
     }

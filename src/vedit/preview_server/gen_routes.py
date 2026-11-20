@@ -58,6 +58,11 @@ def mount(app: FastAPI, host, bad) -> None:
 
     if jobs.AUTOSTART and jobs.pending():  # a batch was still running when the app closed: carry on
         jobs.ensure_workers()
+    if jobs.AUTOSTART:  # references studied with an older study prompt: study them again (design pass, whole-video sheet)
+        try:
+            store.restudy_stale()
+        except Exception:
+            pass
 
     # ---- references ------------------------------------------------------------------
     @app.get("/api/references")

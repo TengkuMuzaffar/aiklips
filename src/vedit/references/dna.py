@@ -127,6 +127,75 @@ class Gap(_M):
     closest: str = Field("", description="The closest vedit command or trait to use instead, e.g. 'vedit transition hblur' or 'text.animation_in = typewriter'")
 
 
+# ---- design: what a motion designer would note (layout, type system, graphic elements, motion) ----------
+
+EASE_NAMES = ("ease_out", "ease_in_out", "snap", "smooth", "expo_out", "circ_out", "overshoot", "anticipate",
+              "back_out", "bounce_out", "linear", "step")
+ELEMENT_KINDS = ("frame", "card", "panel", "line", "shape", "icon", "sticker", "mascot", "ui_mockup", "phone_mockup",
+                 "chat_ui", "collage", "chart", "counter", "logo", "photo", "video_inset", "texture", "other")
+
+
+class TypeRole(_M):
+    role: Literal["headline", "subhead", "body", "label", "meta", "keyword", "counter", "cta", "caption"] = Field(
+        description="What this text does. A video usually has 2-4 roles: e.g. headline + subhead + tiny meta lines")
+    font: FontKey | None = Field(None, description="Closest bundled font")
+    font_feel: str = Field("", description="e.g. monospace bold, rounded heavy lowercase, thin grotesk")
+    size_px: int = Field(72, ge=10, le=400, description="Approx. size on a 1080x1920 canvas (meta 20-30, body 36-48, headline 70-120, keyword 150+)")
+    weight: Literal["light", "regular", "bold", "black"] = "bold"
+    color: str = "#FFFFFF"
+    align: Literal["left", "center", "right"] = Field("center", description="Text alignment: look at the left edges of the lines")
+    case: Literal["normal", "upper", "lower"] = "normal"
+    x: str = Field("50%", description="Where the block sits: the left edge for left-aligned text (e.g. '8%'), else the centre")
+    y: str = Field("50%", description="Vertical centre, % of canvas height")
+    split: Literal["none", "line", "word", "letter"] = Field("none", description="Does it animate in line by line, word by word, letter by letter?")
+    animation_in: list[InPreset] = Field(default_factory=list)
+    example: str = Field("", description="What it says, a few words (inspiration only)")
+
+
+class DesignElement(_M):
+    kind: Literal[ELEMENT_KINDS]  # type: ignore[valid-type]
+    look: str = Field(description="Precise, buildable: 'thin 2px orange rules framing the safe area', "
+                                  "'16:9 card, peach-to-white gradient, 24px radius, centred at y 45%'")
+    color: str | None = Field(None, description="Main hex colour")
+    where: str = Field("", description="Position and size on the canvas, e.g. 'centre, 90% wide, y 40-55%'")
+    motion: str = Field("", description="How it moves: 'draws on in 0.6s', 'orbits slowly', 'pops in staggered 0.1s'")
+    when: str = Field("", description="'whole video' or a time range like '2.0-5.5s'")
+    closest: str = Field("", description="The vedit command(s) closest to it, e.g. 'shape add rect --radius 24 --fill-gradient ...'")
+
+
+class DesignScene(_M):
+    start: float = Field(description="Seconds")
+    end: float
+    what: str = Field(description="What is on screen, as a designer would brief it")
+    layout: str = Field("", description="Where things sit: 'headline top-left, card centre, footer rows bottom'")
+    motion: str = Field("", description="What moves and how")
+
+
+class DesignMotion(_M):
+    feel: Literal["snappy", "smooth", "bouncy", "floaty", "mechanical", "static"] = "smooth"
+    ease: Literal[EASE_NAMES] = "expo_out"  # type: ignore[valid-type]
+    split: Literal["none", "line", "word", "letter"] = "none"
+    stagger_s: float = Field(0.0, ge=0, le=1, description="Delay between staggered items/words; 0 if none")
+    loops: list[LoopPreset] = Field(default_factory=list)
+    camera: Literal["static", "push_in", "pan", "parallax", "zoom_through", "3d"] = "static"
+    density: Literal["minimal", "moderate", "busy"] = "moderate"
+
+
+class DesignDNA(_M):
+    kind: Literal["footage", "motion_graphics", "hybrid", "screen_recording", "slideshow"] = Field(
+        "footage", description="footage = filmed video with some text; motion_graphics = designed frames, little or no "
+                               "footage; hybrid = footage with designed graphics/scenes around or over it")
+    background: str = Field("", description="What fills the frame behind everything: 'flat near-black #050505', 'talking-head footage'")
+    layout: Literal["centered", "left_aligned", "grid", "split", "free", "full_bleed"] = "centered"
+    margins: str = Field("", description="Margins and grid, e.g. '8% side margins, everything on one left edge'")
+    type_roles: list[TypeRole] = Field(default_factory=list, description="The type system: 1-5 text roles")
+    elements: list[DesignElement] = Field(default_factory=list, description="0-8 graphic elements (frames, cards, stickers, UI, mascots...)")
+    motion: DesignMotion = Field(default_factory=DesignMotion)
+    scenes: list[DesignScene] = Field(default_factory=list, description="What is on screen over time, 2-10 scenes covering the whole video")
+    rules: list[str] = Field(default_factory=list, description="3-6 short design rules a designer would follow to match it, "
+                                                               "e.g. 'one accent colour (orange) only on the keyword'")
+
+
 class StyleDNA(_M):
     version: int = 1
     summary: str = Field("", description="One sentence a video editor would use to describe this style")
@@ -141,6 +210,7 @@ class StyleDNA(_M):
     sound: SoundDNA = Field(default_factory=SoundDNA)
     color_feel: str = Field("", description="One phrase on the colour grade, e.g. 'warm faded film', 'clean bright daylight'")
     color: ColorDNA = Field(default_factory=ColorDNA)
+    design: DesignDNA | None = Field(None, description="Always fill: the design as a motion designer sees it")
     signature_moves: list[SignatureMove] = Field(default_factory=list, description="0-4 memorable moves the reference uses")
     gaps: list[Gap] = Field(default_factory=list, description="0-5 things in the reference vedit can't do exactly, each with the closest option")
     confidence: dict[str, float] = Field(default_factory=dict, description="0..1 per area: hook, text, captions, motion, transitions, sound")
@@ -165,6 +235,8 @@ def apply_measured(dna: StyleDNA, m: dict) -> StyleDNA:
         dna.sound.music = dna.sound.voiceover = False
     if m.get("color"):
         dna.color.measured = {k: float(v) for k, v in m["color"].items()}
+    if m.get("palette"):
+        dna.color.palette = dict(m["palette"])
     confirm_moves(dna, m)
     dna.confidence["pacing"] = 1.0
     if audio:
@@ -363,4 +435,10 @@ def card(dna: StyleDNA) -> list[dict]:
              + ("warm" if d.color.measured['warmth'] > 0.03 else "cool" if d.color.measured['warmth'] < -0.03 else "neutral"))
             if d.color.measured.get("luma") is not None else ""] if x)),
     ]
+    if d.design:
+        g = d.design
+        roles = "; ".join(f"{r.role} {r.font or r.font_feel} {r.size_px}px {r.align}" for r in g.type_roles[:4])
+        rows.append(("Design", ", ".join(x for x in [g.kind.replace("_", " "), g.layout.replace("_", " ") + " layout", roles,
+                                                     f"{len(g.elements)} graphic element{'s' if len(g.elements) != 1 else ''}" if g.elements else "",
+                                                     f"{g.motion.feel} motion ({g.motion.ease})"] if x)))
     return [{"label": a, "value": b, "confidence": d.confidence.get({"colour": "color"}.get(a.lower(), a.lower()))} for a, b in rows]

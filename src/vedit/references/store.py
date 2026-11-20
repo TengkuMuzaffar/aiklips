@@ -144,6 +144,7 @@ def get(rid: int, full: bool = False) -> dict:
             row["base_dna"] = base
             row["recipe"] = recipemod.build(style, m, rid)
             row["gaps"] = recipemod.gaps(style)
+            row["sheets"] = sheet_paths(rid)
     if full and m:
         a = m.get("audio") or {}
         row["metrics"] = {
@@ -249,6 +250,59 @@ def merged(ids: list[int], lead: int | None = None) -> dnamod.StyleDNA:
 
 # ---- studying ---------------------------------------------------------------------------------
 
+def backfill(d: Path, src: Path, metrics: dict, say=lambda _s: None) -> dict:
+    """Measurements added since a reference was first analysed (colour, the whole-video sheet, the palette), made
+    now and saved, so an old reference doesn't need a full re-analysis."""
+    changed = False
+    dur = float(metrics.get("duration") or 0)
+    if not metrics.get("color"):
+        say("Measuring colour")
+        metrics["color"] = analysis.color_profile(src, dur or None)
+        changed = True
+    if "sheet-3.jpg" not in metrics.get("sheets", []) and dur > 3.5:
+        say("Making the whole-video sheet")
+        tl = analysis.make_timeline_sheet(src, dur, d, metrics.get("cuts"), metrics.get("motion_energy"),
+                                          (metrics.get("motion") or {}).get("fps") or 10)
+        if tl:
+            metrics["sheets"] = [*metrics.get("sheets", []), tl]
+            changed = True
+    if "palette" not in metrics:
+        say("Measuring the palette")
+        try:
+            metrics["palette"] = analysis.palette(src, dur or None)
+        except (VeditError, OSError):
+            metrics["palette"] = None
+        changed = True
+    if changed:
+        (d / "metrics.json").write_text(json.dumps(metrics))
+    return metrics
+
+
+def sheet_paths(rid: int) -> list[str]:
+    """The reference's contact sheets (absolute paths), made if missing: what it actually looks like."""
+    row = _row(rid)
+    d = Path(row["dir"])
+    m = _load_json(d / "metrics.json")
+    if m is None:
+        return []
+    try:
+        m = backfill(d, source_path(row), m)
+    except (VeditError, OSError):
+        pass
+    return [str(d / s) for s in m.get("sheets", []) if (d / s).exists()]
+
+
+def restudy_stale() -> list[int]:
+    """Queue a re-study of every AI-studied reference made with an older study prompt (called when the app starts)."""
+    out = []
+    with closing(_db()) as con:
+        rows = con.execute("SELECT id FROM refs WHERE status = 'ready' AND ai = 1 AND COALESCE(prompt_version, 0) < ?",
+                           (prompts.PROMPT_VERSION,)).fetchall()
+    for r in rows:
+        restudy(r["id"])  # enqueue skips one already queued
+        out.append(r["id"])
+    return out
+
 def study(rid: int, job: jobs.Job | None = None, quality: str = "balanced") -> dict:
     """Measure the video, then ask the AI for the visual traits. Always leaves a usable DNA."""
     row = _row(rid)
@@ -264,10 +318,8 @@ def study(rid: int, job: jobs.Job | None = None, quality: str = "balanced") -> d
     metrics = _load_json(d / "metrics.json")
     if metrics is None or not (d / "sheet-1.jpg").exists():
         metrics = analysis.analyze(src, d, say)
-    elif not metrics.get("color"):  # studied before colour was measured
-        say("Measuring colour")
-        metrics["color"] = analysis.color_profile(src, metrics.get("duration"))
-        (d / "metrics.json").write_text(json.dumps(metrics))
+    else:
+        backfill(d, src, metrics, say)
     say("AI is studying the style")
     usage: dict = {}
     ai_used = 0

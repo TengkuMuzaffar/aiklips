@@ -223,6 +223,8 @@ MOTION_WORDS = ("motion-graphic", "motion graphic", "motion-design", "motion des
 
 def is_motion(dna: StyleDNA) -> bool:
     """The reference is motion design (graphics, kinetic type, flat canvases), not a cut of filmed footage."""
+    if dna.design is not None:  # studied with the design pass: it says so directly
+        return dna.design.kind in ("motion_graphics", "hybrid")
     text = " ".join([dna.summary, dna.notes, dna.color_feel, *dna.tags]).lower()
     return any(w in text for w in MOTION_WORDS) or float((dna.color.palette or {}).get("bg_share") or 0) >= 0.45
 
