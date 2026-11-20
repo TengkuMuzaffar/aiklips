@@ -14,6 +14,14 @@ func hidden(cmd *exec.Cmd) *exec.Cmd {
 	return cmd
 }
 
+// noConsole starts the app itself: no console window (CREATE_NO_WINDOW), but not "start hidden". Windows applies
+// a hidden start (STARTF_USESHOWWINDOW + SW_HIDE) to the first window the process shows, which made the editor's
+// own window invisible.
+func noConsole(cmd *exec.Cmd) *exec.Cmd {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	return cmd
+}
+
 func psq(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 func messageBox(title, msg string) *exec.Cmd {

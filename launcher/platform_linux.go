@@ -64,6 +64,8 @@ func selfInstall(p paths) error {
 
 func hidden(cmd *exec.Cmd) *exec.Cmd { return cmd }
 
+func noConsole(cmd *exec.Cmd) *exec.Cmd { return cmd }
+
 func linkDir(target, link string) { os.Symlink(target, link) }
 
 // openWindow shows the setup page as a Chromium-family app window, else in the default browser.

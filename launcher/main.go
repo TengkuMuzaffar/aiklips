@@ -290,7 +290,7 @@ func launch(p paths, version, uv, ff, fp string) int {
 	ready := filepath.Join(p.app, ".ready") // the app may create it once its window shows (AIKLIPS_READY_FILE)
 	os.Remove(ready)
 	cmd.Env = append(cmd.Env, "AIKLIPS_READY_FILE="+ready)
-	hidden(cmd)
+	noConsole(cmd) // not hidden(): a hidden start would hide the editor's window on Windows
 	ui.set("start", "active")
 	ui.setLabel("Opening aiklips…")
 	if err := cmd.Start(); err != nil {

@@ -24,6 +24,8 @@ func selfInstall(p paths) error { return nil }
 
 func hidden(cmd *exec.Cmd) *exec.Cmd { return cmd }
 
+func noConsole(cmd *exec.Cmd) *exec.Cmd { return cmd }
+
 func linkDir(target, link string) { os.Symlink(target, link) }
 
 //go:embed ui/window.js
