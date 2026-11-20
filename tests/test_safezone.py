@@ -27,7 +27,7 @@ def test_zone_per_platform(make_project):
 
 
 def test_editor_guides_match_the_python_table():
-    js = INDEX.read_text()
+    js = INDEX.read_text(encoding="utf-8")  # Windows defaults to cp1252, which can't read the page's arrows
     for key, z in safezone.PLATFORMS.items():
         jkey = "audit" if key == "all" else key
         m = re.search(jkey + r": \{ name: \"[^\"]+\", top: ([\d.]+), bottom: ([\d.]+), left: ([\d.]+), right: ([\d.]+)", js)
