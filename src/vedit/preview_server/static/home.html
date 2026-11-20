@@ -234,6 +234,20 @@ button.on-keep { border-color: var(--accent); color: var(--accent); }
 .pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .pickcard { border: 2px solid var(--line); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--pane2); position: relative; }
 .pickcard.on { border-color: var(--accent); }
+.tgroup { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 8px; background: var(--pane2); }
+.tgroup summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; list-style: none; font-size: 13px; }
+.tgroup summary::-webkit-details-marker { display: none; }
+.tgroup summary::before { content: "▸"; color: var(--muted, #888); }
+.tgroup[open] summary::before { content: "▾"; }
+.tgroup .tsum { color: var(--muted, #999); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tgroup .tsub { margin-top: 8px; }
+.tgroup .tsub > small { display: block; color: var(--muted, #999); margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.tchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.tgroup .tsub .tchips { margin-top: 0; }
+.tchip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; height: auto; }
+.tchip:hover { border-color: var(--accent); }
+.tchip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tchips input { flex: 1; min-width: 220px; font-size: 12px; }
 .pickcard.off { opacity: .5; cursor: not-allowed; }
 .pickcard img { width: 100%; height: 150px; object-fit: cover; display: block; background: #000; }
 .pickcard .pn { padding: 6px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1643,7 +1657,8 @@ let W = null;
 function newWizard() {
   // footage: used for pictures · sound: used only for its audio (the videos take turns) · roles: AI's footage/sound call per upload
   return { step: 0, refs: new Set(), lead: null, footage: [], sound: [], roles: {}, sorting: new Set(), manual: new Set(), uploading: 0, est: null,
-    brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "" },
+    brief: { product: "", goal: "promo", hook: "", cta: "", length_s: 20, format: "reels", language: "en", notes: "",
+      funnel: null, audience: { age: [], who: [], region: [], awareness: null, custom: [] }, pace: "reference", tone: [], rules: [] },
     count: 3, axes: null, quality: "balanced", review: true, explore: true };
 }
 async function openWizard() {
@@ -1880,8 +1895,61 @@ function wizBrief(el) {
   const fmts = h("div", { class: "formats" });
   for (const f of FORMATS) fmts.append(h("button", { type: "button", class: "fmtbtn" + (f.id === b.format ? " on" : ""), title: `${f.label}: ${f.sub}`, onclick: () => { b.format = f.id; renderWiz(); } },
     h("div", { class: "shape", style: { width: f.w + "px", height: f.h + "px" } }), h("b", {}, f.label), h("small", {}, f.sub)));
-  el.append(fmts, h("label", {}, "Anything else the AI should know? (optional)"),
-    bind("notes", h("textarea", { maxlength: 1000, placeholder: "e.g. show the price early; no faces; keep it playful" }, b.notes)));
+  el.append(fmts);
+  briefTags(el, b);
+  el.append(h("label", {}, "Anything else the AI should know? (optional)"),
+    bind("notes", h("textarea", { maxlength: 1000, placeholder: "e.g. mention free delivery; the founder is the one talking" }, b.notes)));
+}
+// Brief tags: clickable choices (generate/brief_tags.py) the planner, editor and auditor all get, and code acts on
+// (pace sets the shot length, the funnel favours some hooks, "no music" drops the music...)
+const OPEN_TAGS = new Set(["funnel", "audience", "pace"]);
+function chipRow(opts, isOn, toggle) {
+  return h("div", { class: "tchips" }, opts.map((o) => h("button", { type: "button", class: "tchip" + (isOn(o.id) ? " on" : ""), title: o.hint || "",
+    onclick: () => { toggle(o.id); renderWiz(); } }, o.label)));
+}
+function tagGroup(el, id, title, summary, content) {
+  const d = h("details", { class: "tgroup", open: OPEN_TAGS.has(id) ? "" : null, ontoggle: () => { d.open ? OPEN_TAGS.add(id) : OPEN_TAGS.delete(id); } },
+    h("summary", {}, h("b", {}, title), summary ? h("span", { class: "tsum" }, summary) : null), ...content);
+  el.append(d);
+}
+function briefTags(el, b) {
+  const T = OPTS.brief_tags;
+  if (!T) return;
+  const flip = (arr, id, max) => { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); else if (!max || arr.length < max) arr.push(id); else toast(`Pick at most ${max}`); };
+  const lab = (list, id) => (list.find((x) => x.id === id) || {}).label;
+  el.append(h("label", { style: { marginTop: "14px" } }, "What the AI should know ", h("span", { class: "hint" }, "(click to pick; all optional)")));
+  tagGroup(el, "funnel", "Funnel stage", lab(T.funnel, b.funnel) || "AI decides",
+    [chipRow(T.funnel, (id) => b.funnel === id, (id) => { b.funnel = b.funnel === id ? null : id; })]);
+  const a = b.audience;
+  const picked = [...a.age, ...a.who, ...a.region].map((id) => T.audience.flatMap((g) => g.options).find((o) => o.id === id)?.label).concat(a.custom).filter(Boolean);
+  const custom = h("input", { type: "text", placeholder: "+ your own (e.g. nurses, first-time home buyers), Enter to add", maxlength: 40,
+    onkeydown: (e) => { if (e.key === "Enter" && e.target.value.trim()) { e.preventDefault(); if (a.custom.length < 8) a.custom.push(e.target.value.trim()); renderWiz(); } } });
+  tagGroup(el, "audience", "Target audience", picked.length ? picked.slice(0, 4).join(", ") + (picked.length > 4 ? ` +${picked.length - 4}` : "") : "anyone", [
+    ...T.audience.map((g) => h("div", { class: "tsub" }, h("small", {}, g.label),
+      chipRow(g.options, (id) => g.multi ? a[g.id].includes(id) : a[g.id] === id, (id) => { if (g.multi) flip(a[g.id], id); else a[g.id] = a[g.id] === id ? null : id; }))),
+    h("div", { class: "tsub" }, h("small", {}, "Your own"),
+      h("div", { class: "tchips" }, a.custom.map((c, i) => h("button", { type: "button", class: "tchip on", title: "Remove", onclick: () => { a.custom.splice(i, 1); renderWiz(); } }, c, " ✕")), custom))]);
+  tagGroup(el, "pace", "Pace", lab(T.pace, b.pace),
+    [chipRow(T.pace, (id) => b.pace === id, (id) => { b.pace = id; }),
+     h("div", { class: "hint" }, (T.pace.find((x) => x.id === b.pace) || {}).hint + (W.axes && W.axes.has("pacing") ? ". Variations still go a little faster / slower around it (Variations step)." : ""))]);
+  tagGroup(el, "tone", "Tone", b.tone.map((id) => lab(T.tone, id)).join(", ") || "from the reference",
+    [chipRow(T.tone, (id) => b.tone.includes(id), (id) => flip(b.tone, id, T.max_tone))]);
+  tagGroup(el, "rules", "Must do / avoid", b.rules.length ? `${b.rules.length} picked` : "none",
+    [chipRow(T.rules, (id) => b.rules.includes(id), (id) => flip(b.rules, id))]);
+  if (b.funnel === "conversion" && !b.cta) el.append(h("div", { class: "note" }, "Conversion videos end on one clear call to action: add one above (or the AI uses “Shop now”)."));
+}
+function briefTagRows(b) { // the picks as Review rows
+  const T = OPTS.brief_tags || {}, rows = [];
+  const lab = (list, id) => ((list || []).find((x) => x.id === id) || {}).label || id;
+  if (b.funnel) rows.push(["Funnel", lab(T.funnel, b.funnel)]);
+  const all = (T.audience || []).flatMap((g) => g.options), a = b.audience;
+  const who = [...a.age, ...a.who, ...a.region, ...(a.awareness ? [a.awareness] : [])].map((id) => lab(all, id)).concat(a.custom);
+  if (who.length) rows.push(["Audience", who.join(", ")]);
+  if (b.pace !== "reference") rows.push(["Pace", lab(T.pace, b.pace)]);
+  if (b.tone.length) rows.push(["Tone", b.tone.map((id) => lab(T.tone, id)).join(", ")]);
+  if (b.rules.length) rows.push(["Must", b.rules.map((id) => lab(T.rules, id)).join(", ")]);
+  if (b.notes) rows.push(["Notes", b.notes]);
+  return rows;
 }
 const refreshEstimate = debounce(async (box) => {
   const r = await fetch("/api/batches/estimate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()) });
@@ -1973,7 +2041,7 @@ function wizReview(el) {
     ["Style of", names.join(", ")],
     ["Footage", `${f.filter((x) => x.kind === "video").length} video(s)` + (f.some((x) => x.kind === "image") ? `, ${f.filter((x) => x.kind === "image").length} image(s)` : "")],
     ["Sound", W.sound.length ? W.sound.map((x) => x.name + (x.kind === "video" ? " (from video)" : "")).join(", ") + (W.sound.length > 1 ? " · the videos take turns" : "") : "none (videos keep their own audio)"],
-    ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"],
+    ["About", b.product || "—"], ["Hook", b.hook || "AI writes one per video"], ["CTA", b.cta || "—"], ...briefTagRows(b),
     ["Length / format", `${b.length_s}s · ${(FORMATS.find((x) => x.id === b.format) || {}).label}`],
     ["Videos", `${W.count}, varying: ${OPTS.axes.filter((a) => W.axes.has(a.id)).map((a) => a.label.toLowerCase()).join(", ") || "nothing"}`],
     ["AI", `${W.quality}${W.review ? ", with auditor" : ""}${W.explore !== false ? ", exploring concepts" : ""}`],
