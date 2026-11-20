@@ -387,6 +387,8 @@ main { max-width: 1320px; margin: 0; padding: 8px 32px 70px; animation: ak-rise 
 .psel.some { opacity: 1; border-color: var(--accent); color: transparent; }
 .psel.some::after { content: ""; position: absolute; width: 10px; height: 2px; border-radius: 1px; background: var(--accent); }
 .card:hover .thumb .fmt, body.selecting .thumb .fmt, .card.sel .thumb .fmt { left: 38px; }
+.thumb .refmark, .pickcard .refmark { position: absolute; left: 9px; bottom: 9px; display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600;
+  background: #241d36e6; color: #cdb4ff; border: 1px solid #4d3d7a; padding: 2px 7px; border-radius: 6px; }
 .card.sel .thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 body.selecting .card .thumb .hov { display: none; }
 .rows .rt { position: relative; }
@@ -531,7 +533,7 @@ main.settled .card, main.settled .batch, main.settled .intro, main.settled .intr
 .md-side { display: flex; flex-direction: column; gap: 10px; }
 .md-side label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
 .md-facts { display: flex; flex-wrap: wrap; gap: 5px; }
-.md-status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.md-status { font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .md-say { font-size: 12.5px; color: var(--muted); background: var(--pane2); border-radius: 10px; padding: 8px 10px; font-style: italic; }
 .md-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .md-acts .spacer { flex: 1; }
@@ -613,6 +615,7 @@ main.settled .card, main.settled .batch, main.settled .intro, main.settled .intr
     <h3>Your references</h3><span class="count" id="ref-count"></span>
     <div class="spacer"></div>
     <label class="searchbox"><span data-ic-s="search"></span><input id="ref-search" type="search" placeholder="Search  ( / )" aria-label="Search references"></label>
+    <button id="b-ref-pick" class="mini" title="Use videos already in your media as references (no second copy)">Pick from your media</button>
     <select id="ref-sort" aria-label="Sort references"><option value="recent">Recently updated</option><option value="name">Name</option><option value="created">Newest</option></select>
   </div>
   <div id="ref-list"></div>
@@ -631,7 +634,7 @@ main.settled .card, main.settled .batch, main.settled .intro, main.settled .intr
     <h3>Your media</h3><span class="count" id="media-count"></span>
     <div class="spacer"></div>
     <label class="searchbox"><span data-ic-s="search"></span><input id="media-search" type="search" placeholder="Search what's in them  ( / )" aria-label="Search media"></label>
-    <select id="media-kind" aria-label="Kind"><option value="">All kinds</option><option value="video">Videos</option><option value="audio">Sounds</option><option value="image">Images</option></select>
+    <select id="media-kind" aria-label="Kind"><option value="">All kinds</option><option value="video">Videos</option><option value="audio">Sounds</option><option value="image">Images</option><option value="reference">Style references</option></select>
     <select id="media-use" aria-label="Use"><option value="">Used or not</option><option value="used">Used</option><option value="unused">Not used yet</option></select>
   </div>
   <div id="media-list"></div>
@@ -1150,10 +1153,10 @@ function refBadge(r) {
   return h("span", { class: "badge busy" }, spinner(), txt);
 }
 function deleteRef(r) {
-  confirmDanger(`Delete “${r.name}”?`, "Removes the reference and what the AI learned from it. Batches that used it keep their videos.", "Delete", async () => {
+  confirmDanger(`Stop using “${r.name}” as a reference?`, "Removes what the AI learned about its style. The video stays in your Media; batches that used it keep their videos.", "Remove", async () => {
     const ok = await call("DELETE", `/api/references/${r.id}`);
     if (!ok) return;
-    toast("Reference deleted");
+    toast("Removed from your references (still in your Media)");
     if (REF_OPEN === r.id) closeRef();
     loadRefs();
   });
@@ -1178,7 +1181,7 @@ function intro(el, { kicker, title, body, steps, cta, ctaIcon, onCta, compact })
 }
 function renderRefIntro() {
   intro($("#ref-intro"), { kicker: "AI studio · References · Beta", title: ["Teach the AI a ", h("em", {}, "style")],
-    body: "Add videos whose style you like. The AI learns the pattern, never their footage or music.",
+    body: "Videos whose style you like. They live in your Media like any file (added once, usable as footage too); here the AI learns their pattern, never their footage or music.",
     steps: [["upload", "Add videos", "TikToks, Reels or ads, as files."], ["eye", "The AI studies them", "Pacing, hook, text, motion and sound."], ["wand", "Use the style", "Generate new videos from your footage."]],
     cta: "Add videos", ctaIcon: "plus", onCta: () => $("#ref-file").click(), compact: REFS.length > 0 });
 }
@@ -1192,7 +1195,8 @@ function renderRefs() {
       AK.h("div", { html: REF_ART }),
       h("h2", {}, "Drop a video you ", h("em", {}, "love")),
       h("p", {}, "Drag TikToks, Reels or ads onto this page. Each one takes the AI about a minute to study."),
-      h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => $("#ref-file").click() }, AK.icon("upload", 15), "Choose videos")))));
+      h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => $("#ref-file").click() }, AK.icon("upload", 15), "Choose videos"),
+        h("button", { onclick: refsFromMedia }, "Pick from your media")))));
     return;
   }
   const rs = sortedRefs();
@@ -1259,6 +1263,15 @@ async function uploadRefs(files) {
   loadRefs();
 }
 $("#b-ref-add").onclick = () => $("#ref-file").click();
+async function refsFromMedia() { // videos already in the media library become references: same file, a style study added
+  pickMedia(["video"], async (ms) => {
+    let n = 0;
+    for (const m of ms) if (!m.ref_id && await call("POST", `/api/media/${m.id}/reference`)) n++;
+    toast(n ? `Studying the style of ${n} video(s)…` : "Those are already references");
+    loadRefs(); loadMedia();
+  }, { title: "Use videos from your media as references", hint: "The same file is used: nothing is copied. The AI studies its style (about a minute each).", hide: (m) => !!m.ref_id });
+}
+$("#b-ref-pick").onclick = refsFromMedia;
 $("#ref-file").onchange = (e) => { uploadRefs(e.target.files); e.target.value = ""; };
 function dropTarget(el, onFiles) {
   el.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); el.classList.add("over"); } });
@@ -2048,7 +2061,7 @@ function mediaSummary(m) {
 }
 function filteredMedia() {
   const q = $("#media-search").value.trim().toLowerCase(), kind = $("#media-kind").value, use = $("#media-use").value;
-  return MEDIA.filter((m) => (!kind || m.kind === kind) && (!use || (use === "used" ? m.uses > 0 : !m.uses))
+  return MEDIA.filter((m) => (!kind || (kind === "reference" ? !!m.ref_id : m.kind === kind)) && (!use || (use === "used" ? m.uses > 0 : !m.uses))
     && (!q || [m.name, m.search, ...(m.tags || [])].some((x) => x && x.toLowerCase().includes(q))));
 }
 function renderMedia() {
@@ -2087,6 +2100,7 @@ function mediaCard(m, i = 0) {
   const b = mediaBadge(m); if (b) thumb.append(b);
   if (m.duration) thumb.append(h("span", { class: "dur" }, dur(m.duration)));
   thumb.append(h("span", { class: "fmt" }, KIND_LABEL[m.kind] || m.kind));
+  if (m.ref_id) thumb.append(h("span", { class: "refmark", title: m.ref_status === "ready" ? "Also a style reference" : "Style being studied" }, AK.icon("spark", 12), m.ref_status === "ready" ? "Reference" : "Studying style"));
   if (mediaBusy(m)) thumb.append(h("div", { class: "studying" }, h("span", { class: "ak-spin" }), m.progress || "Studying…"));
   else thumb.append(h("div", { class: "hov" }, h("span", {}, AK.icon("eye", 18))));
   const sub = mediaBusy(m) ? "Being studied" : m.status === "failed" ? "Couldn't be studied" : mediaSummary(m) || `Added ${ago(m.created_at)}`;
@@ -2127,6 +2141,7 @@ async function openMedia(id) {
   const status = mediaBusy(m) ? [spinner(), m.progress || "Being studied…"]
     : m.status === "failed" ? [`Couldn't be studied: ${m.error || "unknown error"}`]
     : m.status === "partial" ? [m.error || "Measured, but the AI notes are incomplete."] : ["Studied. Ready to use in any project or generation."];
+  if (m.ref_id) status.push(h("div", { class: "hint", style: { flexBasis: "100%", marginTop: "4px" } }, m.ref_status === "ready" ? `Also a style reference${m.ref_summary ? ": " + m.ref_summary : ""}` : `Style reference: ${m.ref_progress || "being studied…"}`));
   const name = h("input", { value: m.name, "aria-label": "Name", onchange: async (e) => { if (await call("PATCH", `/api/media/${id}`, { name: e.target.value })) loadMedia(); } });
   const tags = h("input", { value: (m.tags || []).join(", "), placeholder: "product, b-roll, client X", "aria-label": "Tags",
     onchange: async (e) => { if (await call("PATCH", `/api/media/${id}`, { tags: e.target.value.split(",") })) loadMedia(); } });
@@ -2139,6 +2154,12 @@ async function openMedia(id) {
         g.transcript ? h("div", { class: "md-say" }, `“${g.transcript}”`) : null,
         h("div", { class: "md-acts" },
           h("button", { onclick: () => restudyMedia(m), disabled: mediaBusy(m), title: "Measure and log it again from scratch. Your corrections are kept." }, AK.icon("refresh", 14), " Study again"),
+          m.kind !== "video" ? null : m.ref_id
+            ? h("button", { title: "Its style study: pacing, hook, text, motion, sound", onclick: () => { closeMedia(); setTab("references"); openRef(m.ref_id); } }, AK.icon("spark", 14), " Style")
+            : h("button", { title: "The AI also studies its style (about a minute), so chat and Generate can follow it. Nothing is copied.",
+                onclick: async () => { if (await call("POST", `/api/media/${m.id}/reference`)) { toast(`Studying the style of “${m.name}”…`); loadRefs(); await loadMedia(); openMedia(m.id); } } },
+                AK.icon("spark", 14), " Use as reference"),
+          m.ref_id ? h("button", { class: "ghost", title: "Forget its style study; the file stays", onclick: async () => { if (await call("DELETE", `/api/media/${m.id}/reference`)) { toast("No longer a reference"); loadRefs(); await loadMedia(); openMedia(m.id); } } }, "Not a reference") : null,
           h("button", { class: "danger", onclick: () => deleteMedia(m) }, AK.icon("trash", 14), " Delete"),
           h("div", { class: "spacer" }), h("button", { class: "primary", onclick: closeMedia }, "Done"))))
   );
@@ -2175,15 +2196,15 @@ function deleteMedia(m) {
   const used = (m.used_in || []).length;
   confirmDanger(`Delete “${m.name}”?`, used
     ? `It is used in ${used} project(s) or generation(s). They keep their finished videos, but re-editing or regenerating them will no longer find this file.`
-    : "Removes the file and what the AI learned about it from your library. Your original file is not touched.", "Delete", async () => {
+    : "Removes the file and what the AI learned about it from your library. Your original file is not touched." + (m.ref_id ? " It is also a style reference: that goes too." : ""), "Delete", async () => {
     if (!(await call("DELETE", `/api/media/${m.id}${used ? "?force=true" : ""}`))) return;
     toast("Deleted from your media"); closeMedia(); loadMedia();
   });
 }
 
 // pick files that are already in the library (the generation wizard's Footage / Sound steps)
-async function pickMedia(kinds, onPick) {
-  const all = (await (await fetch("/api/media")).json()).media.filter((m) => kinds.includes(m.kind) && m.status !== "failed" && !m.missing);
+async function pickMedia(kinds, onPick, opt = {}) {
+  const all = (await (await fetch("/api/media")).json()).media.filter((m) => kinds.includes(m.kind) && m.status !== "failed" && !m.missing && !(opt.hide && opt.hide(m)));
   const chosen = new Set();
   const body = $("#pick-body"); body.innerHTML = "";
   const q = h("input", { type: "search", placeholder: "Search names, tags and what's in them", "aria-label": "Search media" });
@@ -2200,7 +2221,7 @@ async function pickMedia(kinds, onPick) {
     ok.disabled = !chosen.size; ok.textContent = chosen.size ? `Add ${chosen.size}` : "Add";
   };
   q.oninput = draw;
-  body.append(h("h2", {}, "Pick from your media"), h("p", { class: "hint" }, "Already studied, so the AI knows what's in them and there's nothing to wait for."), q, grid,
+  body.append(h("h2", {}, opt.title || "Pick from your media"), h("p", { class: "hint" }, opt.hint || "Already studied, so the AI knows what's in them and there's nothing to wait for."), q, grid,
     h("div", { class: "row", style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "14px" } }, count, h("div", { class: "spacer", style: { flex: 1 } }),
       h("button", { onclick: () => hide("#dlg-pick") }, "Cancel"), ok));
   draw(); show("#dlg-pick"); q.focus();
