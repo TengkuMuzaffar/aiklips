@@ -8,7 +8,7 @@ How aiklips ships as a downloadable app for macOS, Windows and Linux, and how it
 |---|---|---|
 | Launcher | `launcher/` (Go, stdlib only, ~7 MB) | What people download. Installs uv + FFmpeg, installs/updates the app, starts it, rolls back a broken update. Rarely changes. |
 | Updater | `src/vedit/updater.py` | Inside the app: checks GitHub Releases (every 6 h, opt-out), *stages* an update in `app/pending/`, restarts with exit code 75. Installs optional extras on first use. |
-| Release pipeline | `.github/workflows/release.yml` | On every push to `main` with a new `pyproject.toml` version: tests, signed manifest, payload, launchers, GitHub Release. |
+| Release pipeline | `.github/workflows/release.yml` | On every push to `main` with a new `pyproject.toml` version: tests (skipped when the commit already passed the full CI check on its PR, i.e. `main` was fast-forwarded with `git push origin develop:main`), signed manifest, payload, launchers, GitHub Release. |
 | Signing tool | `launcher/cmd/relsign` | Key generation, manifest, ed25519 signature, verification. |
 | Website | separate repo `aiklips-website` (sibling folder `website/`) | aiklips.muzdev.online on a static-assets Cloudflare Worker (observability off), deployed by Cloudflare on every push to its `main`. Serves the landing page and `latest.json`, the release index the app and launcher read first (GitHub API as fallback). The release workflow's `website` job commits a new `latest.json` there after each release. |
 

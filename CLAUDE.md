@@ -422,4 +422,12 @@ Load the relevant one before doing that kind of edit.
     the wizard), API `/api/media*` in `gen_routes.py`, CLI `vedit media`. Design + open items: `docs/design/media-library.md`.
   - Rule of thumb there: **code measures and times, the AI judges and writes**. Never ask the LLM for exact timestamps.
 - **Tests:** `uv run pytest`. They use FFmpeg-generated clips. AI calls are faked with `ai.client.set_backend()`.
+  - Faster: `uv run pytest -n auto` (parallel), `uv run pytest --testmon` (only the tests your change touches;
+    the first run records, `.testmondata` is git-ignored), `uv run pytest --lf` (only what failed last time).
+  - CI (`.github/workflows/ci.yml`): a push to `develop` runs only the affected tests on Ubuntu (testmon, record kept
+    in the Actions cache; the whole suite when the change is in tests/conftest, dependencies, workflows or non-Python
+    files in `src/`). A PR into `main` runs everything on Ubuntu, macOS and Windows in parallel: the release check.
+  - Releasing: bump the version, open the PR into `main`, let it pass, then fast-forward instead of merging:
+    `git push origin develop:main`. `release.yml` sees that commit already passed the full check and only builds
+    and publishes (a merge commit is tested again first).
 - **Before committing:** keep the tests green. Add a test for each new op.
