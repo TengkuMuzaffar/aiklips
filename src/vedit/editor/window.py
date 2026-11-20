@@ -79,6 +79,33 @@ def _show_hidden_window(user32, hwnd: int, tries: int = 25, pause: float = 0.2) 
     return showed
 
 
+def _dark_title_bar(hwnd: int, dwm=None) -> bool:
+    """Windows: a dark title bar matching the app instead of the white system one. Windows 10 1809+ takes the
+    immersive dark mode flag (attribute 20, 19 on builds before 20H1); Windows 11 also takes our exact colours for
+    the caption, its text and the border. Each call simply fails on a Windows that doesn't know it."""
+    import ctypes
+
+    dwm = dwm or ctypes.windll.dwmapi
+    on = ctypes.c_int(1)
+    ok = False
+    for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE
+        if dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+            ok = True
+            break
+    for attr, rgb in ((35, 0x090D0B), (36, 0xE9F0EB), (34, 0x1D2822)):  # caption, text, border: ui.css --bg, --text, --line (COLORREF = 0x00BBGGRR)
+        r, g, b = rgb >> 16, (rgb >> 8) & 0xFF, rgb & 0xFF
+        ref = ctypes.c_uint(r | (g << 8) | (b << 16))
+        dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(ref), ctypes.sizeof(ref))
+    return ok
+
+
+def _menu_for(platform: str, get_window):
+    """macOS keeps its menu bar (it lives at the top of the screen, as Mac apps do). Windows gets none: WinForms
+    draws it as a light grey strip that makes the app look like a generic program, and everything in it is in the
+    app itself (Settings, Export, Home, undo / redo, Settings → About for help and updates)."""
+    return None if platform == "win32" else _menu(get_window)
+
+
 def _brand_window(window) -> None:
     """Once the window is up: make sure it is visible (Windows), set its icon (Windows title bar/taskbar, macOS dock),
     then signal the launcher."""
@@ -92,6 +119,7 @@ def _brand_window(window) -> None:
             ico = str(BRAND / "icon.ico")
             hwnd = window.native.Handle.ToInt64()
             user32 = ctypes.windll.user32
+            _dark_title_bar(hwnd)
             threading.Thread(target=_show_hidden_window, args=(user32, hwnd), daemon=True).start()
             for which, size in ((0, 16), (1, 32)):  # ICON_SMALL, ICON_BIG
                 h = user32.LoadImageW(None, ico, 1, size if which == 0 else 0, size if which == 0 else 0, 0x10)
@@ -187,7 +215,7 @@ def launch(pdir: Path | None, browser: bool = False, port: int | None = None) ->
 
             _brand_process()
             win = webview.create_window("aiklips", start, width=1480, height=920, min_size=(1024, 640),
-                                        background_color="#0b0f0d", menu=_menu(lambda: win))
+                                        background_color="#090d0b", menu=_menu_for(sys.platform, lambda: win) or [])
             webview.start(_brand_window, (win,), icon=_start_icon(),
                           private_mode=False, storage_path=str(home_dir() / "webview"))
             server.should_exit = True

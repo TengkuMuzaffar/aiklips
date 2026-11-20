@@ -893,7 +893,7 @@ function drawSceneProps(body, sc, picked) {
     h("label", { class: "field col" }, h("span", {}, "Notes"), h("textarea", { value: sc.notes, placeholder: "What happens in this scene, what is said…", onchange: (e) => op("scene_set", { scene: sc.id, notes: e.target.value }) })),
     h("div", { class: "row2" },
       h("button", { onclick: () => op("scene_dup", { scene: sc.id }) }, ic("copy", 14), " Duplicate"),
-      h("button", { disabled: P().scenes.length < 2, onclick: () => confirm(`Delete ${sc.name || sc.id} and its elements?`) && op("scene_remove", { scene: sc.id }).then(() => { SCENE_SEL = null; }) }, ic("trash", 14), " Delete"),
+      h("button", { disabled: P().scenes.length < 2, onclick: async () => await AK.confirm(`Delete ${sc.name || sc.id} and its elements?`, { ok: "Delete", danger: true }) && op("scene_remove", { scene: sc.id }).then(() => { SCENE_SEL = null; }) }, ic("trash", 14), " Delete"),
       sc.notes ? h("button", { class: "ghost", disabled: AIBUSY.scene, onclick: () => designScene(sc.id) }, "✦ Design from notes") : null)));
 }
 const TYPE_LABEL = { text: "Text", shape: "Shape", image: "Image", video: "Video", adjust: "Adjustment", captions: "Captions", chart: "Chart" };
@@ -1162,7 +1162,7 @@ function drawStoryboard(body) {
         h("button", { class: "ghost icon", title: "Move up", disabled: i === 0, onclick: () => op("scene_move", { scene: sc.id, index: i - 1 }) }, "↑"),
         h("button", { class: "ghost icon", title: "Move down", disabled: i === P().scenes.length - 1, onclick: () => op("scene_move", { scene: sc.id, index: i + 1 }) }, "↓"),
         h("button", { class: "ghost icon", title: "Duplicate scene", onclick: () => op("scene_dup", { scene: sc.id }) }, ic("copy", 14)),
-        h("button", { class: "ghost icon", title: "Delete scene", disabled: P().scenes.length < 2, onclick: () => confirm(`Delete ${sc.name || sc.id} and its elements?`) && op("scene_remove", { scene: sc.id }) }, ic("trash", 14))),
+        h("button", { class: "ghost icon", title: "Delete scene", disabled: P().scenes.length < 2, onclick: async () => await AK.confirm(`Delete ${sc.name || sc.id} and its elements?`, { ok: "Delete", danger: true }) && op("scene_remove", { scene: sc.id }) }, ic("trash", 14))),
       h("div", { class: "row2" }, h("span", { class: "hint" }, `${fmt(st)} ·`),
         h("input", { type: "number", step: 0.5, min: 0.5, max: 60, value: sc.dur, onchange: (e) => op("scene_set", { scene: sc.id, dur: e.target.value }) }), h("span", { class: "hint" }, "s"),
         h("select", { onchange: (e) => op("scene_set", { scene: sc.id, transition: e.target.value }) },
@@ -1322,7 +1322,7 @@ function drawPosition(body) {
       f("Starts", r3(l.start), (v) => setL(l, { start: v }), { step: 0.1 }), f("Ends", r3(l.end ?? dur()), (v) => setL(l, { end: v }), { step: 0.1 }));
   }
   body.append(h("h3", {}, "Reuse"), h("button", { onclick: async () => {
-    const name = prompt("Template name (reusable in any design):");
+    const name = await AK.prompt("Template name (reusable in any design):");
     if (!name) return;
     const r = await api("/api/templates", { name, layers: SEL });
     if (r) { TEMPLATES = null; LIB = null; toast(`Saved template “${name}”`); }
@@ -1467,7 +1467,7 @@ function sceneMenu(e, sc, i) {
     i > 0 ? ["Move left", () => op("scene_move", { scene: sc.id, index: i - 1 })] : null,
     i < P().scenes.length - 1 ? ["Move right", () => op("scene_move", { scene: sc.id, index: i + 1 })] : null,
     ["Edit in storyboard", () => { VIEW = "storyboard"; openDrawer(); renderDrawer(); }],
-    P().scenes.length > 1 ? ["Delete scene", () => confirm(`Delete ${sc.name || sc.id} and its elements?`) && op("scene_remove", { scene: sc.id })] : null,
+    P().scenes.length > 1 ? ["Delete scene", async () => await AK.confirm(`Delete ${sc.name || sc.id} and its elements?`, { ok: "Delete", danger: true }) && op("scene_remove", { scene: sc.id })] : null,
   ]);
 }
 function sceneDrag(e, el, sc, i, st) {
@@ -1609,7 +1609,7 @@ $("#b-undo").onclick = () => api("/api/undo").then(refresh);
 $("#b-redo").onclick = () => api("/api/redo").then(refresh);
 $("#b-file").onclick = (e) => menu(e.currentTarget, [
   ["Rename", () => { $("#title").focus(); document.execCommand("selectAll"); }],
-  ["Save a version…", async () => { const n = prompt("Name this version (you can jump back to it any time):"); if (n) { await api("/api/version", { name: n }); toast(`Saved version “${n}”`); } }],
+  ["Save a version…", async () => { const n = await AK.prompt("Name this version (you can jump back to it any time):"); if (n) { await api("/api/version", { name: n }); toast(`Saved version “${n}”`); } }],
   ["Export video…", openExport, "E"],
   ["Back to all projects", () => { location.href = "/"; }],
 ]);

@@ -112,6 +112,28 @@
   }
   AK.modal = modal;
 
+  // ---------- confirm / prompt: in our dark sheet, not the webview's white "127.0.0.1 says" box ----------
+  function ask(message, { input = null, ok = "OK", cancel = "Cancel", danger = false, title = "" } = {}) {
+    return new Promise((resolve) => {
+      let done = false, field = null;
+      const finish = (v) => { if (done) return; done = true; resolve(v); m.close(); };
+      if (input !== null) field = h("input", { class: "ak-ask-in", value: input, onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); finish(field.value); } } });
+      const body = h("div", { class: "ak-ask" },
+        title ? h("h3", {}, title) : "",
+        h("p", {}, ...String(message).split("\n").flatMap((ln, i) => (i ? [h("br"), ln] : [ln]))),
+        field || "",
+        h("div", { class: "ak-ask-btns" },
+          h("button", { class: "ghost", onclick: () => finish(input !== null ? null : false) }, cancel),
+          h("button", { class: danger ? "primary danger" : "primary", onclick: () => finish(input !== null ? field.value : true) }, ok)));
+      const m = modal(body, { onClose: () => { if (!done) { done = true; resolve(input !== null ? null : false); } } });
+      m.sheet.classList.add("ak-sheet-sm");
+      setTimeout(() => (field || body.querySelector(".primary")).focus(), 30);
+      if (field) field.select();
+    });
+  }
+  AK.confirm = (message, opts = {}) => ask(message, opts);
+  AK.prompt = (message, value = "", opts = {}) => ask(message, { ...opts, input: value ?? "" });
+
   const card = (ic, title, body, cls = "", d = 0) => h("div", { class: `ob-card ${cls}`, style: { "--d": d + "ms" } },
     h("span", { class: "ic-b" }, AK.icon(ic, 19)), h("div", { class: "t" }, h("b", {}, title), h("span", {}, body)));
 

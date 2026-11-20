@@ -155,3 +155,18 @@ html.ak-calm *, html.ak-calm *::before, html.ak-calm *::after { animation-durati
   .ob-logo { width: 72px; height: 72px; margin: -36px 0 0 -36px; } .ob-body { padding: 26px 22px 20px; }
   .ob-opts { grid-template-columns: repeat(2, 1fr); } .ob-tour, .wn-list { grid-template-columns: 1fr; } .mock { display: none; }
 }
+
+/* AK.confirm / AK.prompt: small dark dialogs instead of the webview's native boxes */
+.ak-sheet.ak-sheet-sm { width: min(440px, 100%); padding: 22px 22px 18px; }
+.ak-ask h3 { margin: 0 0 8px; font-size: 16px; }
+.ak-ask p { margin: 0 28px 16px 0; color: var(--text); line-height: 1.5; font-size: 14px; }
+.ak-ask .ak-ask-in { width: 100%; box-sizing: border-box; margin: 0 0 16px; font: 14px var(--sans); color: var(--text);
+  background: var(--bg); border: 1px solid var(--line2); border-radius: var(--r-sm); padding: 9px 11px; outline: none; }
+.ak-ask .ak-ask-in:focus { border-color: var(--accent); }
+.ak-ask .ak-ask-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.ak-ask .ak-ask-btns button { font: 500 13px var(--sans); color: var(--text); background: var(--pane3); border: 1px solid var(--line2);
+  border-radius: var(--r-sm); padding: 8px 16px; cursor: pointer; }
+.ak-ask .ak-ask-btns button:hover { border-color: var(--muted); }
+.ak-ask .ak-ask-btns button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.ak-ask .ak-ask-btns button.primary.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
+.ak-ask .ak-ask-btns button.primary.danger:hover { background: #f05a5f; border-color: #f05a5f; box-shadow: none; }

@@ -569,7 +569,7 @@ function providerCard(pv) {
     sub = pv.base_url + (pv.api === "openai" ? " · OpenAI API" : "");
     chip = pv.ready ? ["ok", pv.key_stored ? "Key saved" : `Key from $${pv.api_key_env}`] : ["bad", "Needs API key"];
     actions.push(h("button", { class: "ghost", onclick: () => editProvider(pv) }, pv.ready ? "Edit" : "Add key"),
-      h("button", { class: "ghost danger icon", title: "Remove provider and its models", onclick: () => confirm(`Remove ${pv.name} and its ${ms.length} model(s)?`) && modelsApi(`/api/models/provider/${encodeURIComponent(pv.id)}/remove`) }, icon("trash")));
+      h("button", { class: "ghost danger icon", title: "Remove provider and its models", onclick: async () => await AK.confirm(`Remove ${pv.name} and its ${ms.length} model(s)?`, { ok: "Remove", danger: true }) && modelsApi(`/api/models/provider/${encodeURIComponent(pv.id)}/remove`) }, icon("trash")));
   }
   return h("div", { class: "pv" },
     h("div", { class: "pv-h" }, avatar(pv.id, pv.name), h("div", { class: "pv-t" }, h("b", {}, pv.name), h("span", { class: "url", title: sub }, sub)),
@@ -908,7 +908,7 @@ function pageUpdates() {
       h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
         h("button", { disabled: busy, onclick: () => updAction("Checking…", "/api/update/check") }, "Check now"),
         U.previous ? h("button", { class: "ghost", disabled: busy, title: "Use the version you had before; takes effect on restart",
-          onclick: async () => { if (confirm(`Go back to version ${U.previous}?`) && await updAction("", "/api/update/rollback")) restartApp(); } }, `Go back to ${U.previous}`) : "",
+          onclick: async () => { if (await AK.confirm(`Go back to version ${U.previous}?`, { ok: "Go back" }) && await updAction("", "/api/update/rollback")) restartApp(); } }, `Go back to ${U.previous}`) : "",
         U.url ? ext(U.url, "Release notes") : ""))),
   ];
 }
