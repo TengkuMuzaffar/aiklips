@@ -109,6 +109,21 @@ def run_with_progress(cmd: list[str], total: float, on_progress: Callable[[float
         raise VeditError(f"Render failed:\n{tail}")
 
 
+STILL_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff")
+STILL_SECONDS = 5.0  # how long a still image lasts when it becomes a clip / source
+
+
+def is_still(path: Path, data: dict | None = None) -> bool:
+    """A still picture (not an animated GIF / WebP, which have a duration of their own)."""
+    if Path(path).suffix.lower() not in STILL_EXT:
+        return False
+    if data is None:
+        return True
+    fmt = data.get("format", {})
+    return not float(fmt.get("duration") or 0) or int(fmt.get("nb_frames") or 0) == 1 or (
+        fmt.get("format_name", "").endswith("_pipe") or fmt.get("format_name") == "image2")
+
+
 def probe(path: Path) -> dict:
     if not path.exists():
         raise VeditError(f"File not found: {path}")
@@ -118,12 +133,19 @@ def probe(path: Path) -> dict:
     )
     data = json.loads(proc.stdout)
     streams = data.get("streams", [])
+    pic = next((s for s in streams if s.get("codec_type") == "video" and s.get("width")), None)
+    if pic and is_still(path, data):  # a picture has no length of its own: it holds for as long as it's placed
+        v = pic
+        return {"duration": STILL_SECONDS, "has_video": True, "has_audio": False,
+                "width": int(v.get("width") or 0) or None, "height": int(v.get("height") or 0) or None, "fps": 30.0}
     v = next((s for s in streams if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")), None)
     a = next((s for s in streams if s.get("codec_type") == "audio"), None)
     duration = float(data.get("format", {}).get("duration") or 0) or float((v or a or {}).get("duration") or 0)
     info = {"duration": round(duration, 3), "has_video": v is not None, "has_audio": a is not None}
     if v:
-        w, h = int(v["width"]), int(v["height"])
+        w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+        if not (w and h) and not a:
+            raise VeditError(f"Could not read {path.name}: not a video, audio or image file this app can open")
         rot = 0
         for sd in v.get("side_data_list", []) or []:
             if "rotation" in sd:

@@ -517,7 +517,8 @@ def build(project: Project, pdir: Path, out_path: Path, scale: float = 1.0, qual
         hold_head = max(0.0, pre - ext_in / clip.speed)
         hold_tail = max(0.0, post - ext_out / clip.speed)
         s0, slen = clip.in_ - ext_in, dur_src + ext_in + ext_out
-        idx = g.add_input(["-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
+        hold = ["-loop", "1", "-framerate", _f(fps)] if media.is_still(path) else []  # a picture as a clip: repeat it
+        idx = g.add_input([*hold, "-ss", _f(s0), "-t", _f(slen), "-i", str(path)])
         v0 = g.label("v")
         show = src.has_video and not project.main_hidden
         if alpha and (clip.gap or not show):  # nothing here on the video track: the tracks under it show

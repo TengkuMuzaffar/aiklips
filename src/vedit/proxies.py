@@ -22,7 +22,7 @@ PROXY_LONG_SIDE = 1280  # enough for the half-size preview of a 1080x1920 canvas
 
 
 def needs_proxy(src: Source) -> bool:
-    return bool(src.has_video and max(src.width or 0, src.height or 0) > PROXY_LONG_SIDE)
+    return bool(src.has_video and not media.is_still(Path(src.path)) and max(src.width or 0, src.height or 0) > PROXY_LONG_SIDE)
 
 
 def proxy_dir(pdir: Path) -> Path:

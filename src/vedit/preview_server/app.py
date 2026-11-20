@@ -228,7 +228,7 @@ def _thumb(pdir: Path, sid: str) -> Path:
         raise HTTPException(404)
     out = d / f"{sid}-{int(path.stat().st_mtime)}.jpg"
     if not out.exists():
-        media.extract_frame(path, min(1.0, src.duration / 3), out, 360)
+        media.extract_frame(path, 0.0 if media.is_still(path) else min(1.0, src.duration / 3), out, 360)
     return out
 
 

@@ -1107,7 +1107,11 @@ def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index:
         dest = media_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
         n += 1
     shutil.move(str(data_path), dest)
-    info = media.probe(dest)
+    try:
+        info = media.probe(dest)
+    except VeditError:
+        dest.unlink(missing_ok=True)  # not a usable file: don't leave a copy behind in media/
+        raise
     with history.transaction(pdir, f"import {dest.name}") as tx:
         p = tx.project
         sid = p.new_id("s")
