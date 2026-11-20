@@ -10,3 +10,6 @@ projects/*
 .DS_Store
 examples/media/
 launcher/*.syso
+
+# pytest-testmon: which tests touch which code (local + CI cache)
+.testmondata*

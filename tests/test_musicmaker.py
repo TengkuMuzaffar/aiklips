@@ -16,9 +16,9 @@ from vedit.editor import actions
 from vedit.project import load
 
 
-# shared CI runners (Windows above all) are several times slower than a desktop: the CI limit only catches a big
-# slowdown, the local one keeps the editor's "Make" button fast
-RENDER_LIMIT_S = 30 if os.environ.get("CI") else 8
+# shared CI runners (Windows above all) are several times slower than a desktop, and parallel runs (pytest -n)
+# share the CPU: there the limit only catches a big slowdown; a plain local run keeps the "Make" button fast
+RENDER_LIMIT_S = 30 if os.environ.get("CI") or os.environ.get("PYTEST_XDIST_WORKER") else 8
 
 
 @pytest.mark.parametrize("key", list(mm.STYLES))
