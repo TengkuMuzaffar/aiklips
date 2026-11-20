@@ -291,7 +291,7 @@ def _classify(msg: str) -> AIError:
 
 def _log(line: str) -> None:
     try:
-        with (home_dir() / "ai.log").open("a") as f:
+        with (home_dir() / "ai.log").open("a", encoding="utf-8") as f:  # Windows' default code page can't write every line
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line.rstrip() + "\n")
     except OSError:
         pass
@@ -355,7 +355,8 @@ def _once(task: str, model_key: str, system: str, prompt: str, schema: dict, ima
     err: list[str] = []  # the CLI's stderr: a failed call says why instead of "Check stderr output for details"
     try:
         return asyncio.run(asyncio.wait_for(_sdk(model_key, system, prompt, schema, images, err), CALL_TIMEOUT))
-    except AIError:
+    except AIError as e:
+        _log(f"error: {task} on {model_key}: {type(e).__name__}: {str(e)[:600]}")
         raise
     except (asyncio.TimeoutError, TimeoutError):
         _log(f"timeout: {task} on {model_key} gave no answer in {CALL_TIMEOUT:.0f}s")
@@ -365,6 +366,7 @@ def _once(task: str, model_key: str, system: str, prompt: str, schema: dict, ima
         raise AIUnavailable(f"Claude Agent SDK missing: {e}") from None
     except Exception as e:  # CLINotFoundError, ProcessError, CLIConnectionError ...
         tail = " | ".join(x.strip() for x in err[-6:] if x.strip())[-800:]
+        _log(f"error: {task} on {model_key}: {type(e).__name__}: {str(e)[:600]}" + (f" — {tail}" if tail else ""))
         raise _classify(f"{type(e).__name__}: {e}" + (f" — {tail}" if tail else "")) from None
 
 

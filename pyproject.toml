@@ -26,7 +26,7 @@ ai = ["mediapipe>=0.10.14", "trimesh>=4.0"]
 # High-quality background removal (BiRefNet via rembg, slower)
 bg-quality = ["rembg[cpu]>=2.0.55"]
 # Offline auto-captions with word timestamps
-captions = ["faster-whisper>=1.0"]
+captions = ["faster-whisper>=1.0", "av<19"]  # faster-whisper 1.2.1 passes av.open(metadata_errors=), removed in PyAV 19
 # Exact object outlines for masks / focus (SAM 2.1 tiny, Meta, Apache-2.0; PyTorch). Weights download on first use.
 mask-ai = ["sam2>=1.1.0", "torch>=2.5.1"]
 
