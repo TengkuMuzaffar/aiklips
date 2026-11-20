@@ -63,8 +63,27 @@ def _start_icon(platform: str = sys.platform) -> str | None:
     return None if platform == "win32" else str(BRAND / "icon-256.png")
 
 
+def _show_hidden_window(user32, hwnd: int, tries: int = 25, pause: float = 0.2) -> bool:
+    """Windows: the launcher starts the app with "start hidden" (so no console flashes), and Windows applies that to
+    the first window the app shows: the editor opened invisible (a python process with no window). Show it, and keep
+    checking a few seconds in case pywebview's own first show comes after ours. True when it had to be shown."""
+    import time
+
+    showed = False
+    for _ in range(tries):
+        if not user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.SetForegroundWindow(hwnd)
+            showed = True
+        time.sleep(pause)
+    return showed
+
+
 def _brand_window(window) -> None:
-    """Once the window is up: set its icon (Windows title bar/taskbar, macOS dock), then signal the launcher."""
+    """Once the window is up: make sure it is visible (Windows), set its icon (Windows title bar/taskbar, macOS dock),
+    then signal the launcher."""
+    if sys.platform == "win32":
+        window.events.shown.wait(20)  # the form and its handle exist by then
     _ready()
     try:
         if sys.platform == "win32":
@@ -73,6 +92,7 @@ def _brand_window(window) -> None:
             ico = str(BRAND / "icon.ico")
             hwnd = window.native.Handle.ToInt64()
             user32 = ctypes.windll.user32
+            threading.Thread(target=_show_hidden_window, args=(user32, hwnd), daemon=True).start()
             for which, size in ((0, 16), (1, 32)):  # ICON_SMALL, ICON_BIG
                 h = user32.LoadImageW(None, ico, 1, size if which == 0 else 0, size if which == 0 else 0, 0x10)
                 if h:

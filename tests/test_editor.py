@@ -173,3 +173,28 @@ def test_native_window_never_gets_a_png_icon_on_windows():
     assert window._start_icon("win32") is None
     assert window._start_icon("darwin").endswith(".png") and window._start_icon("linux").endswith(".png")
     assert (window.BRAND / "icon.ico").exists()
+
+
+def test_hidden_windows_window_is_shown():
+    """The launcher's hidden start made the editor's window invisible on Windows (0.2.3): the app shows it itself."""
+    from vedit.editor import window
+
+    class User32:
+        def __init__(self, visible):
+            self.visible, self.calls = visible, []
+
+        def IsWindowVisible(self, hwnd):
+            return self.visible
+
+        def ShowWindow(self, hwnd, cmd):
+            self.calls.append(("show", hwnd, cmd))
+            self.visible = True
+
+        def SetForegroundWindow(self, hwnd):
+            self.calls.append(("front", hwnd))
+
+    hidden = User32(visible=False)
+    assert window._show_hidden_window(hidden, 42, tries=3, pause=0) is True
+    assert hidden.calls == [("show", 42, 5), ("front", 42)]  # shown once, then left alone
+    shown = User32(visible=True)
+    assert window._show_hidden_window(shown, 42, tries=3, pause=0) is False and shown.calls == []
