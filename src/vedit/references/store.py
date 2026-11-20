@@ -17,7 +17,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from .. import jobs, library
+from .. import jobs, library, library_store
 from ..ai import client as ai
 from ..ai import prompts
 from ..project import VeditError
@@ -342,16 +342,4 @@ def study(rid: int, job: jobs.Job | None = None, quality: str = "balanced") -> d
     return usage
 
 
-@jobs.handler("study")
-def _study_job(job: jobs.Job) -> dict:
-    return study(int(job.target.split(":")[1]), job)
-
-
-@jobs.on_fail("study")
-def _study_failed(job: jobs.Job, msg: str) -> None:
-    _set(int(job.target.split(":")[1]), status="failed", progress=None, error=msg[:500])
-
-
-@jobs.on_wait("study")
-def _study_wait(job: jobs.Job, wait: float) -> None:
-    _set(int(job.target.split(":")[1]), status="queued", progress=f"Waiting for AI quota (~{int(wait // 60) or 1} min)")
+library_store.study_job("study", lambda t: int(t.split(":")[1]), lambda rid, job: study(rid, job), _set)

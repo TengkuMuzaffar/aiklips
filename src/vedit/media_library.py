@@ -21,7 +21,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from . import jobs, library
+from . import jobs, library, library_store
 from .ai import client as ai
 from .ai import prompts
 from .project import VeditError
@@ -84,11 +84,7 @@ def _set(uid: str, **kw: Any) -> None:
         con.execute(f"UPDATE media SET {cols} WHERE id = ?", (*kw.values(), uid))
 
 
-def _load(p: Path, default=None):
-    try:
-        return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return default
+_load = library_store.load_json
 
 
 # ---- registering ---------------------------------------------------------------------------
@@ -340,19 +336,7 @@ def overrides(uid: str) -> dict:
     return json.loads(row["overrides"] or "{}") if row else {}
 
 
-@jobs.handler("media_study")
-def _study_job(job: jobs.Job) -> dict:
-    return study(job.target.split(":", 1)[1], job)
-
-
-@jobs.on_fail("media_study")
-def _study_failed(job: jobs.Job, msg: str) -> None:
-    _set(job.target.split(":", 1)[1], status="failed", progress=None, error=msg[:500])
-
-
-@jobs.on_wait("media_study")
-def _study_wait(job: jobs.Job, wait: float) -> None:
-    _set(job.target.split(":", 1)[1], status="queued", progress=f"Waiting for AI quota (~{int(wait // 60) or 1} min)")
+library_store.study_job("media_study", lambda t: t.split(":", 1)[1], lambda uid, job: study(uid, job), _set)
 
 
 # ---- browsing / editing ------------------------------------------------------------------------
