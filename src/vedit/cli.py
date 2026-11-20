@@ -3451,7 +3451,7 @@ def _role_models(items: list[str] | None) -> dict[str, str]:
 
 @gen_app.command("run")
 def gen_run(
-    ref: list[int] = typer.Option(..., "--ref", help="Reference id (repeatable)"),
+    ref: list[str] = typer.Option(..., "--ref", help="Reference id, media library id, project source (s1) or video file (repeatable); media becomes a reference"),
     footage: list[str] = typer.Option(..., "--footage", "-f", help="Your video / music / image file (repeatable)"),
     sound: Optional[list[str]] = typer.Option(None, "--sound", "-s", help="Audio or video used ONLY for its sound (repeatable; the videos take turns)"),
     count: int = typer.Option(3, help="How many different videos (1-10)"),
@@ -3475,7 +3475,12 @@ def gen_run(
     from .generate import batch, footage as foot
     from .generate.spec import AXES, BatchSpec
 
+    from .references import store
+
     jobs.AUTOSTART = False
+    here = _project_dir_or_none()
+    ref = [store.resolve(r, here) for r in ref]
+    lead = store.resolve(lead, here) if lead else None
     ups = [foot.add(Path(f))["id"] for f in footage]
     snd = [foot.add(Path(s))["id"] for s in sound or []]
     spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review, explore=explore,

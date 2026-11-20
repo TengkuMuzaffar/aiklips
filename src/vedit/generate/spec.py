@@ -56,8 +56,9 @@ class Brief(_M):
 
 
 class BatchSpec(_M):
-    refs: list[int] = Field(min_length=1)
-    lead: int | None = None
+    refs: list[int | str] = Field(min_length=1, description="Reference ids, or media ids of videos to use as references "
+                                                           "(they become references when the batch is created)")
+    lead: int | str | None = None
     footage: list[str] = Field(min_length=1, description="Upload ids used for their pictures")
     sound: list[str] = Field(default_factory=list, max_length=10,
                              description="Upload ids used for their audio only (audio or video); the videos take turns using them")

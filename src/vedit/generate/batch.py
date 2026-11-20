@@ -136,9 +136,30 @@ def _metas(spec: BatchSpec) -> dict[str, dict]:
 
 # ---- create / estimate ---------------------------------------------------------------------
 
+def _ref_status(token: int | str) -> str:
+    """A picked reference's study status; a media video not yet used as a reference is "new" (studied on create)."""
+    if isinstance(token, int) or str(token).isdigit():
+        return refs.get(int(token))["status"]
+    rid = refs.for_media(str(token))
+    return refs.get(rid)["status"] if rid is not None else "new"
+
+
+def promote_refs(spec: BatchSpec) -> BatchSpec:
+    """Media videos picked as style references become references (no copy; their style study is queued)."""
+    ids = list(dict.fromkeys(refs.resolve(t) for t in spec.refs))
+    lead = refs.resolve(spec.lead) if spec.lead is not None else None
+    spec.refs, spec.lead = ids, (lead if lead in ids else None)
+    return spec
+
+
 def validate(spec: BatchSpec) -> None:
     for rid in spec.refs:
-        refs.get(rid)  # raises for unknown ids
+        if isinstance(rid, int) or str(rid).isdigit():
+            refs.get(int(rid))  # raises for unknown ids
+        else:
+            meta = footage.get(str(rid))  # raises for unknown media
+            if meta["kind"] != "video":
+                raise VeditError(f"“{meta['name']}” is {meta['kind']}: only videos can be style references")
     kinds = [footage.get(u)["kind"] for u in spec.footage]
     if "video" not in kinds:
         raise VeditError("Add at least one video clip of your own footage")
@@ -158,7 +179,7 @@ def validate(spec: BatchSpec) -> None:
 def estimate(spec: BatchSpec) -> dict:
     validate(spec)
     secs = {**DEFAULT_SECONDS, **ai.usage_stats()}
-    study = sum(1 for r in spec.refs if refs.get(r)["status"] != "ready")
+    study = sum(1 for r in spec.refs if _ref_status(r) != "ready")
     videos = [(fid, u) for fid, u in _files(spec) if footage.get(u)["kind"] == "video"]
     undescribed = 0
     for _, u in videos:
@@ -186,6 +207,7 @@ def estimate(spec: BatchSpec) -> dict:
 
 def create(spec: BatchSpec) -> dict:
     validate(spec)
+    promote_refs(spec)
     bid = time.strftime("b%Y%m%d-%H%M%S-") + secrets.token_hex(2)
     name = (spec.brief.product.strip()[:50] or "Generation") + time.strftime(" · %b %d %H:%M")
     now = time.time()
