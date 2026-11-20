@@ -163,3 +163,13 @@ def test_chat_sessions_new_open_delete(tmp_path):
         assert sorted(c["title"] for c in s.chats()) == ["Add captions", "Blur my background"]
 
     asyncio.run(run())
+
+
+def test_native_window_never_gets_a_png_icon_on_windows():
+    """pywebview's Windows (WinForms) window throws an unhandled .NET exception for a PNG icon and the app quits
+    before its window shows (0.2.2). Windows gets its icon from icon.ico once the window is up."""
+    from vedit.editor import window
+
+    assert window._start_icon("win32") is None
+    assert window._start_icon("darwin").endswith(".png") and window._start_icon("linux").endswith(".png")
+    assert (window.BRAND / "icon.ico").exists()

@@ -56,6 +56,13 @@ def _ready() -> None:
             pass
 
 
+def _start_icon(platform: str = sys.platform) -> str | None:
+    """The icon for webview.start. Never on Windows: its WinForms window takes only a real .ico there and throws
+    an unhandled .NET exception for a PNG ("must be a picture that can be used as a Icon"), which kills the app before
+    the window shows. Windows gets its icon from icon.ico in _brand_window instead."""
+    return None if platform == "win32" else str(BRAND / "icon-256.png")
+
+
 def _brand_window(window) -> None:
     """Once the window is up: set its icon (Windows title bar/taskbar, macOS dock), then signal the launcher."""
     _ready()
@@ -161,7 +168,7 @@ def launch(pdir: Path | None, browser: bool = False, port: int | None = None) ->
             _brand_process()
             win = webview.create_window("aiklips", start, width=1480, height=920, min_size=(1024, 640),
                                         background_color="#0b0f0d", menu=_menu(lambda: win))
-            webview.start(_brand_window, (win,), icon=str(BRAND / "icon-256.png"),
+            webview.start(_brand_window, (win,), icon=_start_icon(),
                           private_mode=False, storage_path=str(home_dir() / "webview"))
             server.should_exit = True
             return
