@@ -131,7 +131,7 @@ def _cache(pdir: Path) -> Path:
 
 def clip_stats(project: Project, pdir: Path, clip: Clip) -> dict | None:
     src = project.sources[clip.source]
-    if not src.has_video:
+    if not src.has_video or clip.gap:  # a gap is canvas colour, not footage: never part of a colour match
         return None
     return stats(resolve_media(pdir, src.path), clip.in_, clip.out, cache=_cache(pdir))
 
