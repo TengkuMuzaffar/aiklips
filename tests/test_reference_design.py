@@ -102,7 +102,8 @@ def test_study_makes_the_whole_video_sheet_and_palette(poster, fake):
     r = store.get(r["id"], full=True)
     assert r["status"] == "ready" and r["dna"]["design"]["layout"] == "left_aligned"
     assert [Path(s).name for s in r["sheets"]] == ["sheet-1.jpg", "sheet-2.jpg", "sheet-3.jpg"]
-    task, _system, prompt, images = fake[0]
+    # the file is in the media library too, so its media study (task "footage") may run first
+    task, _system, prompt, images = next(c for c in fake if c[0] == "study")
     assert task == "study" and "sheet-3.jpg" in images and '"palette"' in prompt
     assert r["dna"]["color"]["palette"]["background"]
 

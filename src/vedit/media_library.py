@@ -348,6 +348,22 @@ def _public(row: dict) -> dict:
     return out
 
 
+def _refs_by_media() -> dict[str, dict]:
+    """{media id: its reference row (id, status, name)} for the videos used as style references."""
+    from .references import store
+
+    with closing(store._db()) as con:
+        return {r["media_id"]: dict(r) for r in con.execute(
+            "SELECT id, media_id, status, progress, name FROM refs WHERE media_id IS NOT NULL").fetchall()}
+
+
+def _with_ref(out: dict, ref: dict | None) -> dict:
+    out["ref_id"] = ref["id"] if ref else None
+    out["ref_status"] = ref["status"] if ref else None
+    out["ref_progress"] = ref.get("progress") if ref else None
+    return out
+
+
 def get(uid: str, full: bool = False) -> dict:
     row = _row(uid) or register(uid)
     out = _footage().get(uid) | _public(row)  # the library's name wins (the user may have renamed it)
@@ -357,10 +373,18 @@ def get(uid: str, full: bool = False) -> dict:
             "SELECT kind, target, used_at FROM media_usage WHERE media_id = ? ORDER BY used_at DESC", (uid,)).fetchall()]
     if full and out["kind"] == "video":
         out["segments"] = _footage().shot_log([("f1", uid)])["f1"]["segments"]
+    _with_ref(out, _refs_by_media().get(uid))
+    if full and out["ref_id"]:
+        from .references import store
+
+        r = store.get(out["ref_id"])
+        out["ref_summary"] = r.get("summary")
+        out["ref_tags"] = r.get("auto_tags") or []
     return out
 
 
-def list_media(kind: str | None = None, q: str | None = None, tag: str | None = None) -> list[dict]:
+def list_media(kind: str | None = None, q: str | None = None, tag: str | None = None, role: str | None = None) -> list[dict]:
+    """role="reference": only the videos used as style references."""
     sql, args = "SELECT * FROM media", []
     if kind:
         sql += " WHERE kind = ?"
@@ -369,8 +393,12 @@ def list_media(kind: str | None = None, q: str | None = None, tag: str | None = 
     with closing(_db()) as con:
         rows = [_public(dict(r)) for r in con.execute(sql, args).fetchall()]
         used = Counter(r["media_id"] for r in con.execute("SELECT media_id FROM media_usage").fetchall())
+    refs = _refs_by_media()
     out = []
     for r in rows:
+        _with_ref(r, refs.get(r["id"]))
+        if role == "reference" and not r["ref_id"]:
+            continue
         try:
             r = _footage().get(r["id"]) | r
         except VeditError:  # folder removed by hand: list it so it can be deleted
@@ -447,6 +475,11 @@ def delete(uid: str, force: bool = False) -> None:
         uses = con.execute("SELECT COUNT(*) FROM media_usage WHERE media_id = ?", (uid,)).fetchone()[0]
     if uses and not force:
         raise VeditError(f"“{row['name']}” is used in {uses} project(s) or batch(es). Remove it anyway with force.")
+    from .references import store
+
+    rid = store.for_media(uid)
+    if rid is not None:  # its style study lives in the same folder: it goes with the file
+        store.delete(rid)
     jobs.cancel(f"media:{uid}")
     d = _footage()._dir(uid)
     if d.exists() and d.parent == _footage().root():

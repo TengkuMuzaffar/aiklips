@@ -137,7 +137,10 @@ def segments(uid: str) -> list[dict]:
     if meta["kind"] != "video":
         return []
     dur = float(meta["duration"])
-    cuts = analysis.detect_cuts(Path(meta["path"]))
+    cuts = _json(d / "cuts.json")
+    if cuts is None:
+        cuts = analysis.detect_cuts(Path(meta["path"]))
+        (d / "cuts.json").write_text(json.dumps(cuts))  # raw cuts: a style study of the same file reuses them
     edges = [0.0] + [c for c in cuts if 0.3 < c < dur - 0.3] + [dur]
     out: list[dict] = []
     for a, b in zip(edges, edges[1:]):

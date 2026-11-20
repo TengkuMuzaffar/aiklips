@@ -395,7 +395,9 @@ def make_timeline_sheet(path: Path, duration: float, out_dir: Path, cuts: list[f
 
 # ---- everything -----------------------------------------------------------------------------
 
-def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = None, transcript: bool = True) -> dict:
+def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = None, transcript: bool = True,
+            cuts: list[float] | None = None, words: list[dict] | None = None) -> dict:
+    """`cuts` / `words` ([{t, w}]): already measured on the same file by the media library's study; reused, not redone."""
     say = progress or (lambda _s: None)
     out_dir.mkdir(parents=True, exist_ok=True)
     say("Reading the file")
@@ -404,8 +406,9 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         raise VeditError("A reference must be a video")
     dur = info["duration"]
     media.extract_frame(path, min(1.0, dur / 3), out_dir / "thumb.jpg", 360)
-    say("Finding cuts")
-    cuts = detect_cuts(path)
+    if cuts is None:
+        say("Finding cuts")
+        cuts = detect_cuts(path)
     pace = pacing(cuts, dur)
     say("Measuring motion")
     mot = motion(path)
@@ -430,7 +433,10 @@ def analyze(path: Path, out_dir: Path, progress: Callable[[str], None] | None = 
     except (VeditError, OSError):
         pal = None
     text = None
-    if transcript and info["has_audio"] and dur <= 240:
+    if words:
+        text = " ".join(w["w"].strip() for w in words)[:3000] or None
+        (out_dir / "words.json").write_text(json.dumps(words[:400]))
+    elif transcript and info["has_audio"] and dur <= 240:
         try:
             from ..ops import captions as caps
 
