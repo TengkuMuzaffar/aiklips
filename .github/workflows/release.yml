@@ -69,7 +69,7 @@ jobs:
           git archive --format=tar.gz --prefix=aiklips/ -o "dist/aiklips-$V.tar.gz" HEAD
           prev=$(git tag --list 'v*' --sort=-v:refname | head -1)
           { echo "## What's new"; git log --no-merges --pretty='- %s' ${prev:+$prev..}HEAD | grep -v '^- chore' | head -40; } > notes.md
-          schema=$(sed -n 's/^SCHEMA_VERSION = \([0-9]*\)/\1/p' src/vedit/project.py)
+          schema=$(sed -n 's/^SCHEMA_VERSION = \([0-9]*\).*/\1/p' src/vedit/project.py)  # only the number: the line may end in a comment
           cd launcher
           go run ./cmd/relsign manifest -version "$V" -payload "../dist/aiklips-$V.tar.gz" -notes ../notes.md -schema "$schema" > ../dist/manifest.json
           go run ./cmd/relsign sign ../dist/manifest.json > ../dist/manifest.sig
