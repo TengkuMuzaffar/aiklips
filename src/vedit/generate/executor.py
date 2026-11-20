@@ -67,7 +67,8 @@ def _describe(o: Op) -> str:
 
 
 def execute(plan: EditPlan, pdir: Path, files: dict[str, dict], name: str, fmt: str,
-            log: dict | None = None, brief: str = "", target_shot_s: float | None = None, style: str = "") -> dict:
+            log: dict | None = None, brief: str = "", target_shot_s: float | None = None, style: str = "",
+            refs: list[int] | None = None) -> dict:
     """files: fid -> upload meta (needs 'path', 'kind', probe info). log: the shot log (for segment quality).
     Returns a report."""
     create_project(pdir, name, fmt)
@@ -87,7 +88,7 @@ def execute(plan: EditPlan, pdir: Path, files: dict[str, dict], name: str, fmt: 
             sid[fid] = s
     with history.transaction(pdir, "AI: edit notes (beats, rationale)") as tx:
         tx.project.notes = EditNotes(rationale=plan.rationale or "", brief=brief[:500], target_shot_s=target_shot_s, style=style[:300],
-                                     beats=[Beat(id=b.id, role=b.role, purpose=b.purpose) for b in plan.beats])
+                                     refs=list(refs or []), beats=[Beat(id=b.id, role=b.role, purpose=b.purpose) for b in plan.beats])
     report: dict = {"applied": [], "skipped": [], "plan_problems": list(plan.problems)}
     clip_ids: list[str] = []   # footage clips, in order (@C1..)
     seq_ids: list[str] = []    # every element on the video track, footage and scenes (transition `into`)

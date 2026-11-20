@@ -325,7 +325,7 @@ def run_variation(vid: str, job: jobs.Job | None = None) -> dict:
             _unregister(where)
             shutil.rmtree(where)
         return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
-                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary, refs=list(spec.refs))
 
     best, rounds, stop = _loop(vid, step, build, spec, dna, log, c, axes, d, metas, pdir, threshold, max_rounds, usage_cb,
                                first=(plan, notes), fids=dict(files),
@@ -549,7 +549,7 @@ def run_improve(vid: str, rounds: int, job: jobs.Job | None = None) -> dict:
         if where.exists() and where.parent.parent == batches_root():
             shutil.rmtree(where)
         return executor.execute(pl, where, metas, name, spec.brief.format, log=log, brief=brief,
-                                target_shot_s=d.get("avg_shot_s"), style=dna.summary)
+                                target_shot_s=d.get("avg_shot_s"), style=dna.summary, refs=list(spec.refs))
 
     exec_report = {k: x for k, x in rep.items() if k not in ("audit", "review")}
     start = {"rounds": audit.get("rounds") or [], "best": {

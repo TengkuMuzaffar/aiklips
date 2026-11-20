@@ -2027,7 +2027,8 @@ def focus_clear(clip: Optional[str] = None):
 @app.command("audit")
 def audit_cmd(render: bool = typer.Option(True, help="Render the preview to measure audio loudness (cached if unchanged)"),
               ai_review: bool = typer.Option(False, "--ai", help="Also run the independent AI reviewer on the rendered frames (one vision call)"),
-              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy")):
+              quality: str = typer.Option("balanced", help="AI quality tier for --ai: best | balanced | economy"),
+              ref: bool = typer.Option(False, "--ref", help="Also score likeness to the edit's target references (`vedit ref target`; one vision call). --ai includes it")):
     """Check the edit before calling it done: hook, readability, safe zones, overlaps, fonts, colour, pacing,
     footage reuse, loudness and stated reasons. Fix every must-fix finding."""
     from .audit import audit
@@ -2038,8 +2039,17 @@ def audit_cmd(render: bool = typer.Option(True, help="Render the preview to meas
 
         r = full_audit(d, use_ai=True, quality=quality)
     else:
-        r = audit(load(d), d, render=render)
-    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + [
+        r = audit(load(d), d, render=render or ref)
+        if ref:
+            from .review import reference_audit
+
+            r = reference_audit(d, r, quality)
+    p = load(d)
+    targets = p.notes.refs if p.notes else []
+    lines = ([f"AI: {r['summary']}  scores: " + ", ".join(f"{k} {v}/5" for k, v in r["scores"].items())] if r.get("scores") else []) + (
+        [f"Looks like the reference: {r['reference']['score']}/5" + (f" (carried: {'; '.join(r['reference']['carried'])})" if r['reference'].get('carried') else "")]
+        if r.get("reference") else [f"Technical checks only: likeness to reference(s) {', '.join(f'#{i}' for i in targets)} not scored "
+                                     "(add --ref; the automatic audit when you finish scores it)"] if targets and not ref and not ai_review else []) + [
         f"Score {r['score']}/100 · {'PASSED' if r['passed'] else 'NOT PASSED'} · "
              f"{r['counts']['must-fix']} must-fix, {r['counts']['should-fix']} should-fix, {r['counts']['note']} notes"]
     for f in r["findings"]:
@@ -3071,8 +3081,13 @@ def ref_show(ref_id: int):
     from .references import store
 
     r = store.get(ref_id, full=True)
-    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps")}},
-         f"#{r['id']} {r['name']} ({r['status']})\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+    look = ("Read these contact sheets before building anything like it: they are the reference itself (the DNA is a "
+            "summary). sheet-1 = the opening at 4 fps, sheet-2 = one frame per shot, sheet-3 = the whole video.")
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "dna", "overrides", "error", "recipe", "gaps",
+                                              "sheets", "stale")}, "look_first": look},
+         f"#{r['id']} {r['name']} ({r['status']})" + (" · studied with an older study prompt: `vedit ref restudy`" if r.get("stale") else "")
+         + "\n" + "\n".join(f"  {t['label']:<12} {t['value']}" for t in r.get("card", []))
+         + "".join(f"\n  sheet: {x}" for x in r.get("sheets", []))
          + (f"\n  Rebuild it: vedit ref recipe {r['id']}" if r.get("recipe") else ""))
 
 
@@ -3086,6 +3101,34 @@ def ref_recipe(ref_id: int):
         raise VeditError(f"Reference #{ref_id} isn't studied yet ({r['status']})")
     emit({"reference": ref_id, "recipe": r["recipe"], "gaps": r["gaps"]},
          f"#{r['id']} {r['name']}: rebuild in vedit (<...> = fill in)\n\n" + recipe.as_text(r["recipe"], r["gaps"]))
+
+
+@ref_app.command("restudy")
+def ref_restudy(ref_id: int, quality: str = typer.Option("balanced", help="AI quality tier: best | balanced | economy")):
+    """Study a reference again with the current study prompt (design pass, whole-video sheet)."""
+    from .references import store
+
+    store.study(ref_id, quality=quality)
+    r = store.get(ref_id, full=True)
+    emit({"reference": {k: r.get(k) for k in ("id", "name", "status", "summary", "error", "sheets")}},
+         f"#{r['id']} {r['name']}: {r.get('summary') or r['status']}" + (f"\n  {r['error']}" if r.get("error") else ""))
+
+
+@ref_app.command("target")
+def ref_target(ref_ids: list[int] = typer.Argument(None, help="Reference ids this edit should look like"),
+               clear: bool = typer.Option(False, "--clear", help="Stop comparing the edit with any reference")):
+    """Set the reference(s) this edit should look like: the audit then scores likeness to them."""
+    from .project import EditNotes
+    from .references import store
+
+    ids = [] if clear else list(dict.fromkeys(ref_ids or []))
+    for i in ids:
+        store.get(i)  # raises for an unknown id
+    with edit("Match references " + (", ".join(f"#{i}" for i in ids) or "(none)")) as tx:
+        if tx.project.notes is None:
+            tx.project.notes = EditNotes()
+        tx.project.notes.refs = ids[:4]
+    emit({"refs": ids[:4]}, ("Target references: " + ", ".join(f"#{i}" for i in ids[:4])) if ids else "No target references")
 
 
 @ref_app.command("set")

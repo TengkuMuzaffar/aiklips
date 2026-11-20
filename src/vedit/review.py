@@ -24,7 +24,8 @@ from .audit import SEVERITY_COST, audit
 from .project import ClipMeta, Project, VeditError, load
 
 Severity = Literal["must-fix", "should-fix", "note"]
-CATEGORIES = ("hook", "story", "pacing", "typography", "colour", "audio", "creativity", "safe-zone", "footage", "other")
+CATEGORIES = ("hook", "story", "pacing", "typography", "colour", "audio", "creativity", "safe-zone", "footage", "reference", "other")
+REF_WEIGHT = 0.3  # share of the score that is likeness to the targeted reference(s)
 OVERVIEW_FRAMES = 16
 HOOK_FRAMES = 12  # first 3 s at 4 fps
 
@@ -65,6 +66,20 @@ class AIReview(_M):
     verdict: Literal["better", "same", "worse"] | None = Field(
         None, description="Only when a PREVIOUS BEST version is shown: is THIS version better, the same, or worse overall?")
     issue_checks: list[IssueCheck] = Field(default_factory=list, description="Only when OPEN ISSUES are listed: one check per issue")
+
+
+class RefMiss(_M):
+    severity: Literal["must-fix", "should-fix"] = "should-fix"
+    frame: int = Field(description="EDIT frame on the overview sheet (1..N), or 0 for the hook strip")
+    at: float = Field(description="Timeline seconds in the edit")
+    message: str = Field(description="What the reference does that this edit doesn't, one sentence")
+    fix: str = Field("", description="The concrete change, with vedit commands where you can")
+
+
+class RefMatch(_M):
+    score: int = Field(3, ge=1, le=5, description="5 = looks made by the same designer, 3 = inspired but plainer, 1 = generic")
+    carried: list[str] = Field(default_factory=list, description="Up to 4 things the edit does carry over")
+    misses: list[RefMiss] = Field(default_factory=list, description="Up to 5 visible differences, biggest first")
 
 
 # ---- describing the edit (what the reviewer and the editor read) -------------------------------------
@@ -115,7 +130,12 @@ def describe_edit(p: Project, fid_of: dict[str, str] | None = None, pdir: Path |
         style = "" if l.type == "image" else f", font {l.style.font or 'default'}" + (f", look {l.style.look}" if l.style.look else "")
         lines.append(f"  {l.id} {l.type} {l.start:.2f}-{end:.2f}s at ({l.x}, {l.y}){style}: \"{(label or '')[:80]}\""
                      + (f'  WHY: "{l.why}"' if l.why else ""))
+    from .sound import is_sfx
+
     for m in p.music:
+        if is_sfx(p, m):
+            lines.append(f"  sound effect {m.id} at {m.start:g}s, volume {m.volume:g}")
+            continue
         lines.append(f"  music {m.id}: volume {m.volume:g}, ducked under speech: {m.duck}, starts {m.start:g}s, song offset {m.in_:g}s")
     return "\n".join(lines)
 
@@ -137,6 +157,131 @@ def make_sheets(video: Path, duration: float, out_dir: Path) -> tuple[list[Path]
     analysis._tile([(f, f"{t:.2f}s") for f, t in zip(hook, hook_t)], strip, cols=6, width=200,
                    title="HOOK STRIP (frame 0): first 3 seconds, 4 per second")
     return [overview, strip], times
+
+
+# ---- likeness to the reference(s) ---------------------------------------------------------------
+
+def target_refs(p: Project, refs: list[int] | None = None) -> list[int]:
+    """The reference ids this edit should look like (given, else the project's notes), studied ones only."""
+    from .references import store
+
+    out = []
+    for rid in (refs if refs is not None else (p.notes.refs if p.notes else [])):
+        try:
+            if store.get(int(rid)).get("has_dna"):
+                out.append(int(rid))
+        except (VeditError, ValueError, KeyError):
+            continue
+    return out[:2]
+
+
+def reference_sheet(refs: list[int], out_dir: Path) -> Path | None:
+    """One sheet of what the reference(s) look like: the opening and frames across the whole video."""
+    from .references import analysis, store
+
+    picks: list[tuple[Path, str]] = []
+    per = 12 // max(1, len(refs))
+    for rid in refs:
+        try:
+            store.sheet_paths(rid)  # makes the whole-video frames for an older reference
+            row = store.get(rid)
+        except VeditError:
+            continue
+        fdir = Path(row["dir"]) / "frames"
+        later = sorted(fdir.glob("tl-*.jpg")) or sorted(fdir.glob("shot-*.jpg"))
+        hook = [x for x in (fdir / "hook-000.jpg", fdir / "hook-008.jpg") if x.exists()]
+        rest = per - len(hook)
+        if later and rest > 0:
+            later = [later[int(i * len(later) / rest)] for i in range(min(rest, len(later)))]
+        picks += [(x, f"{row['name']} · opening") for x in hook] + [(x, f"{row['name']} · later") for x in later[:max(0, rest)]]
+    if not picks:
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / "review-reference.jpg"
+    analysis._tile(picks, dest, cols=4, width=200, title="THE REFERENCE(S) this edit should look like")
+    return dest if dest.exists() else None
+
+
+def reference_brief(refs: list[int]) -> str:
+    from .references import store
+
+    lines = []
+    for rid in refs:
+        try:
+            s = store.style(rid)
+        except VeditError:
+            continue
+        lines.append(f"REFERENCE #{rid}: {s.summary}")
+        if s.design is not None:
+            lines.append("  design: " + json.dumps(s.design.model_dump(exclude={"scenes"}), separators=(",", ":"))[:2500])
+        if s.color.palette:
+            lines.append(f"  palette: {json.dumps(s.color.palette)}")
+    return "\n".join(lines)
+
+
+def reference_review(p: Project, sheets: list[Path], times: list[float], refs: list[int], pdir: Path,
+                     quality: str = "balanced") -> tuple[RefMatch | None, dict]:
+    """One vision call: how much does the edit look like its reference(s)? None when there is nothing to compare."""
+    ref_img = reference_sheet(refs, pdir / ".vedit" / "review")
+    if ref_img is None:
+        return None, {}
+    prompt = (reference_brief(refs) + "\n\nTHE EDIT:\n" + describe_edit(p, None, None)
+              + "\n\nImages: 1 = the EDIT's overview (frames " + ", ".join(f"#{i + 1}={t:.1f}s" for i, t in enumerate(times))
+              + "), 2 = the EDIT's hook strip (frame 0), 3 = the REFERENCE. How much does the edit look like the reference?")
+    rm, usage = ai.call("auditor", prompt, RefMatch, system=prompts.REF_MATCH, images=[*sheets[:2], ref_img], quality=quality)
+    rm.misses = [m for m in rm.misses[:5] if m.message.strip()]
+    return rm, usage
+
+
+def with_reference(out: dict, rm: RefMatch | None, times: list[float], duration: float) -> dict:
+    """Fold likeness into the result: REF_WEIGHT of the score, its misses as `reference` findings."""
+    if rm is None:
+        return out
+    misses = verify([AIFinding(severity=m.severity, category="reference", frame=m.frame, at=m.at, message=m.message, fix=m.fix)
+                     for m in rm.misses], times, duration)
+    if rm.score <= 2 and not misses:
+        misses = [AIFinding(severity="should-fix", category="reference", frame=1, at=times[0] if times else 0.0,
+                            message="Looks generic next to the reference: its layout, type system and graphic elements aren't there.",
+                            fix="Look at the reference sheets (`vedit ref show <id>`) and rebuild its layout and type system.")]
+    before = max(0, 100 - sum(SEVERITY_COST[f["severity"]] for f in out["findings"]))
+    for i, f in enumerate(misses, 1):
+        out["findings"].append({"id": f"L{i}", "severity": f.severity, "category": "reference", "at": round(f.at, 2),
+                                "message": f.message, "evidence": f"frame {'hook strip' if f.frame == 0 else '#' + str(f.frame)}",
+                                "fix": f.fix or None, "source": "ref"})  # re-judged every round, like a code check
+    order = {"must-fix": 0, "should-fix": 1, "note": 2}
+    out["findings"].sort(key=lambda f: (order[f["severity"]], f["at"] if f.get("at") is not None else 1e9))
+    deduct = max(0, 100 - sum(SEVERITY_COST[f["severity"]] for f in out["findings"]))
+    # code-only score = the deductions; with the AI reviewer it's half deductions, half rubric: redo the deduction half
+    base = deduct if not out.get("ai") else out["score"] - 0.5 * (before - deduct)
+    out["score"] = max(0, round((1 - REF_WEIGHT) * base + REF_WEIGHT * rm.score / 5 * 100))
+    out["passed"] = not any(f["severity"] == "must-fix" for f in out["findings"])
+    out["counts"] = {k: sum(1 for f in out["findings"] if f["severity"] == k) for k in SEVERITY_COST}
+    out["reference"] = {"score": rm.score, "carried": rm.carried}
+    return out
+
+
+def reference_audit(pdir: Path, code: dict, quality: str = "balanced", refs: list[int] | None = None) -> dict:
+    """Code checks + likeness to the targeted reference(s) only (the chat's "checks" auditor): one vision call when
+    the edit targets references, nothing otherwise."""
+    from .jobs import render_lock
+    from .render.runner import render_preview
+
+    p = load(pdir)
+    ids = target_refs(p, refs)
+    if not ids:
+        return code
+    with render_lock:
+        res = render_preview(p, pdir, progress=False)
+    sheets, times = make_sheets(Path(res["output"]), p.duration, pdir / ".vedit" / "review")
+    try:
+        rm, _u = reference_review(p, sheets, times, ids, pdir, quality)
+    except ai.RateLimited:
+        raise
+    except ai.AIError as e:
+        code["findings"].append({"id": "L0", "severity": "note", "category": "reference", "at": None,
+                                 "message": f"Reference check skipped: {e}", "evidence": "", "fix": None})
+        return code
+    return with_reference(code, rm, times, p.duration)
 
 
 # ---- AI reviewer --------------------------------------------------------------------------------
@@ -222,8 +367,8 @@ def merge(code: dict, rev: AIReview | None) -> dict:
 
 def full_audit(pdir: Path, use_ai: bool = True, quality: str = "balanced", fid_of: dict | None = None,
                usage_cb: Callable[[str, dict], None] | None = None, compare: dict | None = None,
-               issues: list[dict] | None = None, round_no: int = 0) -> dict:
-    """Code checks + the AI reviewer. With `issues` (the best version's tracked issues), the review checks each one,
+               issues: list[dict] | None = None, round_no: int = 0, refs: list[int] | None = None) -> dict:
+    """Code checks + the AI reviewer (+ likeness to the edit's target references, `refs` or the project's notes). With `issues` (the best version's tracked issues), the review checks each one,
     and the result carries the updated list (`issues`) plus what this version fixed or made worse."""
     from .jobs import render_lock
     from .render.runner import render_preview
@@ -245,6 +390,19 @@ def full_audit(pdir: Path, use_ai: bool = True, quality: str = "balanced", fid_o
             code["findings"].append({"id": "R0", "severity": "note", "category": "audit", "at": None,
                                      "message": f"AI review skipped: {e}", "evidence": "", "fix": None})
     out = merge(code, rev)
+    if use_ai:
+        ids = target_refs(p, refs)
+        if ids:
+            try:
+                rm, u = reference_review(p, sheets, times, ids, pdir, quality)
+                if usage_cb and u:
+                    usage_cb("auditor", u)
+                out = with_reference(out, rm, times, p.duration)
+            except ai.RateLimited:
+                raise
+            except ai.AIError as e:
+                out["findings"].append({"id": "L0", "severity": "note", "category": "reference", "at": None,
+                                        "message": f"Reference check skipped: {e}", "evidence": "", "fix": None})
     out["step"] = history.head(pdir)
     out["verdict"] = rev.verdict if rev is not None else None
     out["sheets"] = [str(x) for x in sheets_of(pdir)]

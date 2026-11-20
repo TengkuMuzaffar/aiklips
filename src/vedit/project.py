@@ -132,6 +132,7 @@ class EditNotes(_Model):
     beats: list[Beat] = Field(default_factory=list)
     target_shot_s: float | None = None  # pacing the edit aims for (from the reference)
     style: str = ""  # one-line summary of the target style (Style DNA), for reviewers
+    refs: list[int] = Field(default_factory=list)  # reference videos this edit should look like: the audit compares them
 
 
 class Clip(_Model):

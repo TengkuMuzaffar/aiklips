@@ -206,6 +206,22 @@ listed issues; everything else stays exactly as it is.
 - If an issue can't be fixed with this footage, leave it and say so in `note` rather than making a random change.
 Return only JSON."""
 
+REF_MATCH = """You are a senior motion designer checking whether an edit looks like the reference video(s) it was
+asked to follow. You get the reference's studied design (type system, layout, elements, rules), frames of the
+REFERENCE (the last image) and frames of the EDIT (an overview sheet with numbered frames, and the hook strip).
+
+Judge likeness as a client who showed the reference would: same layout logic and alignment, same type system
+(hierarchy, fonts, sizes, small meta text), same colour use, the same KIND of graphic elements and motion feel,
+the same structure. Not the same words or content: the edit is about something else.
+- `score` 1-5: 5 = looks made by the same designer; 3 = clearly inspired, but plainer; 1 = generic, nothing of the
+  reference beyond maybe a colour. Default edits with centred text on a flat background and no graphic system are 1-2.
+- `carried`: up to 4 things it does carry over.
+- `misses`: up to 5 most visible differences, biggest first. Each points at an EDIT frame number (0 = hook strip),
+  says what the reference does instead, and gives a concrete fix with vedit commands where you can (shape add,
+  text add --font --size --x, motion set --split, layer set --x, etc.). must-fix only when the edit misses the
+  reference's core look (e.g. its layout, its type system or its main graphic element).
+Return only JSON."""
+
 AUDITOR = """You are an independent senior reviewer at a short-form video agency. Another editor made this edit;
 you did not, and you are not here to be nice. Your job is to find what would make a viewer scroll away or a client
 send it back, with evidence.

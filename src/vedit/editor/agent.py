@@ -99,6 +99,18 @@ environment are off limits, and so are running Python, tests, git or installers.
 automatically. If vedit can't do something or misbehaves, say so plainly (what you ran, what happened) so the user
 can report it, and offer the closest vedit alternative.
 
+References: when the user attaches or mentions a reference video, the goal is that the result looks like it, made by
+the same designer. The Style DNA is a short summary and loses most of the design, so before planning Read the
+reference's contact sheets (paths in <editor_context> or `vedit ref show <id>`: the opening at 4 fps, one frame per
+shot, and the whole video) and note what a motion designer would: layout and alignment (left-aligned? margins?), the
+type system (headline, subhead, tiny meta text: font, size, weight, colour), the graphic elements (frames, rules,
+cards, stickers, UI mockups, mascots), colour use and how things move. Then build THAT, using the DNA's `design`
+block (type_roles, elements with their closest commands, rules) as the checklist. Don't trade the reference's look
+for a generic one: don't apply a `style` preset that fights it, don't drop its small details, don't centre what it
+left-aligns. Where vedit can't do something exactly, build the closest version rather than leaving it out. When
+done, look at your frames next to the reference sheets and fix what differs. The automatic audit scores likeness to
+the attached references (`vedit audit --ref` runs that check yourself; one AI call), so a plain result won't pass.
+
 Before you say an edit is done: record why each clip you chose is there (`vedit why <clip> "..." --role ...`),
 run `vedit --json audit`, fix every must-fix finding and re-run until it passes. Report the score.
 """.strip()
@@ -576,9 +588,17 @@ def _attachment(p, n: int, a: dict) -> str:
             m = next((m for m in p.markers if m.id == aid), None)
             return f"{n}. marker {aid} at {m.t:.2f}s \"{m.label or ''}\"" if m else f"{n}. marker {aid}"
         if kind == "ref":
-            return (f"{n}. reference video {aid} \"{a.get('name') or ''}\" (a studied style, not on the timeline): "
-                    f"`vedit ref show {aid}` = its Style DNA (pacing, hook, text, captions, transitions, sound); "
-                    f"`vedit ref recipe {aid}` = vedit commands to edit this video like it")
+            from ..references import store
+
+            try:
+                sheets = store.sheet_paths(int(aid))
+            except Exception:
+                sheets = []
+            return (f"{n}. reference video {aid} \"{a.get('name') or ''}\" (@ref{aid} in the message; a studied style, not on "
+                    f"the timeline). LOOK AT IT FIRST: Read its contact sheets "
+                    + (", ".join(sheets) if sheets else "(listed by `vedit ref show " + str(aid) + "`)")
+                    + f". `vedit ref show {aid}` = its Style DNA (edit + `design`: layout, type system, elements, motion, "
+                    f"rules); `vedit ref recipe {aid}` = commands to cut footage like it. The audit compares your edit with it.")
         if kind == "source":
             s = p.sources[aid]
             return f"{n}. media file {aid} ({Path(s.path).name}, {s.duration:.2f}s)"
@@ -1018,6 +1038,7 @@ class ChatSession:
             await self.emit({"type": "status", "busy": True}, persist=False)
             try:
                 await self._ensure()
+                await asyncio.to_thread(self._target_refs, ctx)
                 self.turn_head, self.audit_rounds, self.audited_head = self._head(), 0, None
                 self.turn_allow_edits = False
                 await self._clear_plan_offer()
@@ -1048,14 +1069,35 @@ class ChatSession:
         except Exception:
             return None
 
+    def _target_refs(self, ctx: dict) -> None:
+        """References attached to a message become the edit's targets (Project.notes.refs): the audit compares the
+        edit with them, in this turn and the next ones (e.g. after a plan is approved)."""
+        try:
+            ids = [int(a["id"]) for a in (ctx.get("attachments") or []) if isinstance(a, dict) and a.get("kind") == "ref"]
+            if not ids:
+                return
+            from ..project import EditNotes
+
+            p = load(self.pdir)
+            have = list(p.notes.refs) if p.notes else []
+            if set(ids) <= set(have):
+                return
+            with history.transaction(self.pdir, "Match references " + ", ".join(f"#{i}" for i in ids)) as tx:
+                if tx.project.notes is None:
+                    tx.project.notes = EditNotes()
+                tx.project.notes.refs = list(dict.fromkeys(ids + have))[:4]
+        except Exception:
+            pass  # never block a message over this
+
     def _run_audit(self) -> dict:
         if self.auditor == "ai":
             from ..review import full_audit
 
             return full_audit(self.pdir, use_ai=True)
         from ..audit import audit
+        from ..review import reference_audit
 
-        return audit(load(self.pdir), self.pdir, render=True)
+        return reference_audit(self.pdir, audit(load(self.pdir), self.pdir, render=True))
 
     async def _on_stop(self, data: Any, tool_use_id: str | None, context: Any) -> dict:
         """Runs when the agent ends its turn. If the turn changed the edit, audit it. Below the pass mark (or with
@@ -1083,7 +1125,7 @@ class ChatSession:
             last = self.audit_rounds >= cap
             await self.emit({"type": "audit", "score": r["score"], "passed": r["passed"], "counts": r["counts"], "ai": bool(r.get("ai")),
                              "threshold": cfg["threshold"], "reached": ok, "summary": r.get("summary"), "round": self.audit_rounds,
-                             "final": ok or last,
+                             "final": ok or last, "reference": r.get("reference"),
                              "findings": [{k: f.get(k) for k in ("id", "severity", "category", "at", "message", "fix")}
                                           for f in r["findings"] if f["severity"] != "note"][:8]})
             if ok or last:
@@ -1094,7 +1136,10 @@ class ChatSession:
             return {"decision": "block", "reason":
                     f"Automatic audit (round {self.audit_rounds}/{cap}): score {r['score']}/100, the pass mark is {cfg['threshold']}"
                     + (f", with {r['counts']['must-fix']} must-fix" if r["counts"]["must-fix"] else "") + ".\n"
-                    + (f"Reviewer: {r['summary']}\n" if r.get("summary") else "") + f"{lines}\n"
+                    + (f"Reviewer: {r['summary']}\n" if r.get("summary") else "")
+                    + (f"Likeness to the reference: {r['reference']['score']}/5 (reference findings are what it does that "
+                       "your edit doesn't; Read its sheets again before fixing them).\n" if r.get("reference") else "")
+                    + f"{lines}\n"
                     "Fix these with vedit commands (must-fix first), check with `vedit frame`, then finish with a short summary. "
                     "If one can't or shouldn't be fixed, say why instead."}
         except Exception as e:  # the auditor must never break the chat

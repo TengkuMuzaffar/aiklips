@@ -4208,7 +4208,8 @@ function auditCard(ev) {
     : ev.final ? `Audit ${ev.score}/100${mark}: stopped after ${ev.round} round(s), your call`
     : `Audit ${ev.score}/100${mark} · sending the edit back to the AI editor (round ${ev.round})`;
   return h("div", { class: "m-audit " + (ok ? "ok" : "bad") },
-    h("div", { class: "aa-h" }, icon("check"), h("b", {}, head), ev.ai ? h("span", { class: "hint" }, " · AI reviewer") : null),
+    h("div", { class: "aa-h" }, icon("check"), h("b", {}, head), ev.ai ? h("span", { class: "hint" }, " · AI reviewer") : null,
+      ev.reference ? h("span", { class: "hint", title: (ev.reference.carried || []).join(" · ") }, ` · looks like the reference: ${ev.reference.score}/5`) : null),
     ev.summary ? h("div", { class: "hint" }, ev.summary) : null,
     (ev.findings || []).map((f) => h("div", { class: "finding " + sev[f.severity] },
       h("div", {}, h("b", {}, f.severity), ` · ${f.category}`, f.at != null ? h("a", { onclick: () => { video.currentTime = f.at; } }, ` @${f.at}s`) : null),
@@ -4277,6 +4278,10 @@ const PILL_RE = /(@(?:ref\d+|[a-z]+\d+|\d+:\d{2}\.\d{2}(?:–\d+:\d{2}\.\d{2})?)
 function withPills(text) { // a sent message: its @mentions shown as the same pills as in the message box
   return String(text || "").split(PILL_RE).map((part, i) => {
     if (i % 2 === 0) return part;
+    if (/^@ref\d+$/.test(part)) {
+      const r = (REFS || []).find((x) => `@ref${x.id}` === part);
+      return h("span", { class: "pill ref", title: `reference #${part.slice(4)}` }, icon(ATT_ICON.ref), r ? `ref · ${r.name}` : part.slice(1));
+    }
     const k = /^@ref\d+$/.test(part) ? "ref" : /^@\d/.test(part) ? (part.includes("–") ? "range" : "time") : /^@m\d/.test(part) ? "marker" : "layer";
     return h("span", { class: `pill ${k}` }, icon(ATT_ICON[k]), part.slice(1));
   });

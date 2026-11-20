@@ -192,6 +192,9 @@ gen run --ref ID [--ref ID2] -f <footage/music/image>... [--model watcher|direct
 **References / Generate:**
 - To edit the user's own footage like a reference by hand, run `vedit --json ref recipe <id>`: ordered vedit commands
   built from its Style DNA (fill in the `<...>` parts) plus `gaps`, what vedit can't do exactly, with the closest option.
+- To make something LOOK like a reference, Read its contact sheets first (`vedit ref show <id>` lists them: sheet-1 the
+  opening at 4 fps, sheet-2 one frame per shot, sheet-3 the whole video) and follow the DNA's `design` block (layout,
+  type_roles, elements, rules). `vedit ref target <id>...` makes the audit score likeness to it (`vedit audit --ref`).
 - `vedit gen run` makes several complete projects (in `projects/batches/<id>/vNN`) and uses the user's AI quota:
   about 5 calls per video with the defaults (concepts + editor + auditor, + one editor revision and re-audit when the
   score is below the pass mark), plus 1 planner + 1 rank call per batch. Each extra revision round adds 2 calls (cap:
@@ -341,7 +344,9 @@ Load the relevant one before doing that kind of edit.
     (`sound.is_sfx`). The study (prompts.STUDY, `PROMPT_VERSION`; older studies are re-queued at app start by
     `store.restudy_stale`) fills `StyleDNA.design` (kind, layout, type_roles, elements, motion, scenes, rules) from three
     sheets, the third covering the whole video (`analysis.timeline_times`: even frames + changes without a cut).
-    `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
+    `Project.notes.refs` = the references an edit should look like (set by Generate, by attaching a reference in the
+    chat, or `ref target`); then the audit adds one likeness call (`review.reference_review`, prompts.REF_MATCH):
+    `REF_WEIGHT` of the score, its misses as `reference` findings (ids L1..). `ai/client.py` (every LLM call: routing, JSON schema, retries, rate-limit pause), `jobs.py` (SQLite job queue). Design: `docs/design/references-and-generation.md`
   - Distribution: `launcher/` (Go: install, signed updates, rollback), `updater.py` (check + stage + on-demand extras,
     `vedit update`), `.github/workflows/release.yml` (a new `pyproject.toml` version on main = a release). Read
     `docs/design/distribution.md` before changing any of them; a `project.json` format change needs `SCHEMA_VERSION`

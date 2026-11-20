@@ -126,3 +126,56 @@ def test_old_reference_is_backfilled_and_restudied(poster, fake):
     assert store.restudy_stale() == [r["id"]]
     jobs.drain()
     assert not store.get(r["id"])["stale"]
+
+
+def test_likeness_is_part_of_the_score():
+    code = {"findings": [], "passed": True, "counts": {"must-fix": 0, "should-fix": 0, "note": 0}, "score": 100}
+    rm = review.RefMatch(score=1, misses=[review.RefMiss(severity="must-fix", frame=2, at=3.0, message="centred, the reference is left-aligned")])
+    out = review.with_reference(dict(code, findings=[]), rm, [1.0, 3.0], 4.0)
+    assert out["score"] < 80 and not out["passed"] and out["reference"]["score"] == 1
+    assert out["findings"][0]["category"] == "reference" and out["findings"][0]["id"] == "L1"
+    generic = review.with_reference(dict(code, findings=[]), review.RefMatch(score=2), [1.0], 2.0)
+    assert generic["findings"] and generic["findings"][0]["severity"] == "should-fix"  # generic never passes silently
+    same = review.with_reference(dict(code, findings=[]), review.RefMatch(score=5), [1.0], 2.0)
+    assert same["score"] == 100 and not same["findings"]
+    assert review.with_reference(dict(code), None, [1.0], 2.0)["score"] == 100
+
+
+@needs_ffmpeg
+def test_chat_targets_attached_references_and_the_audit_compares(poster, fake, tmp_path):
+    from vedit.audit import audit
+    from vedit.editor.agent import SYSTEM_APPEND, ChatSession, _attachment
+    from vedit.generate.executor import create_project
+    from vedit.history import transaction
+    from vedit.ops import overlays
+    from vedit.project import load
+    from vedit.references import store
+
+    rid = store.add(poster, "poster")["id"]
+    jobs.drain()
+    pdir = tmp_path / "proj"
+    create_project(pdir, "t", "reels")
+    with transaction(pdir, "a title") as tx:
+        overlays.add_shape(tx.project, "rect", 0, 4, width=600, height=300, x="50%", y="50%")
+    # the editor is told to look at the reference itself, with the sheet paths
+    line = _attachment(load(pdir), 1, {"kind": "ref", "id": rid, "name": "poster"})
+    assert "LOOK AT IT FIRST" in line and "sheet-3.jpg" in line and f"@ref{rid}" in line
+    assert "Read the\nreference's contact sheets" in SYSTEM_APPEND or "contact sheets" in SYSTEM_APPEND
+    # attaching it makes it the edit's target (kept for later turns, e.g. after a plan is approved)
+    chat = ChatSession(pdir)
+    chat._target_refs({"attachments": [{"kind": "ref", "id": rid, "name": "poster"}]})
+    assert load(pdir).notes.refs == [rid]
+    chat._target_refs({"attachments": [{"kind": "ref", "id": rid}]})  # already targeted: no new history step
+    # "checks" auditor: code checks + one likeness call; a generic edit can't score 100 any more
+    code = audit(load(pdir), pdir, render=True)
+    out = review.reference_audit(pdir, dict(code))
+    task, system, prompt, images = fake[-1]
+    assert task == "auditor" and system == prompts.REF_MATCH and images[-1] == "review-reference.jpg"
+    assert "left_aligned" in prompt and "REFERENCE #" in prompt
+    assert out["reference"]["score"] == 1 and out["score"] < code["score"] and not out["passed"]
+    assert any(f["category"] == "reference" and "left-aligned" in f["message"] for f in out["findings"])
+    # no target: nothing extra runs
+    n = len(fake)
+    with transaction(pdir, "clear") as tx:
+        tx.project.notes.refs = []
+    assert review.reference_audit(pdir, dict(code))["score"] == code["score"] and len(fake) == n
