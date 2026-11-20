@@ -341,7 +341,7 @@ _VEDIT_READ = {"info", "frame", "sheet", "audit", "history", "projects", "fonts"
 _VEDIT_READ_SUB = {"layer": {"list"}, "mask": {"list", "check", "find"}, "marker": {"list"}, "track": {"list"}, "fx": {"list", "filters"},
                    "color": {"stats", "looks"}, "sound": {"report"}, "ref": {"list", "show", "recipe"},
                    "overlay": {"library"}, "transition": {"list"}, "animate": {"list"}, "template": {"list"},
-                   "version": {"list"}, "proxy": {"status"}, "gen": {"list"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"}, "style": {"list", "show"}, "media": {"list", "show"},
+                   "version": {"list"}, "proxy": {"status"}, "gen": {"list", "tags"}, "design": {"catalog"}, "update": {"status", "check"}, "safe": {"check"}, "style": {"list", "show"}, "media": {"list", "show"},
                    "text": {"look list"}, "captions": set(), "face": set(), "bg": set(), "focus": set(), "music": set()}
 _VEDIT_READ_BARE = {"audit-settings", "taste", "ai-models", "platform"}  # read-only when given no options
 _VEDIT_NOTES = {"why"}  # justification notes: not an edit to the picture, so "ask" mode doesn't stop for them

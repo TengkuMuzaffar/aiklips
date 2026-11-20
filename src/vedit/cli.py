@@ -3468,7 +3468,15 @@ def gen_run(
     threshold: Optional[int] = typer.Option(None, help="Audit pass mark; below it the editor revises (default: audit-settings)"),
     max_rounds: Optional[int] = typer.Option(None, help="Max editor revisions per video (default: audit-settings)"),
     model: Optional[list[str]] = typer.Option(None, "--model", help="Model for a role in this generation: watcher|vision, director|planner, editor, auditor = '<provider>/<model>', e.g. --model auditor=anthropic/claude-opus-5-5 (repeatable)"),
-    lead: Optional[int] = typer.Option(None, help="Reference that wins style ties"),
+    lead: Optional[str] = typer.Option(None, help="Reference that wins style ties (any form --ref takes)"),
+    funnel: Optional[str] = typer.Option(None, help="Funnel stage: awareness | consideration | conversion | retention"),
+    audience: Optional[str] = typer.Option(None, help="Who it is for, comma-separated ids (e.g. gen_z,students,malaysia,problem_aware) "
+                                                      "or your own words in quotes; `vedit gen tags` lists the ids"),
+    pace: str = typer.Option("reference", help="reference | very_slow | slow | medium | fast | very_fast | build | pulse"),
+    tone: Optional[str] = typer.Option(None, help="Up to 3, comma-separated: playful, premium, emotional, funny, urgent, calm, educational, bold, wholesome, raw"),
+    rule: Optional[list[str]] = typer.Option(None, "--rule", help="Must do / avoid (repeatable): price_early, logo_end, product_first_2s, no_faces, "
+                                                                  "captions_always, no_music, voiceover_room, no_text_first_1s, brand_colours"),
+    notes: str = typer.Option("", help="Anything else the AI should know"),
 ):
     """Generate COUNT videos from your footage in the style of the references (waits until done)."""
     from . import jobs
@@ -3485,7 +3493,9 @@ def gen_run(
     snd = [foot.add(Path(s))["id"] for s in sound or []]
     spec = BatchSpec(refs=ref, lead=lead, footage=ups, sound=snd, count=count, axes=vary or list(AXES), quality=quality, review=review, explore=explore,
                      audit_threshold=threshold, audit_rounds=max_rounds, models=_role_models(model),
-                     brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language})
+                     brief={"product": about, "hook": hook, "cta": cta, "length_s": length, "format": fmt, "language": language,
+                            "notes": notes, "funnel": funnel, "audience": _audience(audience), "pace": pace,
+                            "tone": [t.strip() for t in (tone or "").split(",") if t.strip()], "rules": rule or []})
     est = batch.estimate(spec)
     if not STATE["json"]:
         print(f"About {est['calls']} AI calls, ~{est['minutes']} min…", file=sys.stderr)
@@ -3494,6 +3504,37 @@ def gen_run(
     b = batch.get(b["id"])
     emit({"batch": b}, f"Batch {b['id']}: {b['status']}" + (f" ({b['error']})" if b["error"] else "") + "\n" + "\n".join(
         f"  v{v['idx']} {v['status']:<7} “{v['hook_text']}”  {v['output'] or v['error'] or ''}" for v in b["variations"]))
+
+
+def _audience(text: Optional[str]) -> dict:
+    """--audience ids (any group) into the Brief's audience; unknown words are kept as the user's own."""
+    from .generate import brief_tags
+
+    groups = brief_tags.audience_ids()
+    out: dict = {"age": [], "who": [], "region": [], "awareness": None, "custom": []}
+    for w in [x.strip() for x in (text or "").split(",") if x.strip()]:
+        g = groups.get(w)
+        if g == "awareness":
+            out["awareness"] = w
+        elif g:
+            out[g].append(w)
+        else:
+            out["custom"].append(w)
+    return out
+
+
+@gen_app.command("tags")
+def gen_tags():
+    """The brief tags `gen run` takes: funnel stages, audience, pace, tone, must do / avoid."""
+    from .generate import brief_tags
+
+    o = brief_tags.options()
+    lines = ["--funnel   " + ", ".join(f"{x['id']} ({x['hint']})" for x in o["funnel"])]
+    lines += [f"--audience {g['label']}: " + ", ".join(x["id"] for x in g["options"]) for g in o["audience"]]
+    lines += ["--pace     " + ", ".join(f"{x['id']} ({x['hint']})" for x in o["pace"]),
+              "--tone     " + ", ".join(x["id"] for x in o["tone"]) + f" (max {o['max_tone']})",
+              "--rule     " + ", ".join(x["id"] for x in o["rules"])]
+    emit({"tags": o}, "\n".join(lines))
 
 
 @gen_app.command("improve")

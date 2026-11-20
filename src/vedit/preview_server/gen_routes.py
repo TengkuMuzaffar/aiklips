@@ -41,7 +41,7 @@ async def _save_uploads(files: list[UploadFile], add) -> dict:
 
 
 def mount(app: FastAPI, host, bad) -> None:
-    from ..generate import batch, footage
+    from ..generate import batch, brief_tags, footage
     from ..generate.spec import AXES, AXIS_LABELS, BatchSpec
     from ..ops.captions import CAPTION_STYLES
     from ..references import dna as dnamod
@@ -250,7 +250,8 @@ def mount(app: FastAPI, host, bad) -> None:
         return {"axes": [{"id": k, "label": AXIS_LABELS[k], "values": v} for k, v in AXES.items()],
                 "caption_styles": list(CAPTION_STYLES), "formats": list(library.FORMATS), "captions": captions_available(),
                 "traits": dnamod.editable(),
-                "goals": ["promo", "tutorial", "story", "ugc", "announcement", "other"]}
+                "goals": ["promo", "tutorial", "story", "ugc", "announcement", "other"],
+                "brief_tags": brief_tags.options()}
 
     @app.post("/api/batches/estimate")
     def estimate(body: dict) -> dict:
