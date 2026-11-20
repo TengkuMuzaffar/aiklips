@@ -588,6 +588,7 @@ main.settled .card, main.settled .batch, main.settled .intro, main.settled .intr
   <button class="primary" id="b-media-add" style="display:none" data-for="media" title="Add footage, sounds or images to your library">＋ Add media</button>
   <button class="primary" id="b-des-new" style="display:none" data-for="design" title="Start a new motion design">＋ New design</button>
   <input type="file" id="ref-file" accept="video/*" multiple hidden>
+  <input type="file" id="style-file" accept="video/*" multiple hidden>
   <input type="file" id="foot-file" accept="video/*,audio/*,image/*" multiple hidden>
   <input type="file" id="snd-file" accept="audio/*,video/*" multiple hidden>
   <input type="file" id="media-file" accept="video/*,audio/*,image/*" multiple hidden>
@@ -1637,7 +1638,7 @@ function play(v) {
 $("#b-gen-new").onclick = () => openWizard();
 
 // ============================================================ generate: wizard
-const STEPS = ["References", "Footage", "Sound", "Brief", "Variations", "Review"];
+const STEPS = ["Style", "Footage", "Sound", "Brief", "Variations", "Review"];
 let W = null;
 function newWizard() {
   // footage: used for pictures · sound: used only for its audio (the videos take turns) · roles: AI's footage/sound call per upload
@@ -1647,8 +1648,7 @@ function newWizard() {
 }
 async function openWizard() {
   const o = await options();
-  await loadRefs();
-  if (!REFS.length) { toast("Add a reference video first"); setTab("references"); return; }
+  await Promise.all([loadRefs(), loadMedia()]);
   if (!W) W = newWizard();
   if (!W.axes) W.axes = new Set(o.axes.map((a) => a.id));
   W.step = 0;
@@ -1681,31 +1681,70 @@ function renderWiz() {
     h("div", { class: "spacer" }),
     W.step ? h("button", { onclick: () => { W.step--; renderWiz(); }, title: "Previous step" }, "Back") : null, next));
 }
+// Step 1: the style to follow, picked from the media library. A video that is already a reference is used as it is;
+// any other video becomes one when the batch is created (its style is studied then, ~1 min, 1 AI call).
+function styleItems() {
+  const items = [];
+  for (const m of MEDIA.filter((x) => x.kind === "video" && x.status !== "failed" && !x.missing)) {
+    const r = m.ref_id ? REFS.find((x) => x.id === m.ref_id) : null;
+    items.push({ key: m.ref_id ?? m.id, media: m.id, name: m.name, thumb: `/api/media/${m.id}/thumb.jpg`, ref: r,
+      status: r ? r.status : "new", tags: r ? (r.auto_tags || []) : [], summary: r ? r.summary : (m.digest || {}).summary });
+  }
+  for (const r of REFS.filter((x) => !x.media_id)) // older references not moved into the media library yet
+    items.push({ key: r.id, media: null, name: r.name, thumb: `/api/references/${r.id}/thumb.jpg`, ref: r, status: r.status, tags: r.auto_tags || [], summary: r.summary });
+  return items.sort((a, b) => (b.ref ? 1 : 0) - (a.ref ? 1 : 0));
+}
+async function uploadStyle(files) {
+  const fd = new FormData(); [...files].forEach((f) => fd.append("files", f));
+  W.uploading++; renderWiz();
+  const r = await fetch("/api/media", { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  W.uploading--;
+  if (!r.ok) toast(d.detail || "Upload failed", true);
+  else {
+    (d.added || []).filter((m) => m.kind === "video").forEach((m) => W.refs.add(m.ref_id ?? m.id));
+    if (d.errors && d.errors.length) toast(d.errors.join("; "), true);
+  }
+  await loadMedia(); renderWizIfOpen();
+}
 function wizRefs(el) {
-  el.append(h("p", {}, "Tick the references whose style you want. With several, the styles are blended; the lead breaks ties."));
+  el.append(h("p", {}, "Tick the videos whose style you want, from your media. With several, the styles are blended; the lead breaks ties. A video the AI hasn't studied for style yet is studied when you start (about a minute)."));
+  const zone = h("div", { class: "dropzone" }, W.uploading ? [spinner(), "Adding to your media…"] : ["Drop a TikTok, Reel or ad here, or ",
+    h("button", { class: "mini", onclick: () => $("#style-file").click(), title: "Choose video files" }, "choose videos"), ". It goes into your Media, so you can also cut it into videos later."]);
+  dropTarget(zone, uploadStyle);
+  el.append(zone);
+  const items = styleItems();
   const grid = h("div", { class: "pick" });
-  for (const r of REFS) {
-    const usable = r.status !== "failed";
-    const on = W.refs.has(r.id);
-    const card = h("div", { class: `pickcard${on ? " on" : ""}${usable ? "" : " off"}`, title: usable ? (r.summary || r.name) : (r.error || "Failed"),
-      onclick: () => { if (!usable) return; on ? W.refs.delete(r.id) : W.refs.add(r.id); if (W.lead === r.id && !W.refs.has(r.id)) W.lead = null; renderWiz(); } },
-      h("img", { src: `/api/references/${r.id}/thumb.jpg`, alt: "", onerror: (e) => (e.target.style.visibility = "hidden") }),
+  if (!items.length) grid.append(h("div", { class: "hint" }, "No videos in your media yet: drop one above."));
+  for (const it of items) {
+    const usable = it.status !== "failed";
+    const on = W.refs.has(it.key);
+    const toggle = () => { if (!usable) return; on ? W.refs.delete(it.key) : W.refs.add(it.key); if (W.lead === it.key && !W.refs.has(it.key)) W.lead = null; renderWiz(); };
+    const meta = it.status === "ready" ? it.tags.slice(0, 2).join(" · ") || "reference" : it.status === "failed" ? "couldn't be studied"
+      : it.status === "new" ? "style studied when you start" : "studying… (we'll wait)";
+    const card = h("div", { class: `pickcard${on ? " on" : ""}${usable ? "" : " off"}`, title: usable ? (it.summary || it.name) : (it.ref?.error || "Failed"), onclick: toggle },
+      h("img", { src: it.thumb, alt: "", onerror: (e) => (e.target.style.visibility = "hidden") }),
       h("div", { class: "box" }, on ? "✓" : ""),
-      h("div", { class: "pn" }, r.name),
-      h("div", { class: "meta", style: { padding: "0 9px 8px" } }, r.status === "ready" ? (r.auto_tags || []).slice(0, 2).join(" · ") || "ready" : r.status === "failed" ? "failed" : "studying… (we'll wait)"));
-    if (on && W.refs.size > 1) card.append(h("button", { class: `lead${W.lead === r.id ? " on" : ""}`, title: "Make this the lead style",
-      onclick: (e) => { e.stopPropagation(); W.lead = W.lead === r.id ? null : r.id; renderWiz(); } }, W.lead === r.id ? "★ lead" : "☆ lead"));
+      it.ref ? h("span", { class: "refmark", style: { top: "122px", bottom: "auto" } }, "Reference") : null,
+      h("div", { class: "pn" }, it.name),
+      h("div", { class: "meta", style: { padding: "0 9px 8px" } }, meta));
+    if (on && W.refs.size > 1) card.append(h("button", { class: `lead${W.lead === it.key ? " on" : ""}`, title: "Make this the lead style",
+      onclick: (e) => { e.stopPropagation(); W.lead = W.lead === it.key ? null : it.key; renderWiz(); } }, W.lead === it.key ? "★ lead" : "☆ lead"));
     grid.append(card);
   }
   el.append(grid);
-  const merged = h("div", { class: "merged" }, h("div", { class: "meta", style: { padding: "8px" } }, "Pick a reference to preview the style."));
+  const studied = [...W.refs].filter((k) => typeof k === "number");
+  const fresh = W.refs.size - studied.length;
+  const merged = h("div", { class: "merged" }, h("div", { class: "meta", style: { padding: "8px" } }, W.refs.size ? "Not studied for style yet: you'll see it after the batch starts." : "Pick a video to preview the style."));
   el.append(h("div", { class: "sect" }, W.refs.size > 1 ? "Blended style" : "Style"), merged);
-  if (W.refs.size) fetch("/api/references/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...W.refs], lead: W.lead }) })
+  if (studied.length) fetch("/api/references/merge", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: studied, lead: typeof W.lead === "number" ? W.lead : null }) })
     .then((r) => r.json()).then((d) => {
       merged.innerHTML = "";
       if (!d.card.length) return merged.append(h("div", { class: "meta", style: { padding: "8px" } }, "Still being studied. You can continue: generation waits for it."));
       merged.append(h("table", { class: "traits" }, d.card.filter((t) => t.label !== "Colour").map((t) => h("tr", {}, h("td", {}, t.label), h("td", {}, t.value)))));
-      if (d.pending) merged.append(h("div", { class: "meta", style: { padding: "6px 8px" } }, `${d.pending} more still being studied.`));
+      const more = (d.pending || 0) + fresh;
+      if (more) merged.append(h("div", { class: "meta", style: { padding: "6px 8px" } }, `${more} more still to be studied.`));
     });
 }
 const canSound = (f) => f.kind === "audio" || (f.kind === "video" && f.has_audio);
@@ -1770,6 +1809,7 @@ function pickFromLibrary(target) {
   });
 }
 $("#foot-file").onchange = (e) => { uploadFootage(e.target.files); e.target.value = ""; };
+$("#style-file").onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) uploadStyle(fs); };
 $("#snd-file").onchange = (e) => { uploadFootage(e.target.files, "sound"); e.target.value = ""; };
 function soundFor(i) {
   // Which generated videos use sound #i (they take turns)
@@ -1803,6 +1843,10 @@ function wizFootage(el) {
   el.append(zone);
   el.append(h("div", { class: "files" }, W.footage.map((f) => fileRow(f, "footage"))));
   if (W.footage.length && !W.footage.some((f) => f.kind === "video")) el.append(h("div", { class: "note" }, "Add at least one video."));
+  const styleMedia = new Set(styleItems().filter((it) => W.refs.has(it.key)).map((it) => it.media));
+  const both = W.footage.filter((f) => styleMedia.has(f.id));
+  if (both.length) el.append(h("div", { class: "meta", style: { marginTop: "8px" } },
+    `${both.map((f) => `“${f.name}”`).join(", ")} is also your style reference: it will be cut into the video and set its style.`));
 }
 function wizSound(el) {
   el.append(h("p", {}, "Optional: music tracks or sounds. Drop audio files, or videos and only their sound is used (their pictures never appear). Each video gets one sound; with several, the videos take turns (video 1 gets the first, video 2 the second…). Cuts snap to the beat when the reference style does."));
@@ -1922,7 +1966,7 @@ async function renderTeam(box) {
     h("span", { class: "hint" }, "References that are already studied keep their study. ", h("a", { href: "/settings#providers", target: "_blank" }, "Add models in Settings"))));
 }
 function wizReview(el) {
-  const names = REFS.filter((r) => W.refs.has(r.id)).map((r) => r.name + (W.lead === r.id ? " ★" : ""));
+  const names = styleItems().filter((it) => W.refs.has(it.key)).map((it) => it.name + (W.lead === it.key ? " ★" : "") + (it.status === "new" ? " (style studied on start)" : ""));
   const f = W.footage, b = W.brief;
   const est = h("div", { class: "estimate" }, "Estimating…");
   el.append(h("dl", { class: "review-list" }, [
