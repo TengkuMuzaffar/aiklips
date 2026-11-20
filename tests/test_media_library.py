@@ -238,3 +238,31 @@ def test_long_recordings_are_logged_by_samples(test_clip, fake_ai, monkeypatch):
     assert len(footage.segments(uid)) > 1
     assert ml.get(uid)["status"] == "ready"  # the sampled segments were logged: complete, not partial
     assert footage.sample(list(range(100)), 10) == list(range(0, 100, 10))
+
+
+def test_library_files_reach_the_editor_and_the_ai(cli, test_clip, fake_ai):
+    """Files uploaded elsewhere (Home → Media, Generate) can be used in any project: listed for the chat AI,
+    imported by library id (CLI) or from the editor's library, never copied twice or added twice."""
+    from vedit import media_library as ml
+    from vedit.editor import actions
+    from vedit.project import load, resolve_media
+
+    row = ml.add(test_clip)
+    jobs.drain()
+    p = load(cli.project)
+    brief = ml.library_brief(cli.project, p)
+    assert brief and brief[0].startswith(f"  {row['id']} ") and "test card" in brief[0]
+
+    first = actions.import_media(cli.project, row["id"], append=True)  # the editor's library drag / + button
+    assert first["clip"] and not first.get("existing")
+    p = load(cli.project)
+    assert row["id"] in ml.project_ids(cli.project, p)
+    assert ml.library_brief(cli.project, p) == []  # in the project now: no longer offered as "not in this project"
+    again = actions.import_media(cli.project, row["id"])  # dragged again: the same source, not a second one
+    assert again["source"] == first["source"] and again.get("existing")
+
+    out = cli("import", row["id"], "--no-append")  # `vedit import <library id>`: the library's copy, not a new one
+    sid = out["added"][0]["source"]
+    p = load(cli.project)
+    assert ml.id_for_path(resolve_media(cli.project, p.sources[sid].path)) == row["id"]
+    assert len(ml.list_media()) == 1

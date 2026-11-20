@@ -89,6 +89,14 @@ header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px
 .src .rm:hover { color: #ff7a7a; }
 .src .rm .ic { width: 12px; height: 12px; }
 .src .nm { font-size: 11px; padding: 5px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.src .st { position: absolute; left: 5px; bottom: 5px; font-size: 10px; background: #000b; color: var(--text); padding: 1px 5px; border-radius: 4px; }
+.src .st.busy { color: var(--accent, #c6f36b); }
+.src .add { position: absolute; right: 5px; top: 5px; padding: 3px; border-radius: 5px; background: #000b; border: 0; color: var(--text); opacity: 0; transition: opacity .12s; cursor: pointer; }
+.src:hover .add { opacity: 1; }
+.src .add .ic { width: 12px; height: 12px; }
+.lib-h { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; }
+.lib-h h3 { margin: 0; }
+.lib-h input { flex: 1; min-width: 0; }
 .dropzone { border: 1px dashed var(--line2); border-radius: 10px; padding: 26px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--faint); text-align: center; font-size: 12px; }
 .dropzone > .ic { width: 26px; height: 26px; color: var(--muted); }
 .fields { display: grid; grid-template-columns: minmax(80px, 34%) minmax(0, 1fr); gap: 7px 10px; align-items: center; }
@@ -2047,7 +2055,7 @@ function reloadVideo(file = ST?.render?.file) {
 
 // ---------- inspector (pane 1) ----------
 function setTabs() { document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === TAB)); }
-document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { TAB = b.dataset.tab; setTabs(); renderInspector(); }));
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { TAB = b.dataset.tab; setTabs(); renderInspector(); if (TAB === "media") loadLib().then(() => TAB === "media" && renderInspector()); }));
 
 function field(label, el) { return [h("label", {}, label), el]; }
 function numIn(value, commit, step = 0.1, attrs = {}) {
@@ -2324,14 +2332,14 @@ function fxToggle(key, stack) {
   }
   fxApply(key);
 }
-function moveApply(m, clipId) {
+async function moveApply(m, clipId) {
   const c = clipId ? P().clips.find((x) => x.id === clipId) : fxTargetClip();
   const args = { name: m.name };
   if (m.needs.startsWith("at")) args.at = video.currentTime;
   else if (c) args.clip = c.id;
   else { toast("Select the clip this move goes into", true); return; }
   if (m.needs.includes("+text")) {
-    const t = prompt(m.name === "keyword_pop" ? "The word that slams in (e.g. WOW, WAIT, 50% OFF):" : "Title text:", "");
+    const t = await AK.prompt(m.name === "keyword_pop" ? "The word that slams in (e.g. WOW, WAIT, 50% OFF):" : "Title text:", "");
     if (!t || !t.trim()) return;
     args.text = t.trim();
   }
@@ -2341,21 +2349,21 @@ function moveApply(m, clipId) {
       magazine_cover: ["Masthead; cover lines, separated by ; (e.g. VOGUE-ISH; The 30-day edit; Inside the studio)", "ICON; The comeback; Inside the studio"],
       paper_title: ["Title; subtitle (separated by ;)", "Hello there; a little story"],
       orbit: ["Words that circle around the person, separated by ; (e.g. fast; fun; free)", "fast; fun; free"] }[m.name] || ["Items, separated by ; (e.g. Fast; Cheap; Easy)", ""];
-    const t = prompt(ask[0], ask[1]);
+    const t = await AK.prompt(ask[0], ask[1]);
     if (!t || !t.trim()) return;
     args.text = t.trim();
   }
-  if (m.name === "cursor_click") { const t = prompt("Cursor from > to (x,y in % of the frame):", "30%,70% > 60%,40%"); if (t === null) return; args.text = t.trim(); }
+  if (m.name === "cursor_click") { const t = await AK.prompt("Cursor from > to (x,y in % of the frame):", "30%,70% > 60%,40%"); if (t === null) return; args.text = t.trim(); }
   if (m.name === "hud_lock") {
-    const t = prompt("Label:", "TARGET ACQUIRED"); if (t === null) return; args.text = t.trim();
-    const b = prompt("Target box x,y,w,h in % of the frame:", "30,35,40,25"); if (b === null) return; args.box = b.trim();
+    const t = await AK.prompt("Label:", "TARGET ACQUIRED"); if (t === null) return; args.text = t.trim();
+    const b = await AK.prompt("Target box x,y,w,h in % of the frame:", "30,35,40,25"); if (b === null) return; args.box = b.trim();
   }
   if (m.name === "phone_mockup" && SEL?.kind === "source") args.source = SEL.id; // else: the shot under the playhead
-  if (m.name === "liquid_glass") { const t = prompt("Text on the glass (title; subtitle):", "Liquid glass; frosted over your shot"); if (t === null) return; args.text = t.trim(); }
-  if (m.name === "iso_world") { const t = prompt("Which world: city, island, desk or stack?", "island"); if (t === null) return; args.text = t.trim() || "island"; }
+  if (m.name === "liquid_glass") { const t = await AK.prompt("Text on the glass (title; subtitle):", "Liquid glass; frosted over your shot"); if (t === null) return; args.text = t.trim(); }
+  if (m.name === "iso_world") { const t = await AK.prompt("Which world: city, island, desk or stack?", "island"); if (t === null) return; args.text = t.trim() || "island"; }
   if (m.needs.startsWith("at") && ["orbit", "dolly_zoom", "frame_break", "studio_reveal", "magazine_cover"].includes(m.name))
     toast("This one cuts the person out of the shot (fast background removal, prepared on the first render)");
-  if (m.name === "growth_curve") { const t = prompt("The number it counts to (e.g. +340%), or leave empty:", "+340%"); if (t === null) return; args.text = t.trim(); }
+  if (m.name === "growth_curve") { const t = await AK.prompt("The number it counts to (e.g. +340%), or leave empty:", "+340%"); if (t === null) return; args.text = t.trim(); }
   if (m.needs.includes("+source")) { // the media file selected in the Media tab, or the only other video
     const p = P(), main = new Set(p.clips.map((c) => c.source));
     const vids = Object.entries(p.sources).filter(([, s]) => s.has_video && !/\.gap-/.test(s.path) && !/[\\/]overlays[\\/]/.test(s.path));
@@ -2422,7 +2430,7 @@ function renderEffects() {
   const all = c ? (nFx ? h("button", { class: "ghost danger", title: `Remove every effect from ${c.id}`,
     onclick: async () => { for (const e of c.effects.filter((x) => x.type === "fx")) await op("fx_remove", { id: e.params.id }); toast(`Removed all effects from ${c.id}`); } }, "Remove all") : null)
     : h("button", { class: "ghost", disabled: !p.clips.length, title: "Choose an effect, then add it to every clip",
-    onclick: () => { const k = prompt("Effect to add to every clip (e.g. film, vignette, grain):", "film"); if (k) op("fx_add", { key: k.trim() }); } }, "Add to all clips…");
+    onclick: async () => { const k = await AK.prompt("Effect to add to every clip (e.g. film, vignette, grain):", "film"); if (k) op("fx_add", { key: k.trim() }); } }, "Add to all clips…");
   draw();
   setTimeout(() => { if (TAB === "effects" && document.activeElement === document.body) search.focus(); });
   return [h("div", { class: "fx-search" }, search, chips, h("div", { class: "pair", style: { display: "flex", gap: "6px", alignItems: "center", justifyContent: "space-between" } }, target, all)), grid];
@@ -2509,7 +2517,7 @@ function loadTemplates() { return fetch("/api/templates").then((r) => r.json()).
 loadTemplates();
 async function saveTemplate(l) {
   const ids = [l.id, ...MULTI].filter((x, i, a) => a.indexOf(x) === i);
-  const name = prompt(`Save ${ids.length > 1 ? `${ids.length} layers (${ids.join(", ")})` : l.id} as a template named:`, "");
+  const name = await AK.prompt(`Save ${ids.length > 1 ? `${ids.length} layers (${ids.join(", ")})` : l.id} as a template named:`, "");
   if (!name) return;
   const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, layers: ids }) });
   if (!r.ok) { let d = "Could not save"; try { d = (await r.json()).detail; } catch {} return toast(d, true); }
@@ -2600,7 +2608,7 @@ function renderElements() {
       const c = card({ background: "linear-gradient(135deg, #2a2413, #4a3c18)" }, t.name, t.about || `${t.layers} layer(s): ${t.types.join(", ")}`,
         () => overlayAdd({ op: "template_apply", a: { key: t.key } }), t.length ? `${(+t.length).toFixed(1)}s` : null, "layers");
       c.addEventListener("contextmenu", async (e) => { e.preventDefault();
-        if (confirm(`Delete template “${t.name}”?`)) { await fetch(`/api/templates/${encodeURIComponent(t.key)}`, { method: "DELETE" }); await loadTemplates(); renderInspector(); } });
+        if (await AK.confirm(`Delete template “${t.name}”?`, { ok: "Delete", danger: true })) { await fetch(`/api/templates/${encodeURIComponent(t.key)}`, { method: "DELETE" }); await loadTemplates(); renderInspector(); } });
       c.title += " · right-click to delete";
       return c;
     })));
@@ -3214,7 +3222,7 @@ async function removeMedia(ids) {
   const used = ids.map((id) => [id, sourceUses(id)]).filter(([, n]) => n);
   if (used.length) {
     const what = used.map(([id, n]) => `“${sourceName(P().sources[id])}” (${n} on the timeline)`).join(", ");
-    if (!confirm(`${what} ${used.length > 1 ? "are" : "is"} in use. Remove ${ids.length > 1 ? "them" : "it"} from the timeline too?\n\nYou can undo this.`)) return;
+    if (!await AK.confirm(`${what} ${used.length > 1 ? "are" : "is"} in use. Remove ${ids.length > 1 ? "them" : "it"} from the timeline too?\n\nYou can undo this.`, { ok: "Remove", danger: true })) return;
   }
   const label = ids.length > 1 ? `${ids.length} files` : `“${sourceName(P().sources[ids[0]])}”`;
   const r = await op("source_remove", { sources: ids });
@@ -3224,6 +3232,69 @@ async function removeMedia(ids) {
   toast(`Removed ${label} from Media · ⌘Z to undo`);
   renderInspector();
 }
+
+// The media library (~/.aiklips/uploads): everything uploaded anywhere (Home → Media, Generate, other projects),
+// studied once. The Media tab lists the files this project doesn't use yet; drag one onto the timeline or click +.
+let LIBALL = null, LIB_Q = "", LIB_POLL = null;
+const LIB_BUSY = new Set(["queued", "measuring", "studying"]);
+async function loadLib() {
+  try { LIBALL = (await (await fetch("/api/media")).json()).media || []; } catch { LIBALL = LIBALL || []; }
+  LIBVID = LIBALL.filter((m) => m.kind === "video");
+  clearTimeout(LIB_POLL);
+  if (LIBALL.some((m) => LIB_BUSY.has(m.status))) LIB_POLL = setTimeout(() => { if (TAB === "media") loadLib().then(renderInspector); }, 4000);
+  return LIBALL;
+}
+function libInProject() { // library ids of this project's files (their path is ~/.aiklips/uploads/<id>/file.ext)
+  return new Set(Object.values(P().sources || {}).map((s) => (String(s.path).match(/uploads[\\/]([0-9a-f]{16})[\\/]/) || [])[1]).filter(Boolean));
+}
+async function libSource(uid, extra = {}) { // a library file -> a source of this project (reused if already there)
+  const r = await api("/api/import-media", { media: uid, ...extra });
+  return r?.source || null;
+}
+async function libAdd(m) { // + on a library card: videos go to the end of the video track, audio to the music track
+  const sid = await libSource(m.id, { append: m.kind === "video" });
+  if (!sid) return;
+  if (m.kind === "audio") await op("add_music", { source: sid, start: 0 });
+  else if (m.kind === "image") await op("layer_add_media", { source: sid, start: +video.currentTime.toFixed(2) });
+  toast(`Added “${m.name}”`);
+}
+function libStatus(m) {
+  if (m.missing) return "missing";
+  if (LIB_BUSY.has(m.status)) return m.progress || "studying…";
+  return m.status === "failed" ? "study failed" : m.status === "partial" ? "measured" : "studied";
+}
+function renderLibrary() {
+  if (LIBALL == null) { loadLib().then(() => TAB === "media" && renderInspector()); return [h("p", { class: "hint" }, "Loading your media library…")]; }
+  const have = libInProject(), q = LIB_Q.toLowerCase();
+  const rows = LIBALL.filter((m) => !have.has(m.id) && !m.missing)
+    .filter((m) => !q || [m.name, ...(m.tags || []), m.search || ""].join(" ").toLowerCase().includes(q));
+  const head = h("div", { class: "lib-h" }, h("h3", {}, `Your library · ${LIBALL.filter((m) => !have.has(m.id)).length}`),
+    h("input", { type: "search", placeholder: "Search names, tags, what's in the shots", value: LIB_Q,
+      oninput: (e) => { LIB_Q = e.target.value; const pos = e.target.selectionStart; renderInspector(); const i = document.querySelector(".lib-h input"); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } }));
+  if (!rows.length) return [head, h("p", { class: "hint" }, LIB_Q ? "Nothing matches." : "Files you upload in Home → Media, Generate or other projects show up here, already studied by the AI.")];
+  return [head, h("div", { class: "bin" }, rows.map((m) => {
+    const busy = LIB_BUSY.has(m.status), dg = m.digest || {};
+    const tip = [m.name, m.duration ? fmt(m.duration) : "", dg.summary || "", "drag onto the timeline, or + to add · the AI can use it too"].filter(Boolean).join(" — ");
+    return h("div", { class: "src", draggable: true, title: tip,
+      ondragstart: (e) => { e.dataTransfer.setData("application/x-vedit-media", JSON.stringify({ id: m.id, kind: m.kind })); e.dataTransfer.effectAllowed = "copy"; } },
+      h("div", { class: "th", style: m.kind !== "audio" ? { backgroundImage: `url(/api/media/${m.id}/thumb.jpg)` } : {} },
+        m.kind === "audio" ? icon("wave") : "",
+        m.kind !== "video" ? h("span", { class: "kind" }, icon(m.kind === "image" ? "image" : "music")) : "",
+        h("button", { class: "add", title: m.kind === "video" ? "Add to the end of the video track" : m.kind === "audio" ? "Add as music" : "Add at the playhead",
+          onclick: (e) => { e.stopPropagation(); libAdd(m); } }, icon("plus")),
+        h("span", { class: "st" + (busy ? " busy" : "") }, libStatus(m)),
+        m.duration > 0.05 ? h("span", { class: "dur" }, fmt(m.duration)) : ""),
+      h("div", { class: "nm" }, m.name));
+  }))];
+}
+// a drop from the library: bring the file into the project first, then treat it like a source from the bin
+async function dropSource(e) {
+  const sid = e.dataTransfer.getData("application/x-vedit-source");
+  if (sid) return sid;
+  const raw = e.dataTransfer.getData("application/x-vedit-media");
+  return raw ? libSource(JSON.parse(raw).id) : null;
+}
+const isMediaDrag = (e) => e.dataTransfer.types.includes("application/x-vedit-source") || e.dataTransfer.types.includes("application/x-vedit-media");
 
 function renderMedia() {
   const p = P(), srcs = Object.entries(p.sources).filter(([, s]) => !/(^|[\\/])\.gap-/.test(s.path)); // generated gap filler
@@ -3236,7 +3307,7 @@ function renderMedia() {
     h("button", { class: "ghost", onclick: () => $("#file").click() }, icon("upload"), "Import"));
   if (!srcs.length) return [head, h("div", { class: "dropzone" }, icon("upload"),
     h("div", {}, "Drop video, audio or images anywhere,", h("br"), "then drag them onto the timeline."),
-    h("button", { onclick: () => $("#file").click() }, "Import media"))];
+    h("button", { onclick: () => $("#file").click() }, "Import media")), ...renderLibrary()];
   return [head, h("div", { class: "bin" }, srcs.map(([id, s]) => {
     const kind = /\.(png|jpe?g|webp|gif|bmp)$/i.test(s.path) ? "image" : s.has_video ? null : "music";
     return h("div", { class: "src" + (BIN_SEL.has(id) ? " sel" : ""), draggable: true, title: `${sourceName(s)} · ${fmt(s.duration)} — drag onto the timeline · double-click for details`,
@@ -3249,7 +3320,7 @@ function renderMedia() {
         h("button", { class: "rm", title: "Remove from Media", onclick: (e) => { e.stopPropagation(); removeMedia(BIN_SEL.has(id) && BIN_SEL.size > 1 ? [...BIN_SEL] : [id]); } }, icon("trash")),
         s.duration > 0.05 ? h("span", { class: "dur" }, fmt(s.duration)) : ""),
       h("div", { class: "nm" }, sourceName(s)));
-  })), h("p", { class: "hint", style: { marginTop: "10px" } }, "Drag onto the timeline to use a file. ⌘/Shift+click selects several; Delete removes them.")];
+  })), h("p", { class: "hint", style: { marginTop: "10px" } }, "Drag onto the timeline to use a file. ⌘/Shift+click selects several; Delete removes them."), ...renderLibrary()];
 }
 
 function renderClip(c) {
@@ -3742,7 +3813,7 @@ function render3D() {
   const at = () => +video.currentTime.toFixed(3);
   const add = async (k, withMotion) => {
     const args = { kind: k.kind, start: at() };
-    if (k.kind === "text") { const t = prompt("3D text: the words", "HELLO"); if (!t) return; args.text = t; }
+    if (k.kind === "text") { const t = await AK.prompt("3D text: the words", "HELLO"); if (!t) return; args.text = t; }
     if (k.kind === "model") return pickModel3D();
     const r = await addAndSelect("obj3d_add", args);
     const m = withMotion && MOTION3D[k.kind], l = r && SEL?.kind === "layer" && P().layers.find((x) => x.id === SEL.id);
@@ -3946,7 +4017,7 @@ function renderSource(id, s) {
 
 let HIST_VERSIONS_ONLY = false;
 async function saveVersion() {
-  const name = prompt("Name this version (e.g. “sent to client”, “v2 shorter”):", "");
+  const name = await AK.prompt("Name this version (e.g. “sent to client”, “v2 shorter”):", "");
   if (name === null) return;
   const r = await fetch("/api/version", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
   if (r.ok) { toast(`Saved version “${(await r.json()).name}”`); await refresh(); } else toast("Could not save the version", true);
@@ -4168,7 +4239,7 @@ function attachMenu() {
 }
 async function loadRefs() {
   try { REFS = (await (await fetch("/api/references")).json()).references || []; } catch { REFS = REFS || []; }
-  try { LIBVID = (await (await fetch("/api/media?kind=video")).json()).media || []; } catch { LIBVID = LIBVID || []; }
+  await loadLib();
   return REFS;
 }
 async function makeRef(m) { // a media video becomes a style reference (no copy; its style study starts)
@@ -4188,10 +4259,10 @@ function mentionCands(q) {
   for (const m of p.markers || []) out.push({ a: { kind: "marker", id: m.id, label: m.label }, text: `${m.id} · marker ${m.label || ""}`, sub: fmt(m.t), icon: "flag" });
   for (const r of REFS || []) out.push({ a: { kind: "ref", id: r.id, name: r.name }, text: `ref · ${r.name}`, sub: r.status === "ready" ? "style reference" : r.status, icon: "sparkle", token: `ref${r.id}` });
   // any video in the media library: as a style reference (made one when picked) or as footage to use
-  const inProject = new Set(Object.values(p.sources || {}).map((s) => (String(s.path).match(/uploads\/([0-9a-f]{16})\//) || [])[1]).filter(Boolean));
-  for (const m of LIBVID || []) {
-    if (!m.ref_id) out.push({ a: { kind: "ref", id: null, name: m.name }, media: m, text: `style · ${m.name}`, sub: "use as style reference", icon: "sparkle", token: `ref ${m.name}` });
-    if (!inProject.has(m.id)) out.push({ a: { kind: "media", id: m.id, name: m.name }, text: `media · ${m.name}`, sub: "footage from your media", icon: "film", token: `media ${m.name}` });
+  const inProject = libInProject();
+  for (const m of LIBALL || []) {
+    if (m.kind === "video" && !m.ref_id) out.push({ a: { kind: "ref", id: null, name: m.name }, media: m, text: `style · ${m.name}`, sub: "use as style reference", icon: "sparkle", token: `ref ${m.name}` });
+    if (!inProject.has(m.id)) out.push({ a: { kind: "media", id: m.id, name: m.name }, text: `media · ${m.name}`, sub: m.kind === "video" ? "footage from your media" : m.kind === "audio" ? "sound from your media" : "image from your media", icon: m.kind === "video" ? "film" : m.kind === "audio" ? "music" : "image", token: `media ${m.name}` });
   }
   // ids starting with what was typed first (@t -> t1, t2 ...), then anything containing it
   const rank = (c) => (String(c.token || c.a.id).toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1);
@@ -4552,7 +4623,7 @@ function renderChatList() {
       onclick: () => { if (c.id !== CHAT_ID) ws.send(JSON.stringify({ type: "open_chat", id: c.id })); box.hidden = true; } },
       h("span", { class: "t" }, c.title),
       h("span", { class: "m" }, `${c.messages} msg · ${ago(c.updated)}`),
-      h("button", { title: "Delete this chat", onclick: (e) => { e.stopPropagation(); if (confirm(`Delete the chat “${c.title}”?`)) ws.send(JSON.stringify({ type: "delete_chat", id: c.id })); } }, icon("trash"))));
+      h("button", { title: "Delete this chat", onclick: async (e) => { e.stopPropagation(); if (await AK.confirm(`Delete the chat “${c.title}”?`, { ok: "Delete", danger: true })) ws.send(JSON.stringify({ type: "delete_chat", id: c.id })); } }, icon("trash"))));
   }
 }
 $("#b-newchat").onclick = newChat;
@@ -5238,7 +5309,7 @@ function dragSpan(e, b, o) {
 
 // media dropped on an overlay track (from the Media bin or the OS): picture-in-picture / b-roll / image on that track
 function setupTrackDrop(el, track, isNew) {
-  const ok = (e) => e.dataTransfer.types.includes("application/x-vedit-source") || e.dataTransfer.types.includes("application/x-vedit-element") || e.dataTransfer.types.includes("Files");
+  const ok = (e) => isMediaDrag(e) || e.dataTransfer.types.includes("application/x-vedit-element") || e.dataTransfer.types.includes("Files");
   const where = (e) => trackTarget(e.clientY, e.clientX) || { track, isNew };
   el.addEventListener("dragover", (e) => { if (!ok(e)) return; e.preventDefault(); e.stopPropagation(); showTarget({ el, ...where(e) }); e.dataTransfer.dropEffect = "copy"; });
   el.addEventListener("dragleave", () => showTarget(null));
@@ -5252,7 +5323,7 @@ function setupTrackDrop(el, track, isNew) {
       const d = JSON.parse(elt);
       return addAndSelect(d.op, { ...d.a, start, ...place });
     }
-    const sid = e.dataTransfer.getData("application/x-vedit-source");
+    const sid = await dropSource(e);
     if (sid) {
       const s = P().sources[sid];
       if (!s.has_video) return op("add_music", { source: sid, start });
@@ -5302,12 +5373,12 @@ function setupDrop(vl) {
       if (fxKey) return fxApply(fxKey, c.id);
       return moveApply(FX.moves.find((m) => m.name === mv), c.id);
     }
-    const index = dropIndex(e.clientX);
-    const sid = e.dataTransfer.getData("application/x-vedit-source");
+    const index = dropIndex(e.clientX), t = timeAt(e.clientX);
+    const sid = await dropSource(e);
     if (sid) {
       const s = P().sources[sid];
       if (s.has_video) await op("insert_source", { source: sid, index });
-      else await op("add_music", { source: sid, start: timeAt(e.clientX) });
+      else await op("add_music", { source: sid, start: t });
       return;
     }
     await uploadFiles([...e.dataTransfer.files], true, index);

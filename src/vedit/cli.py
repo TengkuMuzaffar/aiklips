@@ -205,7 +205,8 @@ def import_(
         p = tx.project
         added = []
         for i, f in enumerate(files):
-            path = Path(f).expanduser().resolve()
+            stored = media_library.library_path(f)  # a library id (`vedit media list`): its stored copy
+            path = stored or Path(f).expanduser().resolve()
             info = media.probe(path)
             if copy:
                 dest = d / "media" / path.name

@@ -16,6 +16,9 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
    is in every shot). `info` (`study` per source) and `<editor_context>` give a one-line summary; run
    `uv run vedit --json media show sN` to pick shots by content (description, quality 1-5, `good_for` roles, speech)
    instead of guessing from times. If the user says a note is wrong, fix it with `media note` (it wins over the AI's).
+   Files the user uploaded elsewhere (Home → Media, Generate, other projects) are listed in `<editor_context>` as
+   "the user's media library, not in this project yet"; when they ask for their footage / b-roll / music, use those:
+   `vedit import <library id>` (no second copy). The editor's Media tab shows the same library under "Your library".
 3. **One intent per command.** Chain several small commands rather than hand-editing JSON.
 4. **Look at your work.**
    - After visual changes, run `uv run vedit --json frame --at <sec>` or `uv run vedit --json sheet`.
@@ -144,7 +147,7 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 ## Command cheat-sheet
 
 ```
-projects | init <dir> | use <dir> | import <files...> [--at N --start S --end E --no-library --copy] | remove-source <sN...> | info
+projects | init <dir> | use <dir> | import <files... | library ids> [--at N --start S --end E --no-library --copy] | remove-source <sN...> | info
 media list [--kind video|audio|image --search Q] | media show <id|sN> | media add <files...> | media tag <id|sN> TAGS... | media note <id|sN> <k> [--text --quality 1-5 --clear] | media restudy <id|sN> | media ref <id|sN> [--off --wait]
 canvas --preset reels|square|landscape|portrait45
 trim --head S --tail S | keep --from A --to B | delete --from A --to B | split --at T

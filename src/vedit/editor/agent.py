@@ -1002,6 +1002,12 @@ class ChatSession:
                     lines += [media_library.media_line(sid, Path(p.sources[sid].path).name, m) for sid, m in list(studied.items())[:8]]
                     if len(studied) > 8:
                         lines.append(f"  ... and {len(studied) - 8} more source(s)")
+                lib = media_library.library_brief(self.pdir, p)
+                if lib:
+                    lines.append("the user's media library, not in this project yet (uploaded and studied once; use these when "
+                                 "they ask for their footage / b-roll / product shots / music; `vedit media show <id>` = every "
+                                 "shot, `vedit import <id>` adds one, `vedit overlay add <stored path>` for b-roll):")
+                    lines += lib
             except Exception:  # noqa: BLE001 - context is a help, never a blocker
                 pass
             if p.kind == "design":

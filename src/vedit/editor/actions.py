@@ -1160,6 +1160,32 @@ def closest_format(w: int, h: int) -> tuple[int, int]:
     return min(FORMAT_SIZES.values(), key=lambda s: abs(math.log((w / h) / (s[0] / s[1]))))
 
 
+def import_media(pdir: Path, uid: str, append: bool = False, index: int | None = None) -> dict:
+    """Bring a file from the media library into the project (no copy: the source points at the library's file).
+    A file the project already has is reused, so dragging it from the library twice doesn't add it twice."""
+    from .. import media_library
+    from ..project import load, resolve_media
+
+    path = media_library.library_path(uid)
+    if path is None:
+        raise VeditError(f"{uid} is not a media library id")
+    p = load(pdir)
+    for sid, s in p.sources.items():
+        try:
+            if resolve_media(pdir, s.path).resolve() == path.resolve():
+                return {"ok": True, "source": sid, "clip": None, "has_video": s.has_video, "existing": True}
+        except Exception:  # noqa: BLE001 - a missing source file can't be this one
+            continue
+    media_library.store_for_project(pdir, path)
+    info = media.probe(path)
+    with history.transaction(pdir, f"import {media_library.get(uid)['name']}") as tx:
+        p = tx.project
+        sid = p.new_id("s")
+        p.sources[sid] = Source(path=store_media_path(pdir, path), **info)
+        clip_id = cut.append_clip(p, sid, 0, None, index).id if append and info["has_video"] else None
+    return {"ok": True, "source": sid, "clip": clip_id, "has_video": info["has_video"]}
+
+
 def import_file(pdir: Path, filename: str, data_path: Path, append: bool, index: int | None, fit_canvas: bool = False) -> dict:
     """Store an uploaded / dropped file in media/ and add it as a source (and clip).
 

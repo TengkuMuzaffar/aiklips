@@ -850,6 +850,17 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
             Path(tmp.name).unlink(missing_ok=True)
             raise bad(e)
 
+    @app.post("/api/import-media")
+    def api_import_media(body: dict) -> dict:
+        """A file from the media library into the open project (dragged from the Media tab's library)."""
+        from ..editor import actions
+
+        try:
+            return actions.import_media(host.need(), str(body.get("media") or ""), bool(body.get("append")),
+                                        None if body.get("index") is None else int(body["index"]))
+        except VeditError as e:
+            raise bad(e)
+
     # ---- exports: settings dialog, background job with progress, cancel, reveal --------------------
     EXPORTS: dict[str, dict] = {}
 

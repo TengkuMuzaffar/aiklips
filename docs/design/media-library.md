@@ -119,7 +119,12 @@ The recipe currently shapes **the prompt only**. `directives()` and `enforce()` 
   `media/`. Projects work as before on this machine, but a project folder copied to another computer doesn't carry its
   dropped media.
 - **`vedit info`:** a `study` entry per source (`project_media`).
-- **`<editor_context>`:** one line per studied source, up to 8 (`media_line`).
+- **`<editor_context>`:** one line per studied source, up to 8 (`media_line`), then up to 8 library files the project
+  doesn't use yet (`library_brief`), so the chat AI can answer "use my product shots" from the library.
+- **Editor Media tab:** "Your library" under the project's files (`/api/media`, polled while studying). Drag a file
+  onto the timeline or click + : `POST /api/import-media` (`actions.import_media`) adds it as a source pointing at the
+  library copy, reusing a source the project already has. `vedit import <library id>` is the CLI side. @ mentions
+  offer every library file (video, audio, image), not only videos.
 - **CLI `vedit media`:**
 
   | Command | What it does |

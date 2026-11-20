@@ -514,9 +514,60 @@ def store_for_project(pdir: Path, path: Path, name: str | None = None, move: boo
     path = Path(path).expanduser().resolve()
     if path.suffix.lower() not in fm.VIDEO | fm.AUDIO | fm.IMAGE:
         return path
+    uid = id_for_path(path)
+    if uid:  # already the library's copy (a file picked from the library): no second hash / copy
+        register(uid)
+        record_use([uid], "project", str(Path(pdir).resolve()))
+        return path
     meta = fm.add(path, name or path.name, move=move)
     record_use([meta["id"]], "project", str(Path(pdir).resolve()))
     return Path(meta["path"])
+
+
+def library_path(ref: str) -> Path | None:
+    """The stored file of a library id (16 hex chars, as `media list` shows it), None for anything else."""
+    import re
+
+    if not re.fullmatch(r"[0-9a-f]{16}", ref or ""):
+        return None
+    return Path(_footage().get(ref)["path"])
+
+
+def project_ids(pdir: Path, project) -> set[str]:
+    """Library ids of the files this project already uses."""
+    from .project import resolve_media
+
+    out = set()
+    for s in project.sources.values():
+        try:
+            uid = id_for_path(resolve_media(Path(pdir), s.path))
+        except Exception:  # noqa: BLE001
+            uid = None
+        if uid:
+            out.add(uid)
+    return out
+
+
+def library_brief(pdir: Path, project, limit: int = 8) -> list[str]:
+    """Lines for the chat AI: files in the media library this project doesn't use yet, most recently used first,
+    with what their study found, so "use my product shots" can be answered from the library."""
+    have = project_ids(pdir, project)
+    rows = [r for r in list_media() if r["id"] not in have and not r.get("missing")]
+    out = []
+    for r in rows[:limit]:
+        dg = r.get("digest") or {}
+        length = f", {r['duration']:.1f}s" if r.get("duration") else ""
+        head = f"  {r['id']} \"{r['name']}\" ({r['kind']}{length})"
+        if r["status"] not in ("ready", "partial"):
+            out.append(head + f": being studied ({r['status']})")
+            continue
+        facts = [dg.get("summary", "")[:140], "speech" if dg.get("speech") else "",
+                 "subjects: " + ", ".join(dg["subjects"][:4]) if dg.get("subjects") else "",
+                 "tags: " + ", ".join(r["tags"]) if r.get("tags") else ""]
+        out.append(head + (": " + "; ".join(f for f in facts if f) if any(facts) else ""))
+    if len(rows) > limit:
+        out.append(f"  ... and {len(rows) - limit} more (`vedit media list -q WORD` searches names, tags and shot notes)")
+    return out
 
 
 def project_media(pdir: Path, project) -> dict[str, dict]:
