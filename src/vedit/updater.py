@@ -134,6 +134,7 @@ def latest_release() -> dict:
 def status() -> dict:
     st = _state()
     out = {"enabled": enabled(), "current": __version__, "auto": st.get("auto", True), "checked_at": st.get("checked_at"),
+           "can_uninstall": bool(_launcher_exe()),
            "latest": (st.get("latest") or {}).get("version"), "notes": (st.get("latest") or {}).get("notes", ""),
            "url": (st.get("latest") or {}).get("url"), "staged": None, "previous": None}
     skipped = (app_root() / "skip").read_text().strip() if enabled() and (app_root() / "skip").exists() else ""
@@ -259,6 +260,8 @@ def install_extra(extra: str) -> None:
 
     if extra not in EXTRAS:
         raise VeditError(f"Unknown extra {extra}")
+    if not enabled():
+        return _install_extra_checkout(extra)
     with _EXTRA_LOCK:
         have = installed_extras()
         if extra in have:
@@ -272,3 +275,44 @@ def install_extra(extra: str) -> None:
             raise VeditError(f"Couldn't install the '{extra}' feature (are you online?):\n{proc.stderr[-1500:]}")
         (app_root() / "extras.txt").write_text("\n".join(want) + "\n")
         importlib.invalidate_caches()
+
+
+def checkout_root() -> Path | None:
+    """The repo folder when running from a git clone (`uv run vedit ...`), else None."""
+    root = Path(__file__).resolve().parents[2]
+    return root if (root / "pyproject.toml").exists() and (root / ".git").exists() else None
+
+
+def _install_extra_checkout(extra: str) -> None:
+    """A git clone: add the extra to the clone's own environment (`--inexact` keeps every other extra installed)."""
+    import importlib
+    import sys
+
+    root, uv = checkout_root(), shutil.which("uv")
+    if root is None or uv is None or os.environ.get("VEDIT_NO_AUTO_INSTALL"):  # tests set it: never install from a test
+        raise VeditError(f"This needs the optional '{extra}' feature. Run: uv sync --inexact --extra {extra}")
+    with _EXTRA_LOCK:
+        print(f"Installing the '{extra}' feature (one time, may take a minute or two)...", file=sys.stderr, flush=True)
+        proc = subprocess.run([uv, "sync", "--inexact", "--extra", extra], cwd=root, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise VeditError(f"Couldn't install the '{extra}' feature (are you online?):\n{proc.stderr[-1500:]}")
+        importlib.invalidate_caches()
+
+
+# ---- uninstall ----------------------------------------------------------------------------------------
+def _launcher_exe() -> str | None:
+    """The launcher that started this app (it passes its own path; launchers before 0.2.6 don't)."""
+    exe = os.environ.get("VEDIT_LAUNCHER_EXE", "")
+    return exe if enabled() and exe and Path(exe).exists() else None
+
+
+def start_uninstaller() -> None:
+    """Start the launcher's uninstaller (it asks first, in its own window). The caller then quits the app, so its
+    files are free to remove."""
+    exe = _launcher_exe()
+    if exe is None:
+        raise VeditError("Uninstall from here needs the newest aiklips launcher: download aiklips again from "
+                         "aiklips.muzdev.online, start it once, then try again.")
+    kw: dict = {"creationflags": 0x00000008 | 0x00000200} if os.name == "nt" else {"start_new_session": True}  # outlive the app
+    subprocess.Popen([exe, "--uninstall"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     close_fds=True, **kw)

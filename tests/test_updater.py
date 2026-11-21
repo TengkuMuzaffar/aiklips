@@ -146,3 +146,37 @@ def test_release_index_on_the_site_first_then_github(monkeypatch):
     index = None  # site down: GitHub answers
     assert updater.latest_release()["version"] == "1.1.0"
     assert "api.github.com" in calls[-1]
+
+
+def test_uninstall_starts_the_launcher_then_quits(release, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from vedit.preview_server.app import create_app
+
+    c = TestClient(create_app(None))
+    monkeypatch.delenv("VEDIT_LAUNCHER_EXE", raising=False)
+    assert c.get("/api/update").json()["can_uninstall"] is False  # an older launcher doesn't pass its path
+    assert c.post("/api/app/uninstall").status_code == 400
+    exe = tmp_path / "aiklips"
+    exe.write_text("")
+    monkeypatch.setenv("VEDIT_LAUNCHER_EXE", str(exe))
+    assert c.get("/api/update").json()["can_uninstall"] is True
+    started, exits = [], []
+    monkeypatch.setattr(updater.subprocess, "Popen", lambda args, **kw: started.append(args))
+    monkeypatch.setattr(updater.os, "_exit", exits.append)
+    monkeypatch.setattr("threading.Timer", lambda t, fn: type("T", (), {"start": lambda self: fn()})())
+    assert c.post("/api/app/uninstall").status_code == 200
+    assert started == [[str(exe), "--uninstall"]] and exits == [0]
+
+
+def test_checkout_installs_a_missing_extra_itself(monkeypatch, tmp_path):
+    monkeypatch.delenv("VEDIT_LAUNCHER", raising=False)
+    runs = []
+    monkeypatch.setattr(updater, "checkout_root", lambda: tmp_path)
+    monkeypatch.setattr(updater.shutil, "which", lambda n: "/usr/bin/uv")
+    monkeypatch.setattr(updater.subprocess, "run", lambda cmd, **kw: runs.append((cmd, kw["cwd"])) or type("P", (), {"returncode": 0})())
+    with pytest.raises(VeditError, match="uv sync --inexact --extra captions"):
+        updater.install_extra("captions")  # tests opt out (VEDIT_NO_AUTO_INSTALL): never installs from a test
+    monkeypatch.delenv("VEDIT_NO_AUTO_INSTALL")
+    updater.install_extra("captions")
+    assert runs == [(["/usr/bin/uv", "sync", "--inexact", "--extra", "captions"], tmp_path)]

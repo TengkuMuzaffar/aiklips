@@ -201,11 +201,8 @@ func readTrim(path string) string {
 
 func extras(p paths) []string {
 	var args []string
-	for _, x := range strings.Fields(readTrim(filepath.Join(p.app, "extras.txt"))) {
-		switch x {
-		case "ai", "bg-quality", "captions", "mask-ai":
-			args = append(args, "--extra", x)
-		}
+	for _, x := range validFeatures(strings.Fields(readTrim(filepath.Join(p.app, "extras.txt")))) {
+		args = append(args, "--extra", x)
 	}
 	return args
 }

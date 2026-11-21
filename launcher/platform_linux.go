@@ -62,6 +62,19 @@ func selfInstall(p paths) error {
 	return os.WriteFile(desktop, []byte(entry), 0o644)
 }
 
+// removeIntegration undoes selfInstall: the launcher in ~/.local/bin, its menu entry and icon.
+func removeIntegration() error {
+	home, _ := os.UserHomeDir()
+	for _, f := range []string{filepath.Join(home, ".local", "bin", "aiklips"),
+		filepath.Join(home, ".local", "share", "applications", "aiklips.desktop"),
+		filepath.Join(home, ".local", "share", "icons", "hicolor", "256x256", "apps", "aiklips.png")} {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func hidden(cmd *exec.Cmd) *exec.Cmd { return cmd }
 
 func noConsole(cmd *exec.Cmd) *exec.Cmd { return cmd }

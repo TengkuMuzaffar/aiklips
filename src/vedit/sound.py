@@ -122,7 +122,37 @@ def clip_stats(p: Project, pdir: Path, c: Clip) -> dict | None:
     src = p.sources[c.source]
     if not src.has_audio:
         return None
-    return stats(resolve_media(pdir, src.path), c.in_, c.out, _cache(pdir))
+    path = resolve_media(pdir, src.path)
+    st = stats(path, c.in_, c.out, _cache(pdir))
+    if st and st["voice"] < SPEECH and studied_speech(path, c.in_, c.out):
+        st = {**st, "studied_speech": True}
+    return st
+
+
+def studied_speech(path: Path, a: float, b: float) -> bool:
+    """Did the media library's study hear a voice (or see someone talking) in a shot inside [a, b] of this file?
+    The whole-clip score averages pauses in, so a real talking head can land just under SPEECH."""
+    try:
+        from . import media_library
+
+        uid = media_library.id_for_path(path)
+        if not uid:
+            return False
+        fm = media_library._footage()
+        d = fm._dir(uid)
+        if not (d / "index.json").exists():
+            return False  # not studied yet: don't start a study from the audit
+        measured = media_library._load(d / "measure.json", {}) or {}
+        notes = media_library._load(d / "notes.json", {}) or {}
+        for s in fm.segments(uid):
+            if s["to"] <= a or s["from"] >= b:
+                continue
+            k = str(s["k"])
+            if (measured.get(k) or {}).get("voice", 0) >= SPEECH or (notes.get(k) or {}).get("talking"):
+                return True
+    except Exception:  # noqa: BLE001 - a bonus signal; the measurement still decides without it
+        return False
+    return False
 
 
 def is_speech(c: Clip, st: dict | None) -> bool:
@@ -131,7 +161,7 @@ def is_speech(c: Clip, st: dict | None) -> bool:
     speaking clip still has speech, and the audit says so."""
     if c.meta and c.meta.audio == "voice":
         return True
-    return bool(st) and st["voice"] >= SPEECH
+    return bool(st) and (st["voice"] >= SPEECH or bool(st.get("studied_speech")))
 
 
 # ---- audit ------------------------------------------------------------------------------------

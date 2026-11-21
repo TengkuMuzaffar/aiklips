@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,6 +22,24 @@ func alert(title, msg string) {
 
 // the macOS download is an .app bundle the user drags to Applications: nothing to install
 func selfInstall(p paths) error { return nil }
+
+// removeIntegration moves the aiklips.app bundle this launcher runs from to the Trash (a running app may be
+// deleted on macOS; Trash rather than rm, so it can be put back).
+func removeIntegration() error {
+	exe := selfPath()
+	i := strings.Index(exe, ".app/Contents/MacOS/")
+	if i < 0 {
+		return nil // not run from a bundle (a dev build)
+	}
+	bundle := exe[:i+4]
+	if !strings.HasPrefix(strings.ToLower(filepath.Base(bundle)), "aiklips") {
+		return nil
+	}
+	if exec.Command("osascript", "-e", "tell application \"Finder\" to delete POSIX file "+asq(bundle)).Run() == nil {
+		return nil
+	}
+	return os.RemoveAll(bundle) // Finder refused (automation permission declined): delete it outright
+}
 
 func hidden(cmd *exec.Cmd) *exec.Cmd { return cmd }
 

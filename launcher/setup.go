@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -100,21 +101,37 @@ type stepView struct {
 }
 
 type snapshot struct {
-	Title    string     `json:"title"`
-	Sub      string     `json:"sub"`
-	Steps    []stepView `json:"steps"`
-	Label    string     `json:"label"`
-	Done     int64      `json:"done"`
-	Total    int64      `json:"total"`
-	Speed    float64    `json:"speed"` // bytes/s
-	ETA      float64    `json:"eta"`   // seconds; -1 unknown
-	Overall  float64    `json:"overall"`
-	Bytes    bool       `json:"bytes"` // a download step is running
-	Error    string     `json:"error,omitempty"`
-	Details  string     `json:"details,omitempty"`
-	Finished bool       `json:"finished"`
-	Close    bool       `json:"close"`
-	Version  string     `json:"version"`
+	Title    string         `json:"title"`
+	Sub      string         `json:"sub"`
+	Steps    []stepView     `json:"steps"`
+	Label    string         `json:"label"`
+	Done     int64          `json:"done"`
+	Total    int64          `json:"total"`
+	Speed    float64        `json:"speed"` // bytes/s
+	ETA      float64        `json:"eta"`   // seconds; -1 unknown
+	Overall  float64        `json:"overall"`
+	Bytes    bool           `json:"bytes"` // a download step is running
+	Error    string         `json:"error,omitempty"`
+	Details  string         `json:"details,omitempty"`
+	Finished bool           `json:"finished"`
+	Close    bool           `json:"close"`
+	Version  string         `json:"version"`
+	Mode     string         `json:"mode"`               // "" (install / update) | "uninstall"
+	Features []feature      `json:"features,omitempty"` // set while the person picks what to install
+	Picked   []string       `json:"picked,omitempty"`
+	BaseMB   int            `json:"base_mb,omitempty"`
+	Confirm  *uninstallInfo `json:"confirm,omitempty"` // set while the uninstall waits for a yes
+}
+
+// uninstallInfo is what the uninstall confirmation shows (the folders the "delete my data" box would remove).
+type uninstallInfo struct {
+	Data     string `json:"data"`
+	Projects string `json:"projects"`
+	CanData  bool   `json:"can_data"` // false for a custom data / projects folder: never deleted
+}
+
+type uninstallAnswer struct {
+	ok, data bool
 }
 
 type setupUI struct {
@@ -134,6 +151,13 @@ type setupUI struct {
 	dirty    bool
 	subs     map[chan []byte]bool
 	lastSub  time.Time // when the page was last connected (browser-tab fallback: tells if it was closed)
+	mode     string
+	choosing bool
+	picked   []string
+	chooseCh chan []string
+	confirm  *uninstallInfo
+	answerCh chan uninstallAnswer
+	linger   time.Duration // how long a finished window stays (the uninstall's "done" message)
 
 	enabled  bool
 	logPath  string
@@ -152,7 +176,8 @@ func newSetupUI(enabled bool, logPath string) *setupUI {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return &setupUI{enabled: enabled, logPath: logPath, token: hex.EncodeToString(b), subs: map[chan []byte]bool{},
-		retry: make(chan struct{}, 1)}
+		retry: make(chan struct{}, 1), chooseCh: make(chan []string, 1), answerCh: make(chan uninstallAnswer, 1),
+		linger: 900 * time.Millisecond}
 }
 
 // ui is the launcher's one setup window (replaced in main once the log path is known)
@@ -261,7 +286,10 @@ func (u *setupUI) snap() snapshot {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	s := snapshot{Title: u.title, Sub: u.sub, Label: u.label, Error: u.errMsg, Details: u.details, Finished: u.finished,
-		Close: u.closing, ETA: -1, Version: LauncherVersion}
+		Close: u.closing, ETA: -1, Version: LauncherVersion, Mode: u.mode, Confirm: u.confirm}
+	if u.choosing {
+		s.Features, s.Picked, s.BaseMB = features, u.picked, baseMB
+	}
 	var active []string
 	for _, t := range u.tasks {
 		s.Done += t.done
@@ -401,6 +429,43 @@ func (u *setupUI) handler() http.Handler {
 		}
 		select {
 		case u.retry <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("/features", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || !ok(r) {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Extras []string `json:"extras"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		select {
+		case u.chooseCh <- validFeatures(body.Extras):
+		default:
+		}
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || !ok(r) {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Go         bool `json:"go"`
+			DeleteData bool `json:"delete_data"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		select {
+		case u.answerCh <- uninstallAnswer{ok: body.Go, data: body.DeleteData}:
 		default:
 		}
 		w.WriteHeader(204)
@@ -598,8 +663,78 @@ func (u *setupUI) finish() {
 		return
 	}
 	u.broadcast()
-	time.Sleep(900 * time.Millisecond) // let the last tick animate
+	time.Sleep(u.linger) // let the last tick animate (the uninstall's "done" message stays longer)
 	u.close()
+}
+
+// waitFor runs until got returns true or nobody can see the window any more (then false).
+func (u *setupUI) waitFor(got func() bool) bool {
+	for {
+		if got() {
+			return true
+		}
+		if !u.alive() {
+			return false
+		}
+	}
+}
+
+// chooseFeatures shows the optional features (def ticked) and waits for the person's pick, while the downloads go
+// on underneath. ok=false when nobody can answer (no window, or it was closed): the caller uses def.
+func (u *setupUI) chooseFeatures(def []string) (picked []string, ok bool) {
+	u.mu.Lock()
+	if !u.enabled {
+		u.mu.Unlock()
+		return def, false
+	}
+	u.choosing, u.picked, u.dirty = true, def, true
+	u.mu.Unlock()
+	defer func() {
+		u.mu.Lock()
+		u.choosing, u.dirty = false, true
+		u.mu.Unlock()
+	}()
+	u.show()
+	if !u.alive() {
+		return def, false
+	}
+	got := u.waitFor(func() bool {
+		select {
+		case picked = <-u.chooseCh:
+			return true
+		case <-time.After(time.Second):
+			return false
+		}
+	})
+	if !got {
+		return def, false
+	}
+	return picked, true
+}
+
+// confirmUninstall shows the uninstall question and waits. ok=false = cancelled (or the window was closed).
+func (u *setupUI) confirmUninstall(info uninstallInfo) (deleteData, ok bool) {
+	u.mu.Lock()
+	u.mode, u.confirm, u.title, u.dirty = "uninstall", &info, "Uninstall aiklips", true
+	u.sub = "This removes the app, its Python and libraries, and its shortcuts."
+	u.mu.Unlock()
+	u.show()
+	if !u.alive() {
+		return false, false
+	}
+	var a uninstallAnswer
+	got := u.waitFor(func() bool {
+		select {
+		case a = <-u.answerCh:
+			return true
+		case <-time.After(time.Second):
+			return false
+		}
+	})
+	u.mu.Lock()
+	u.confirm, u.dirty = nil, true
+	u.mu.Unlock()
+	return a.data, got && a.ok
 }
 
 // close removes the window (the page closes itself too) and resets so a later update can show it again.
@@ -685,5 +820,20 @@ func (u *setupUI) setStepLabel(key, label string) {
 	defer u.mu.Unlock()
 	if s := u.find(key); s != nil {
 		s.Label, u.dirty = label, true
+	}
+}
+
+func (u *setupUI) setSub(sub string) {
+	u.mu.Lock()
+	u.sub, u.dirty = sub, true
+	u.mu.Unlock()
+}
+
+// setExpect changes how long a time-based step is expected to take (the install, once the features are known).
+func (u *setupUI) setExpect(key string, d time.Duration) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if s := u.find(key); s != nil {
+		s.Expect, u.dirty = d, true
 	}
 }

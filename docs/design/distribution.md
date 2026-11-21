@@ -69,9 +69,30 @@ URL) and streams progress over SSE (`/events`); `POST /retry` and `/open-log` ba
   uv has arrived. `uv sync --compile-bytecode` makes the install a little longer and the first start much quicker.
 - **Errors:** a plain sentence (`friendly()`), with Try again / Copy details / Show log. Without a window (quiet, or
   it couldn't open) the old native dialog is the fallback.
-- **Check it by eye:** `AIKLIPS_PREVIEW=1 go test -count=1 -run TestPreviewStates .` serves the download, error and
-  done states on ports 47811-47813 (`?t=x`). `AIKLIPS_WINDOW_TEST=1 go test -run TestMacWindow .` builds the real
+- **Check it by eye:** `AIKLIPS_PREVIEW=1 go test -count=1 -run TestPreviewStates .` serves the download, error,
+  done, feature-picker and uninstall states on ports 47811-47815 (`?t=x`). `AIKLIPS_WINDOW_TEST=1 go test -run TestMacWindow .` builds the real
   macOS window off screen.
+
+## Optional features (extras)
+
+A first install asks which optional features to include (`launcher/features.go`: captions, ai, bg-quality,
+mask-ai, each with its download size), all ticked by default, in the setup window while the downloads run. The
+choice goes into `app/extras.txt`, which every `uv sync` reads. Anything left out installs itself the first time
+it's used (`updater.install_extra`). Without a window: `AIKLIPS_EXTRAS=captions,ai` (or `none`) sets it; quiet
+runs default to none, a person whose window couldn't open gets all of them. In a git clone a missing extra is added
+with `uv sync --inexact --extra X` (`updater._install_extra_checkout`; tests set `VEDIT_NO_AUTO_INSTALL`).
+
+## Uninstall
+
+`aiklips --uninstall` (`launcher/uninstall.go`). Reached from Windows Settings → Apps (the launcher registers itself
+under `HKCU\...\Uninstall\aiklips`, no admin rights) or the Start menu's "Uninstall aiklips", and on every system
+from the app's Settings → Updates → Uninstall (the app starts the launcher, path in `VEDIT_LAUNCHER_EXE`, then quits;
+launchers older than this don't pass it, so the button is hidden). It asks first in the setup window with "also
+delete my projects and media library" unticked, then removes `app/` (after the app has closed: on Windows the folder
+can't be moved while it runs), `bin/`, the shortcuts / registry entry / menu entry, and the launcher (Windows: a
+hidden `cmd` deletes its folder after it exits; macOS: the `.app` goes to the Trash). With the box ticked it also
+deletes `~/.aiklips` and `~/aiklips-projects`, but never a custom `AIKLIPS_HOME` / `VEDIT_PROJECTS_DIR`. uv's shared
+cache and Python builds stay (other tools may use them). Scripted: `AIKLIPS_QUIET=1 AIKLIPS_UNINSTALL_DATA=1`.
 
 Icons: `assets/brand/` (generated from `logo.svg`). The release workflow embeds `icon.ico` in the Windows exe
 (go-winres → a `.syso`, never committed) and puts `icon.icns` in the macOS bundle; Linux gets the PNG with its menu

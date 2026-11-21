@@ -102,6 +102,9 @@ func main() {
 	openLog(p)
 	ui = newSetupUI(!quiet, p.log)
 	logf("launcher %s on %s", LauncherVersion, platform())
+	if len(os.Args) > 1 && (os.Args[1] == "--uninstall" || os.Args[1] == "uninstall") {
+		os.Exit(uninstallMain(p))
+	}
 	for {
 		code, err := run(p)
 		if err == nil {
@@ -146,7 +149,7 @@ func plan(first, pending, uvOK, ffOK bool, pv string) (title, sub string, steps 
 	steps = append(steps, stepSpec{Key: "start", Label: "Start aiklips", Expect: 6 * time.Second, Weight: 5})
 	switch {
 	case first:
-		return "Setting up aiklips", "A one-time download of about 150 MB. Later starts take seconds.", steps
+		return "Setting up aiklips", "Pick what to install while the download starts. Later starts take seconds.", steps
 	case pending:
 		return "Updating to " + pv, "Installing the new version. Your projects stay as they are.", steps
 	}
@@ -174,6 +177,17 @@ func run(p paths) (int, error) {
 	uvOK, ffOK := uvReady(p), ffReady(p)
 	if title, sub, steps := plan(first, pending, uvOK, ffOK, pendingVersion(p)); steps != nil {
 		ui.begin(title, sub, steps)
+	}
+	// a first install asks which optional features to include (all ticked), while the downloads below run
+	if first && featurePick == nil { // asked once per launcher run: a retry after an error keeps the answer
+		featurePick = make(chan []string, 1)
+		go func() {
+			keys, asked := ui.chooseFeatures(defaultFeatures())
+			logf("features: %v (asked: %v)", keys, asked)
+			ui.setExpect("install", expectOf(keys))
+			ui.setSub(fmt.Sprintf("A one-time download of about %d MB. Later starts take seconds.", sizeOf(keys)))
+			featurePick <- keys
+		}()
 	}
 	// everything that downloads runs at once: uv (then Python), FFmpeg, and on a first start the app itself
 	ui.set("tools", "active")
@@ -213,6 +227,12 @@ func run(p paths) (int, error) {
 	}
 	ui.set("tools", "done")
 	if first {
+		ui.setLabel("Waiting for your choice of features…")
+		keys := <-featurePick
+		featurePick <- keys
+		if err := writeExtras(p, keys); err != nil {
+			return 1, err
+		}
 		pending = true
 	}
 	for {
@@ -280,7 +300,7 @@ func launch(p paths, version, uv, ff, fp string) int {
 	pathVar := filepath.Dir(uv) + sep + filepath.Dir(exe) + sep + os.Getenv("PATH")
 	cmd.Env = append(os.Environ(),
 		"VEDIT_LAUNCHER=1", "VEDIT_APP_ROOT="+p.app, "VEDIT_APP_DIR="+dir, "VEDIT_PROJECTS_DIR="+p.projects,
-		"VEDIT_FFMPEG="+ff, "VEDIT_FFPROBE="+fp, "PATH="+pathVar,
+		"VEDIT_FFMPEG="+ff, "VEDIT_FFPROBE="+fp, "PATH="+pathVar, "VEDIT_LAUNCHER_EXE="+selfPath(),
 		// the AI runs `uv run vedit ...`: it must use this install as-is, never re-resolve or re-sync it
 		"UV_FROZEN=1", "UV_NO_SYNC=1", "UV_PYTHON_PREFERENCE=only-managed", "AIKLIPS_LAUNCHER_VERSION="+LauncherVersion)
 	if f, err := os.OpenFile(filepath.Join(p.data, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
@@ -345,6 +365,9 @@ func lock(p paths) (func(), error) {
 	return nil, errors.New("aiklips is already installing an update in another window; try again in a minute")
 }
 
+// featurePick holds the first install's choice of optional features (see run).
+var featurePick chan []string
+
 var isWindows = strings.HasPrefix(platform(), "windows")
 
 // adoptOldHome moves the folder of the app's old name (claude-cut, before 0.2) to the new one, once, and leaves a
@@ -360,4 +383,16 @@ func adoptOldHome(old, data string) {
 		return
 	}
 	linkDir(data, old)
+}
+
+// selfPath is this launcher's own file (the app starts it with --uninstall from Settings).
+func selfPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		return r
+	}
+	return exe
 }

@@ -130,6 +130,42 @@
   footer a { color: inherit; text-decoration: none; cursor: pointer; }
   footer a:hover { color: var(--muted); }
 
+  /* the first install's feature picker and the uninstall question (shown in place of the step list) */
+  .panel { display: none; margin-top: 22px; animation: rise .5s var(--ease) both; }
+  .choose-state .panel.choose, .confirm-state .panel.confirm { display: block; }
+  .choose-state .steps, .confirm-state .steps, .confirm-state .progress { display: none; }
+  /* picking features: a smaller header so the list, the button and the running download all fit the window */
+  .choose-state main { padding-top: 26px; }
+  .choose-state .logo { width: 48px; height: 48px; margin-bottom: 12px; }
+  .choose-state .logo .tile { border-radius: 14px; }
+  .choose-state .logo svg { inset: 9px; }
+  .choose-state .logo::after { inset: -6px; border-radius: 18px; }
+  .choose-state h1 { font-size: 22px; }
+  .choose-state .sub { margin-top: 4px; font-size: 13px; }
+  .choose-state .panel { margin-top: 16px; }
+  .choose-state .progress { padding-top: 12px; }
+  .opts { display: grid; gap: 6px; }
+  .opt { display: flex; gap: 12px; align-items: flex-start; padding: 8px 12px; border-radius: 12px; cursor: pointer;
+    background: #ffffff08; border: 1px solid transparent; transition: background .2s, border-color .2s; }
+  .opt:hover { background: #ffffff0f; }
+  .opt:has(input:checked) { border-color: #c5f46733; }
+  .opt input { appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px; margin: 2px 0 0;
+    border-radius: 6px; border: 1.5px solid var(--faint); display: grid; place-items: center; cursor: pointer;
+    transition: background .2s, border-color .2s; }
+  .opt input:checked { background: var(--lime); border-color: var(--lime); }
+  .opt input:checked::after { content: ""; width: 9px; height: 5px; margin-top: -2px; border: solid var(--lime-ink);
+    border-width: 0 0 2px 2px; rotate: -45deg; }
+  .opt input:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  .opt input:disabled { opacity: .4; cursor: not-allowed; }
+  .opt .txt { flex: 1; min-width: 0; }
+  .opt b { display: flex; justify-content: space-between; gap: 10px; font-weight: 500; color: var(--on); }
+  .opt b small { font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
+  .opt span { display: block; font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 1px; }
+  .panel .foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .panel .note { font-size: 12px; color: var(--faint); }
+  .danger { background: var(--err); color: #2a0c07; }
+  .danger:hover { background: #ffa396; }
+
   .closing main, .closing footer { transition: opacity .3s, translate .3s var(--ease); opacity: 0; translate: 0 -6px; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -152,6 +188,23 @@
   <p class="sub" id="sub">Getting everything ready.</p>
 
   <ol class="steps" id="steps" aria-live="polite"></ol>
+
+  <section class="panel choose" aria-label="Features to install">
+    <div class="opts" id="opts"></div>
+    <div class="foot">
+      <span class="note"><span id="total"></span><br>Anything unticked installs itself when first used.</span>
+      <button class="primary" id="install">Install</button>
+    </div>
+  </section>
+
+  <section class="panel confirm" aria-label="Uninstall">
+    <label class="opt"><input type="checkbox" id="wipe"><span class="txt"><b>Also delete my projects and media library</b>
+      <span id="wipe-detail"></span></span></label>
+    <div class="foot">
+      <button class="ghost" id="cancel">Cancel</button>
+      <button class="danger" id="remove">Uninstall</button>
+    </div>
+  </section>
 
   <div class="error-card" role="alert">
     <p id="err"></p>
@@ -215,12 +268,17 @@
   function render(s) {
     document.body.classList.toggle("error-state", !!s.error);
     document.body.classList.toggle("done-state", s.finished && !s.error);
+    document.body.classList.toggle("choose-state", !!(s.features && s.features.length) && !s.error);
+    document.body.classList.toggle("confirm-state", !!s.confirm && !s.error);
+    if (s.features && s.features.length) renderFeatures(s);
+    if (s.confirm) renderConfirm(s.confirm);
     if (s.title && (!last || last.title !== s.title)) { $("title").replaceChildren(title(s.title)); }
     $("sub").textContent = s.error ? "Your projects are safe. Most problems go away on a second try." : s.sub || "";
-    if (s.finished && !s.error) $("sub").textContent = "All set. Opening the editor…";
+    const un = s.mode === "uninstall";
+    if (s.finished && !s.error && !un) $("sub").textContent = "All set. Opening the editor…";
     renderSteps(s.steps || []);
     target = Math.max(s.error ? target : 0, Math.min(1, s.overall || 0));
-    $("label").textContent = s.finished ? "Opening aiklips…" : s.label || "Working…";
+    $("label").textContent = s.finished ? (un ? "Done" : "Opening aiklips…") : s.label || "Working…";
     $("stats").textContent = s.bytes && s.total > 0
       ? [`${mb(s.done)} of ${mb(s.total)} downloaded`, s.speed > 1e4 ? `${(s.speed / 1e6).toFixed(1)} MB/s` : "", eta(s.eta)].filter(Boolean).join("  ·  ")
       : "";
@@ -250,7 +308,52 @@
   }
   connect();
 
-  const post = (path) => fetch(path + "?t=" + encodeURIComponent(token), { method: "POST" });
+  const post = (path, body) => fetch(path + "?t=" + encodeURIComponent(token),
+    { method: "POST", ...(body ? { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } } : {}) });
+
+  // the feature list is built once, so the person's ticks survive the progress updates
+  let featuresBuilt = false, featureList = [], baseMB = 0;
+  function renderFeatures(s) {
+    if (featuresBuilt) return;
+    featuresBuilt = true; featureList = s.features; baseMB = s.base_mb || 0;
+    const picked = new Set(s.picked || []);
+    $("opts").replaceChildren(...s.features.map((f) => {
+      const l = document.createElement("label"); l.className = "opt";
+      const i = document.createElement("input"); i.type = "checkbox"; i.value = f.key; i.checked = picked.has(f.key);
+      i.onchange = total;
+      const t = document.createElement("span"); t.className = "txt";
+      const b = document.createElement("b"); b.textContent = f.label;
+      const sm = document.createElement("small"); sm.textContent = `~${f.mb} MB`; b.append(sm);
+      const d = document.createElement("span"); d.textContent = f.detail;
+      t.append(b, d); l.append(i, t); return l;
+    }));
+    total();
+  }
+  const chosen = () => [...$("opts").querySelectorAll("input:checked")].map((i) => i.value);
+  function total() {
+    const mb = baseMB + featureList.filter((f) => chosen().includes(f.key)).reduce((a, f) => a + f.mb, 0);
+    $("total").textContent = `About ${mb} MB in all`;
+  }
+  $("install").onclick = () => {
+    $("install").disabled = true;
+    document.body.classList.remove("choose-state");
+    post("/features", { extras: chosen() });
+  };
+
+  let confirmBuilt = false;
+  function renderConfirm(c) {
+    if (confirmBuilt) return;
+    confirmBuilt = true;
+    $("wipe").disabled = !c.can_data;
+    $("wipe-detail").textContent = c.can_data
+      ? `Deletes ${c.projects} and ${c.data} (your media library, settings and API keys). This can't be undone.`
+      : `Your data is in a custom folder (${c.data}), so aiklips leaves it alone. Delete it yourself if you want it gone.`;
+  }
+  $("remove").onclick = () => {
+    $("remove").disabled = $("cancel").disabled = true;
+    post("/uninstall", { go: true, delete_data: $("wipe").checked });
+  };
+  $("cancel").onclick = () => { $("remove").disabled = $("cancel").disabled = true; post("/uninstall", { go: false }); };
   $("retry").onclick = () => { document.body.classList.remove("error-state"); post("/retry"); };
   $("log").onclick = $("footlog").onclick = () => post("/open-log");
   $("copy").onclick = async () => {

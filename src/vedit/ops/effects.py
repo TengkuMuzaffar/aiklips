@@ -60,10 +60,8 @@ def require(module: str, extra: str):
         pass
     from .. import updater
 
-    if updater.enabled():  # installed app: fetch the extra now (one time) instead of asking the user to run uv
-        updater.install_extra(extra)
-        return __import__(module)
-    raise VeditError(f"This effect needs the optional '{extra}' extra. Run: uv sync --extra {extra}")
+    updater.install_extra(extra)  # installed app or git clone: fetch it now (one time) instead of asking for uv
+    return __import__(module)
 
 
 def read_frames(path: Path, w: int, h: int, fps: float) -> Iterator[np.ndarray]:

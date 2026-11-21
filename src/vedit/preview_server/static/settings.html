@@ -368,7 +368,7 @@ const FIND = [
   ["frame rate fps", "Frame rate", "general"], ["folder location path where projects saved", "Projects folder", "general"],
   ["motion animation reduce calm accessibility", "Reduce motion", "general"], ["tour welcome onboarding help", "Welcome tour", "general"],
   ["whats new changelog release notes", "What's new", "general"], ["about version licence website github bug report problem", "About aiklips", "general"],
-  ["update upgrade version download restart rollback auto", "Updates", "updates"],
+  ["update upgrade version download restart rollback auto uninstall remove delete", "Updates", "updates"],
   ["model chat ai editor opus sonnet haiku", "AI editor model", "models"], ["watcher director editor auditor team roles", "Generation & review team", "models"],
   ["pass mark audit score rounds revision", "Auditor pass mark", "models"],
   ["provider api key deepseek openrouter opencode claude sign in login", "Providers & keys", "providers"],
@@ -910,7 +910,17 @@ function pageUpdates() {
         U.previous ? h("button", { class: "ghost", disabled: busy, title: "Use the version you had before; takes effect on restart",
           onclick: async () => { if (await AK.confirm(`Go back to version ${U.previous}?`, { ok: "Go back" }) && await updAction("", "/api/update/rollback")) restartApp(); } }, `Go back to ${U.previous}`) : "",
         U.url ? ext(U.url, "Release notes") : ""))),
+    U.can_uninstall ? h("section", {}, h("h3", {}, "Uninstall"), h("div", { class: "card", style: { padding: "14px", display: "grid", gap: "10px", justifyItems: "start" } },
+      h("p", { class: "hint", style: { margin: 0 } }, "Removes the app, its Python and libraries, and its shortcuts. You choose in the next window whether your projects and media library go too; by default they stay."),
+      h("button", { class: "ghost", disabled: busy, onclick: uninstallApp }, "Uninstall aiklips…"))) : "",
   ];
+}
+
+async function uninstallApp() {
+  if (!(await AK.confirm("aiklips will close and open its uninstaller. You can still cancel there.", { ok: "Continue" }))) return;
+  const r = await fetch("/api/app/uninstall", { method: "POST" });
+  if (!r.ok) { toast((await r.json().catch(() => ({}))).detail || "Couldn't start the uninstaller", true); return; }
+  toast("Opening the uninstaller…");
 }
 
 loadAll();

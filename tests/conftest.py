@@ -21,6 +21,7 @@ def pytest_configure(config):
     root = Path(tempfile.mkdtemp(prefix="vedit-tests-"))
     os.environ["VEDIT_HOME"] = str(root / "home")
     os.environ["VEDIT_PROJECTS_DIR"] = str(root / "projects")
+    os.environ["VEDIT_NO_AUTO_INSTALL"] = "1"  # a missing extra must fail the test, not pip-install itself
     os.environ["AIKLIPS_DESIGN"] = "1"  # the Design studio is switched off for users (features.py), tested on
     # no background job workers anywhere in the run, module / session fixtures included (they set up before the
     # per-test fixture below): a worker thread outlives its test and takes the next test's jobs. Tests use drain().

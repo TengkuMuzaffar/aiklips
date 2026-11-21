@@ -35,10 +35,20 @@ func TestPreviewStates(t *testing.T) {
 	b.fail(errors.New("download https://x: dial tcp: lookup github.com: no such host (are you online?)"))
 	c := mk(47813)
 	c.finish()
+	d := mk(47814) // first install: picking features while the download runs
+	d.set("tools", "active")
+	d.track("aiklips", 9<<20).Write(make([]byte, 3<<20))
+	d.choosing, d.picked = true, featureKeys()
+	e := newSetupUI(false, "") // uninstall question
+	e.token = "x"
+	e.mode, e.title, e.sub = "uninstall", "Uninstall aiklips", "This removes the app, its Python and libraries, and its shortcuts."
+	e.confirm = &uninstallInfo{Data: "/Users/me/.aiklips", Projects: "/Users/me/aiklips-projects", CanData: true}
+	go http.ListenAndServe("127.0.0.1:47815", e.handler())
 	go func() {
 		for {
 			a.broadcast()
 			b.broadcast()
+			d.broadcast()
 			time.Sleep(200 * time.Millisecond)
 		}
 	}()

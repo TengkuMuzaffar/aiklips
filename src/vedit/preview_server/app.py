@@ -531,6 +531,20 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
         threading.Timer(0.4, lambda: os._exit(updater.RESTART_CODE)).start()  # let this response reach the page first
         return {"ok": True}
 
+    @app.post("/api/app/uninstall")
+    def api_app_uninstall() -> dict:
+        """Start the launcher's uninstaller (it asks first) and quit, so the app's files can be removed."""
+        from .. import updater
+
+        if any(j["status"] == "running" for j in EXPORTS.values()):
+            raise HTTPException(409, "An export is running. Uninstall when it has finished.")
+        try:
+            updater.start_uninstaller()
+        except VeditError as e:
+            raise HTTPException(400, str(e)) from None
+        threading.Timer(0.6, lambda: os._exit(0)).start()  # let this response reach the page first
+        return {"ok": True}
+
     # ---- references + generation (home tabs) ---------------------------------------------
     from . import design_routes, gen_routes
 
