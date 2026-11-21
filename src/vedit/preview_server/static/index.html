@@ -1356,7 +1356,9 @@ function spriteFetch(l, opts) {
   const { ctext, ...rest } = opts; // ctext: a counter's text at this moment (animate.js counterText)
   const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.group ?? ""}|${opts.hi ?? ""}|${opts.motion ? JSON.stringify(opts.motion) : ""}|${ctext ?? ""}`;
   if (SPRITES.has(key) || SPR_WAIT.has(key)) return key;
-  const layer = { ...l, keyframes: [], presets: [] }; // the transform is applied here, not baked into the sprite
+  const layer = { keyframes: [], presets: [] }; // the transform is applied here, not baked into the sprite
+  // the browser's own caches on a layer (`_groups` for captions) aren't layer fields: the server rejects unknown fields
+  for (const [k, v] of Object.entries(l)) if (!k.startsWith("_") && k !== "keyframes" && k !== "presets") layer[k] = v;
   if (ctext != null) { layer.text = ctext; layer.counter = null; }
   const ck = contentKey(l);
   const pr = fetch("/api/sprite", { method: "POST", headers: { "Content-Type": "application/json" },

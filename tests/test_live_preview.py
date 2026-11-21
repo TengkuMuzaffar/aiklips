@@ -170,6 +170,8 @@ def test_sprite_and_mode_api(cli, test_clip):
     words = [{"text": w, "start": i * 0.4, "end": i * 0.4 + 0.3} for i, w in enumerate(["a", "b", "c", "d"])]
     cap = Layer(id="c1", type="captions", words=words, words_per_group=2).model_dump(mode="json", by_alias=True)
     assert client.post("/api/sprite", json={"layer": cap, "group": 1, "hi": 1}).status_code == 200
+    # the page caches a captions layer's word groups on the layer object (`_groups`): never a reason to refuse it
+    assert client.post("/api/sprite", json={"layer": {**cap, "_groups": [[0, 1]], "_groupsKey": "k"}, "group": 1, "hi": 1}).status_code == 200
     assert client.post("/api/sprite", json={"layer": {"type": "nope"}}).status_code == 400
 
     assert client.get("/api/state").json()["render"]["final"] is False
