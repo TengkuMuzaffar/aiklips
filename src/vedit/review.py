@@ -126,7 +126,7 @@ def describe_edit(p: Project, fid_of: dict[str, str] | None = None, pdir: Path |
         lines.append("OVERLAYS:")
     for l in p.layers:
         end = p.duration if l.end is None else l.end
-        label = l.text or l.image or " ".join(w.text for w in l.words[:12])
+        label = l.text or l.image or ""
         style = "" if l.type == "image" else f", font {l.style.font or 'default'}" + (f", look {l.style.look}" if l.style.look else "")
         lines.append(f"  {l.id} {l.type} {l.start:.2f}-{end:.2f}s at ({l.x}, {l.y}){style}: \"{(label or '')[:80]}\""
                      + (f'  WHY: "{l.why}"' if l.why else ""))

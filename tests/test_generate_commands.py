@@ -26,7 +26,7 @@ def test_parse_allows_editing_commands_and_blocks_the_rest():
     assert commands.parse("uv run vedit --json fx apply snap_zoom --at 2", FILES)[:2] == ["fx", "apply"]
     assert commands.parse('text add "50/50 deal" --y 20%', FILES)[2] == "50/50 deal"  # a slash in text is not a path
     for bad, why in [("export", "not available"), ("undo", "not available"), ("split --at 2", "clip ops"),
-                     ("mask add --at 1 --box 1,2,3,4", "slow"), ("captions auto", "only `captions style`"),
+                     ("mask add --at 1 --box 1,2,3,4", "slow"), ("captions auto", "only `captions style\\|words`"),
                      ("text look save mine --from t1", "not available"), ("color lut /tmp/x.cube", "not available"),
                      ("frobnicate", "unknown command"), ("text add hi --project /tmp/x", "--project"), ('text add "oops', "parse")]:
         with pytest.raises(ValueError, match=why):

@@ -34,25 +34,19 @@ def _end(layer: Layer, total: float) -> float:
 
 
 def _words(layer: Layer) -> list[str]:
-    if layer.type == "captions":
-        return [w.text for w in layer.words]
     return (layer.text or "").split()
 
 
 # ---- text geometry ----------------------------------------------------------------------------
 
 def text_box(p: Project, layer: Layer) -> tuple[float, float, float, float] | None:
-    """Ink bounds of a text/captions layer at rest, as canvas fractions (x0, y0, x1, y1)."""
+    """Ink bounds of a text layer (a title or a caption phrase) at rest, as canvas fractions (x0, y0, x1, y1)."""
     from .ops.text import render_text
 
     if layer.type == "text":
         from .ops.motion import shown_text
 
         sample = shown_text(layer)  # a counter's final value
-    elif layer.type == "captions" and layer.words:
-        n = max(1, layer.words_per_group)
-        groups = [" ".join(w.text for w in layer.words[i:i + n]) for i in range(0, len(layer.words), n)]
-        sample = max(groups, key=len)
     else:
         return None
     if not sample.strip():
@@ -93,8 +87,10 @@ def check_hook(p: Project, pdir: Path) -> list[dict]:
 def check_readability(p: Project, pdir: Path) -> list[dict]:
     out = []
     total = p.duration
+    from .ops.captions import is_caption
+
     for l in p.layers:
-        if l.type != "text":
+        if l.type != "text" or is_caption(p, l):  # caption phrases are on screen while they're said
             continue
         n = len(_words(l))
         shown = _end(l, total) - l.start
@@ -108,7 +104,7 @@ def check_readability(p: Project, pdir: Path) -> list[dict]:
 
 def check_layout(p: Project, pdir: Path) -> list[dict]:
     """Safe zone of the project's platform for every visible layer (text, captions, stickers, shapes, picture-in-
-    picture; not full-frame backgrounds), measured by code (ops/safezone.py), and overlaps between text/captions on
+    picture; not full-frame backgrounds), measured by code (ops/safezone.py), and overlaps between text layers on
     screen at the same time."""
     from .ops import safezone
 
@@ -131,7 +127,7 @@ def check_layout(p: Project, pdir: Path) -> list[dict]:
                             f"vedit safe fix {l.id}"))
     boxes: list[tuple[Layer, tuple]] = []
     for l in p.layers:
-        if l.type not in ("text", "captions") or l.hidden:
+        if l.type != "text" or l.hidden:
             continue
         try:
             box = text_box(p, l)
@@ -169,7 +165,9 @@ def check_typography(p: Project, pdir: Path) -> list[dict]:
     from .ops import fonts
 
     out = []
-    texts = [l for l in p.layers if l.type == "text"]
+    from .ops.captions import is_caption
+
+    texts = [l for l in p.layers if l.type == "text" and not is_caption(p, l)]  # titles (captions have their own style)
     used = sorted({l.style.font or fonts.DEFAULT_FONT for l in texts})
     if len(used) > 2:
         out.append(_finding("should-fix", "typography", f"{len(used)} fonts across titles ({', '.join(used)}). Use one title "
@@ -423,10 +421,10 @@ def check_style(p: Project, pdir: Path) -> list[dict]:
         if off:
             out.append(_finding("note", "style", f"{l.id} eases with {', '.join(off)}; {s.name} moves on '{s.ease}'.", l.start,
                                 "", f"use ease '{s.ease}' on its keyframes / `vedit motion set {l.id} --ease {s.ease}`"))
-        if l.type in ("text", "captions") and l.style.font and s.fonts and l.style.font not in s.fonts:
+        if l.type == "text" and l.style.font and s.fonts and l.style.font not in s.fonts:
             out.append(_finding("should-fix", "style", f"{l.id} is in font {l.style.font}; {s.name} uses {', '.join(s.fonts)}.",
                                 l.start, "", f"vedit text edit {l.id} --font {s.fonts[0]}"))
-        if "glow" in s.forbid and l.type in ("text", "captions") and l.style.glow_color:
+        if "glow" in s.forbid and l.type == "text" and l.style.glow_color:
             out.append(_finding("should-fix", "style", f"{l.id} glows; {s.name} has no glow.", l.start, "",
                                 f"vedit text edit {l.id} --glow none"))
     for sc in p.scenes:

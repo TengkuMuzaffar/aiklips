@@ -19,7 +19,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 
-from .project import PROJECT_FILE, STATE_DIR, Project, VeditError, load, save
+from .project import PROJECT_FILE, STATE_DIR, Project, VeditError, load, migrate, save
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -185,7 +185,7 @@ def scan(root: Path | None = None) -> int:
 def _stats(pdir: Path) -> dict:
     try:
         data = json.loads((pdir / PROJECT_FILE).read_text())
-        p = Project.model_validate(data)
+        p = Project.model_validate(migrate(data))
     except Exception:
         return {"missing": not (pdir / PROJECT_FILE).exists(), "broken": True}
     first = p.clips[0].source if p.clips else None

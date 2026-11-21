@@ -12,12 +12,12 @@ from .conftest import needs_ffmpeg
 def test_retime_clip_shifts_later_overlays_and_keeps_attached_ones(make_project):
     p = make_project(2)  # c1: 0-5s, c2: 5-10s
     p.layers.append(Layer(id="t1", type="text", text="on c2", start=6.0, end=7.0))
-    p.layers.append(Layer(id="cap1", type="captions", start=1.0, end=2.0, words=[Word(text="hi", start=3.0, end=3.5)]))
+    p.layers.append(Layer(id="cap1", type="text", text="hi", start=3.0, end=3.8, words=[Word(text="hi", start=0.0, end=0.5)]))
     cut.retime_clip(p, "c1", 1.0, 5.0)  # trim 1s off the start of c1
     assert p.duration == pytest.approx(9.0)
     assert p.layer("t1").start == pytest.approx(5.0)  # moved up with c2
-    w = p.layer("cap1").words[0]
-    assert w.start == pytest.approx(2.0)  # still on the same spoken moment
+    cap = p.layer("cap1")
+    assert cap.start + cap.words[0].start == pytest.approx(2.0)  # still on the same spoken moment
 
 
 def test_retime_clip_extend_and_bounds(make_project):

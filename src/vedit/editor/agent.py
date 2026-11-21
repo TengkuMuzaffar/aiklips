@@ -577,7 +577,7 @@ def _attachment(p, n: int, a: dict, pdir: Path | None = None) -> str:
                     f"(source {c.source} {c.in_:.2f}-{c.out:.2f}s{', gap' if c.gap else ''})")
         if kind == "layer":
             l = p.layer(aid)
-            label = l.text or l.image or " ".join(w.text for w in l.words[:8]) or (l.shape if l.type == "shape" else f"{l.chart.kind} chart" if l.type == "chart" and l.chart else "")
+            label = l.text or l.image or (l.shape if l.type == "shape" else f"{l.chart.kind} chart" if l.type == "chart" and l.chart else "")
             end = l.end if l.end is not None else p.duration
             return f"{n}. {l.type} layer {l.id} {l.start:.2f}-{end:.2f}s, track {l.track} \"{str(label)[:50]}\""
         if kind == "range":
@@ -1036,7 +1036,7 @@ class ChatSession:
                                  f"{', '.join(str(e.params.get('id')) + ' ' + str(e.params.get('key')) if e.type == 'fx' else e.type for e in c.effects) or 'none'})")
             elif kind == "layer":
                 l = p.layer(sid)
-                label = l.text or l.image or " ".join(w.text for w in l.words[:8])
+                label = l.text or l.image or ""
                 extra = f", track {l.track}" + (" (hidden)" if l.hidden else "")
                 if l.type == "video":
                     extra += f", fit {l.fit}" + (", flipped" if l.flip_h or l.flip_v else "")

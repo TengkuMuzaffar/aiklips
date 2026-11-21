@@ -147,7 +147,7 @@ Available operations (the field `op` picks one; leave unrelated fields null):
   looks, layer animation and keyframes.
   They run in order AFTER the clips, titles, music, captions and colour grade are built, so they can build on
   them. Refer to things by reference, never by guessed ids or seconds:
-    @C3 = the plan's 3rd clip, @T1 = its 1st title, @captions = the captions layer, @name = the layer an earlier
+    @C3 = the plan's 3rd clip, @T1 = its 1st title, @captions = the captions group (its phrases are text layers), @name = the layer an earlier
     vedit op with that `name` added; add .start / .end / .mid for its timeline time, plus or minus seconds:
     "sfx add whoosh --at @C3.start-0.15 --volume 0.5", "animate preset @T1 pulse",
     "shape add rect --x 50% --y 24% --width 900 --height 200 --fill #111111CC --start @T1.start --end @T1.end" (name: card),

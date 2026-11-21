@@ -243,7 +243,7 @@ def info():
     layers = []
     for l in p.layers:
         row = {"id": l.id, "type": l.type, "track": l.track, "start": l.start, "end": l.end,
-               "text": l.text or (" ".join(w.text for w in l.words[:8]) if l.words else l.image),
+               "text": l.text or l.image,
                "presets": [x.name for x in l.presets], "keyframes": len(l.keyframes)}
         if l.hidden:
             row["hidden"] = True
@@ -705,12 +705,18 @@ def text_edit(
     list_style: Optional[str] = typer.Option(None, "--list", help="none | bullet | number (each line an item)"),
     align: Optional[str] = typer.Option(None, help="left | center | right"),
     line_spacing: Optional[float] = None,
+    highlight_words: Optional[bool] = typer.Option(None, "--highlight-words/--no-highlight-words",
+                                                   help="Caption phrase: draw the word being spoken in the highlight colour"),
 ):
-    """Change the text or style of a text/captions layer."""
+    """Change the text or style of a text layer (a caption phrase keeps its word times in step)."""
     with edit(f"edit text {layer_id}") as tx:
         l = tx.project.layer(layer_id)
         if text is not None:
-            l.text = text
+            caps.retext(l, text)
+        if highlight_words is not None:
+            if highlight_words and not l.words:
+                raise VeditError(f"{layer_id} has no word times (only caption phrases from `captions auto|srt` do)")
+            l.highlight_words = highlight_words
         l.style = _style_from(l.style, size=size, color=color, font=font, stroke_color=stroke, stroke_width=stroke_width,
                               bg_color=bg, max_width=max_width, uppercase=uppercase, highlight_color=highlight,
                               letter_spacing=letter_spacing, bold=bold, italic=italic, underline=underline, strike=strike,
@@ -741,7 +747,7 @@ def look_list():
 def look_apply(
     name: str,
     layer: Optional[list[str]] = typer.Option(None, "--layer", "-l", help="Layer id, repeatable (default: every text layer)"),
-    captions: bool = typer.Option(False, help="Also restyle captions layers (keeps their size)"),
+    group: Optional[str] = typer.Option(None, "--group", "-g", help="Every text layer of this group (e.g. the captions' gN)"),
     animation: bool = typer.Option(True, help="Also replace the layers' animation with the look's"),
 ):
     """Give layers one look, so every title in the edit matches."""
@@ -750,11 +756,19 @@ def look_apply(
     text_looks.get(name)
     with edit(f"text look {name}") as tx:
         p = tx.project
-        targets = [p.layer(i) for i in layer] if layer else [l for l in p.layers if l.type == "text" or (captions and l.type == "captions")]
+        if layer:
+            targets = [p.layer(i) for i in layer]
+        elif group:
+            from .ops import groups as grp
+
+            grp.get(p, group)
+            targets = [l for l in p.layers if l.group == group and l.type == "text"]
+        else:  # every title; captions only when asked for by --group (they keep their own caption style)
+            targets = [l for l in p.layers if l.type == "text" and not caps.is_caption(p, l)]
         if not targets:
             raise VeditError("No text layers to restyle")
         for l in targets:
-            if l.type not in ("text", "captions"):
+            if l.type != "text":
                 raise VeditError(f"Layer {l.id} is {l.type}, not text")
             text_looks.apply(l, name, animation=animation)
     emit({"layers": [l.id for l in targets], "look": name}, f"Look {name} on {', '.join(l.id for l in targets)}")
@@ -1505,7 +1519,7 @@ def layer_style(
 def layer_list():
     """List overlay layers."""
     p = load(pdir())
-    data = [l.model_dump(mode="json", exclude={"words"}) | {"words": len(l.words)} for l in p.layers]
+    data = [l.model_dump(mode="json", exclude={"words"}) | ({"words": len(l.words)} if l.words else {}) for l in p.layers]
     emit({"layers": data}, "\n".join(f"{l.id}: {l.type} {l.start}-{l.end} {l.text or l.image or ''}" for l in p.layers) or "No layers")
 
 
@@ -1602,20 +1616,29 @@ def anim_clear(layer_id: str):
 
 # ---- captions -----------------------------------------------------------------------
 
+def _caption_out(g, p) -> tuple[dict, str]:
+    ls = caps.phrases(p, g.id)
+    words = sum(len(l.words) for l in ls)
+    return ({"group": g.id, "phrases": [l.id for l in ls], "words": words, "text": " ".join(l.text or "" for l in ls)[:500]},
+            f"Added captions {g.id}: {len(ls)} phrases (text layers {ls[0].id}..{ls[-1].id}), {words} words")
+
+
 @cap_app.command("srt")
 def captions_srt(file: str, style: str = "bold", y: str = "72%", words: int = typer.Option(3, help="Words shown at once")):
-    """Import captions from an .srt file (word-by-word highlight)."""
+    """Import captions from an .srt file: one text layer per phrase, in a Captions group (word-by-word highlight)."""
     ws = caps.parse_srt(Path(file).expanduser().read_text(encoding="utf-8-sig"))
     with edit(f"captions from {Path(file).name}") as tx:
-        layer = caps.add_captions(tx.project, ws, style, y, words)
-    emit({"layer": layer.id, "words": len(layer.words)}, f"Added captions {layer.id} ({len(layer.words)} words)")
+        g = caps.add_captions(tx.project, ws, style, y, words)
+        data, msg = _caption_out(g, tx.project)
+    emit(data, msg)
 
 
 @cap_app.command("auto")
 def captions_auto(style: str = "bold", y: str = "72%", words: int = 3,
                   model: str = typer.Option("small", help="whisper model: tiny, base, small, medium, large-v3"),
                   language: Optional[str] = typer.Option(None, help="e.g. en, ms, id (auto-detect if empty)")):
-    """Transcribe the current timeline offline (faster-whisper) and add captions. Do this AFTER cutting."""
+    """Transcribe the current timeline offline (faster-whisper) and add captions: one text layer per phrase, in a
+    Captions group. Do this AFTER cutting."""
     from .render.runner import render_preview
 
     d = pdir()
@@ -1623,17 +1646,34 @@ def captions_auto(style: str = "bold", y: str = "72%", words: int = 3,
     res = render_preview(p, d, progress=not STATE["json"])
     ws = caps.transcribe(Path(res["output"]), model, language)
     with edit(f"auto captions ({len(ws)} words)") as tx:
-        layer = caps.add_captions(tx.project, ws, style, y, words)
-    emit({"layer": layer.id, "words": len(ws), "text": " ".join(w.text for w in ws)[:500]},
-         f"Added captions {layer.id}: {' '.join(w.text for w in ws)[:200]}")
+        g = caps.add_captions(tx.project, ws, style, y, words)
+        data, msg = _caption_out(g, tx.project)
+    emit(data, msg)
 
 
 @cap_app.command("style")
-def captions_style(layer_id: str, style: str):
-    """Switch a captions layer to another style: bold, boxed, minimal, neon, karaoke."""
+def captions_style(first: str = typer.Argument(..., metavar="[GROUP] STYLE"), second: Optional[str] = typer.Argument(None, hidden=True)):
+    """Restyle every phrase of the captions: bold, boxed, minimal, neon, karaoke (`captions style g1 neon`, or just
+    `captions style neon` for the project's captions)."""
+    style, group = (first, second) if first in caps.CAPTION_STYLES else (second or "", first)
     with edit(f"caption style {style}") as tx:
-        tx.project.layer(layer_id).style = caps.style_for(style)
-    emit({"layer": layer_id, "style": style}, f"{layer_id} -> {style}")
+        g = caps.style_group(tx.project, group, style)
+    emit({"group": g.id, "style": style}, f"captions {g.id} -> {style}")
+
+
+@cap_app.command("words")
+def captions_words(first: str = typer.Argument(..., metavar="[GROUP] N"), second: Optional[str] = typer.Argument(None, hidden=True)):
+    """Show N words at once (`captions words g1 2`, or `captions words 2`): rebuilds the phrases, so each phrase's
+    own edits are replaced."""
+    n_s, group = (second, first) if second is not None else (first, None)
+    try:
+        n = int(n_s)
+    except ValueError:
+        raise VeditError(f"Words at once must be a number, not '{n_s}'") from None
+    with edit(f"captions {n} words at once") as tx:
+        g = caps.captions_group(tx.project, group)
+        ls = caps.regroup(tx.project, g.id, max(1, min(8, n)))
+    emit({"group": g.id, "phrases": [l.id for l in ls]}, f"captions {g.id}: {len(ls)} phrases of up to {n} words")
 
 
 # ---- effects --------------------------------------------------------------------------

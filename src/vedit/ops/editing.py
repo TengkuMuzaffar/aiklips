@@ -170,7 +170,7 @@ def paste_attributes(p: Project, kind: str, src_id: str, targets: list[str], gro
             continue
         dst = get(tid)
         for g in groups:
-            if kind == "layer" and g == "style" and (dst.type not in ("text", "captions") or src.type not in ("text", "captions")):
+            if kind == "layer" and g == "style" and (dst.type != "text" or src.type != "text"):
                 continue  # text style only means something on text
             for f in table[g]:
                 if f == "speed":  # retimes the clip and moves the overlays after it, like the Speed field

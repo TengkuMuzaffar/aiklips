@@ -80,17 +80,18 @@ def remap_overlays(project: Project, fn: Callable[[float], float]) -> list[str]:
     removed = []
     keep = []
     for layer in project.layers:
-        if layer.words:
+        start = fn(layer.start)
+        if layer.words:  # a caption phrase: its words (seconds from the phrase's start) follow the footage too
             words = []
             for w in layer.words:
-                s, e = fn(w.start), fn(w.end)
+                s, e = fn(layer.start + w.start), fn(layer.start + w.end)
                 if e - s > EPS:
-                    words.append(w.model_copy(update={"start": round(s, 3), "end": round(e, 3)}))
+                    words.append(w.model_copy(update={"start": round(max(0.0, s - start), 3), "end": round(max(0.0, e - start), 3)}))
             layer.words = words
-            if not words:
+            if not words:  # every word was cut: the phrase goes
                 removed.append(layer.id)
                 continue
-        start = fn(layer.start)
+            layer.text = " ".join(w.text for w in words)
         end = None if layer.end is None else fn(layer.end)
         if end is not None and end - start < EPS:
             removed.append(layer.id)

@@ -582,7 +582,7 @@ body.ai-busy #t-mask, body.ai-busy #t-focus, body.ai-busy #b-undo, body.ai-busy 
 .blk.clip { background-color: var(--clip); background-repeat: repeat-x; background-position: 0 18px; background-size: auto calc(100% - 18px); border-color: var(--clip-b); }
 .blk.text { background: var(--text-l); border-color: var(--text-b); }
 .blk.image { background: var(--img-l); border-color: var(--img-b); }
-.blk.captions { background: var(--cap-l); border-color: var(--cap-b); }
+.blk.group.captions { background: var(--cap-l); border-color: var(--cap-b); color: inherit; }
 .blk.video { background: var(--vid-l); border-color: var(--vid-b); }
 .blk.shape { background: var(--shp-l); border-color: var(--shp-b); }
 .blk.adjust { background: repeating-linear-gradient(135deg, var(--adj-l) 0 8px, #2a2f3a 8px 16px); border-color: var(--adj-b); }
@@ -1215,7 +1215,7 @@ const OP_LABELS = {
   add_text: ["Adding text", "", "Rendering preview"],
 };
 // edits that only change overlay layers: in live mode the browser redraws them, no video render needed
-const OVERLAY_OPS = new Set(["layer_set", "text_look", "layer_add_text", "layer_remove", "preset_add", "preset_remove", "keyframes_clear", "clip_why", "rename",
+const OVERLAY_OPS = new Set(["layer_set", "text_look", "captions_words", "captions_style", "layer_add_text", "layer_remove", "preset_add", "preset_remove", "keyframes_clear", "clip_why", "rename",
   "layer_add_video", "layer_add_shape", "overlay_add", "layer_move", "layer_place", "layer_add_media", "marker_add", "marker_set", "marker_remove", "keyframe_set", "keyframe_remove"]);
 function editLabel(url, body) {
   if (url === "/api/op" && liveMode() && OVERLAY_OPS.has(body?.op)) return null;
@@ -1340,7 +1340,7 @@ function markDirty(l) { CONTENT.delete(l); }
 function contentKey(l) {
   let k = CONTENT.get(l);
   if (!k) {
-    k = JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, words: l.words, wpg: l.words_per_group,
+    k = JSON.stringify({ type: l.type, text: l.text, style: l.style, image: l.image, width: l.width, words: l.words, hw: l.highlight_words,
       // frame styling / shape: drawn into the sprite
       radius: l.radius, bw: l.border_width, bc: l.border_color, mask: l.mask, chroma: l.chroma, cs: l.chroma_similarity,
       shape: l.shape, height: l.height, fill: l.fill, fg: l.fill_gradient, ga: l.gradient_angle, sides: l.sides, points: l.points, inner: l.inner,
@@ -1354,10 +1354,10 @@ function contentKey(l) {
 const KEND = new Map(); // kinetic text: content key -> seconds until it stops moving (X-Kinetic-End)
 function spriteFetch(l, opts) {
   const { ctext, ...rest } = opts; // ctext: a counter's text at this moment (animate.js counterText)
-  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.group ?? ""}|${opts.hi ?? ""}|${opts.motion ? JSON.stringify(opts.motion) : ""}|${ctext ?? ""}`;
+  const key = `${contentKey(l)}|${SPR_SCALE}|${opts.reveal ?? ""}|${opts.hi ?? ""}|${opts.motion ? JSON.stringify(opts.motion) : ""}|${ctext ?? ""}`;
   if (SPRITES.has(key) || SPR_WAIT.has(key)) return key;
   const layer = { keyframes: [], presets: [] }; // the transform is applied here, not baked into the sprite
-  // the browser's own caches on a layer (`_groups` for captions) aren't layer fields: the server rejects unknown fields
+  // `_`-fields are the page's own caches on a layer, not layer fields: the server rejects unknown fields
   for (const [k, v] of Object.entries(l)) if (!k.startsWith("_") && k !== "keyframes" && k !== "presets") layer[k] = v;
   if (ctext != null) { layer.text = ctext; layer.counter = null; }
   const ck = contentKey(l);
@@ -1414,22 +1414,12 @@ function spriteFor(l, T, pr) {
   if (l.type === "text") {
     const total = (l.text || "").split(/\s+/).filter(Boolean).reduce((a, w) => a + w.length, 0);
     const k = VAnim.pyRound(total * pr.reveal);
-    return [spriteFetch(l, k >= total ? {} : { reveal: k }), 1];
-  }
-  let groups = l._groups;
-  if (!groups || l._groupsKey !== contentKey(l)) { groups = l._groups = VAnim.captionGroups(l); l._groupsKey = contentKey(l); }
-  const W = l.words;
-  for (let gi = 0; gi < groups.length; gi++) {
-    const g = groups[gi], gs = W[g[0]].start;
-    const ge = gi + 1 < groups.length ? W[groups[gi + 1][0]].start : W[g[g.length - 1]].end + 0.3;
-    if (gs <= T && T < ge) {
-      let hi = 0;
-      g.forEach((wi, j) => { if (W[wi].start <= T) hi = j; });
-      // warm up the rest of this group and the next one so playback never waits
-      g.forEach((_, j) => j !== hi && spriteFetch(l, { group: gi, hi: j }));
-      if (gi + 1 < groups.length) groups[gi + 1].forEach((_, j) => spriteFetch(l, { group: gi + 1, hi: j }));
-      return [spriteFetch(l, { group: gi, hi }), 0.86 + 0.14 * VAnim.ease("back_out", (T - gs) / 0.15)];
+    const o = k >= total ? {} : { reveal: k };
+    if (l.highlight_words && (l.words || []).length) { // a caption phrase: the word being spoken (ops/captions.py)
+      o.hi = VAnim.wordAt(l, T - l.start);
+      if (o.hi + 1 < l.words.length) spriteFetch(l, { ...o, hi: o.hi + 1 }); // warm up the next word
     }
+    return [spriteFetch(l, o), 1];
   }
   return [null, 1];
 }
@@ -1971,7 +1961,7 @@ function layerLabel(l) {
   if (l.type === "obj3d") return `3D ${l.obj3d?.kind === "text" ? `“${l.obj3d.text || ""}”` : l.obj3d?.kind || ""}`;
   if (l.type === "chart") return `${l.chart?.kind || "bar"} chart: ${(l.chart?.items || []).map((i) => i.label || i.value).slice(0, 4).join(", ")}`;
   if (l.type === "adjust") return [l.grade?.look, ...(l.effects || []).filter((e) => e.type === "fx").map((e) => e.params.key), l.grade && !l.grade.look ? "colour" : null].filter(Boolean).join(" + ") || "adjustment";
-  return l.words.slice(0, 6).map((w) => w.text).join(" ");
+  return l.text || "";
 }
 function sourceName(s) { return s.path.split(/[\\/]/).pop(); }
 // Cache keys for per-source URLs. Source ids (s1, s2...) repeat in every project, so a URL like
@@ -3599,7 +3589,7 @@ function renderLayer(l) {
   const togglePreset = (n) => (hasPreset(n) ? op("preset_remove", { layer: l.id, name: n }) : op("preset_add", { layer: l.id, name: n }));
   const s = l.style;
   const lf = (k) => (v) => { l[k] = v; markDirty(l); }; // live frame / shape change (sprite redraws)
-  const isText = l.type === "text" || l.type === "captions";
+  const isText = l.type === "text";
   const src = l.type === "video" ? P().sources[l.source] : null;
   // motion graphics (ops/motion.py, ops/chart.py): kinetic text, counters, draw-on, morph, chart data
   const ch = l.chart || {};
@@ -3718,8 +3708,9 @@ function renderLayer(l) {
     crumb("Layers", l.id),
     h("div", { class: "fields" },
       l.type === "text" ? [h("label", { class: "full" }, "Text"), h("textarea", { class: "full", rows: 3, value: l.text || "", onchange: (e) => set({ text: e.target.value }), oninput: (e) => { l.text = e.target.value; markDirty(l); } })] : [],
-      l.type === "captions" ? [field("Words", h("span", { class: "hint" }, `${l.words.length} words · “${layerLabel(l)}…”`)),
-        field("Words at once", numIn(l.words_per_group, (v) => set({ words_per_group: v }), 1, { min: 1, max: 8 }))] : [],
+      (l.words || []).length ? [field("Spoken word", h("label", { class: "pair", title: "Draw the word being said in the highlight colour (set under Colour)" },
+          h("input", { type: "checkbox", checked: !!l.highlight_words, onchange: (e) => set({ highlight_words: e.target.checked }) }), h("span", { class: "hint" }, "highlight as it's spoken"))),
+        l.group ? field("Captions", h("button", { class: "ghost", onclick: () => select({ kind: "group", id: l.group }) }, "All captions: words at once, style…")) : null] : [],
       l.type === "image" ? field("Image", h("span", { class: "hint" }, layerLabel(l))) : [],
       field("Start / end", h("div", { class: "pair" }, numIn(l.start.toFixed(2), (v) => set({ start: v }), 0.05, { min: 0 }),
         numIn(l.end == null ? "" : l.end.toFixed(2), (v) => set({ end: v }), 0.05, { placeholder: "end" }))),
@@ -3746,7 +3737,7 @@ function renderLayer(l) {
         h("button", { class: "ghost", title: "Send backward", onclick: () => op("layer_move", { layer: l.id, to: "down" }) }, "↓"),
         h("button", { class: "ghost", title: "Send to back", onclick: () => op("layer_move", { layer: l.id, to: "back" }) }, "⤓")),
       h("button", { class: "danger", onclick: () => op("layer_remove", { layer: l.id }) }, "Delete layer"),
-      l.type !== "captions" ? h("button", { title: "Reuse this layer (Shift+click more layers first to include them) in any project", onclick: () => saveTemplate(l) }, "Save as template…") : null,
+      !(l.words || []).length ? h("button", { title: "Reuse this layer (Shift+click more layers first to include them) in any project", onclick: () => saveTemplate(l) }, "Save as template…") : null,
       h("button", { onclick: () => askAbout(`layer ${l.id}`) }, "Ask AI to animate…")),
   ];
 }
@@ -3930,6 +3921,7 @@ function isoPicker(l) { // the item library: pick one, it lands on a free spot o
   draw(); setTimeout(() => search.focus(), 50);
 }
 
+const CAPTION_STYLES = ["bold", "boxed", "minimal", "neon", "karaoke"]; // ops/captions.py CAPTION_STYLES
 function renderGroup(gid) {
   const p = P(), g = (p.groups || []).find((x) => x.id === gid);
   if (!g) return [h("div", { class: "empty" }, "This group is gone.")];
@@ -3941,6 +3933,12 @@ function renderGroup(gid) {
       field("Name", textIn(g.name, (v) => v.trim() && op("group_set", { group: gid, name: v.trim() }))),
       field("Starts at", h("div", { class: "pair" }, numIn(s.toFixed(2), (v) => op("group_move", { group: gid, to: +v }), 0.05, { min: 0, title: "Moves every part together" }),
         h("span", { class: "hint" }, `to ${fmt(e)} · ${ls.length} parts`))),
+      g.kind === "captions" ? [ // captions = one text layer per phrase (ops/captions.py)
+        field("Words at once", numIn(g.per_group ?? 3, (v) => op("captions_words", { group: gid, n: Math.max(1, Math.min(8, Math.round(+v))) }), 1,
+          { min: 1, max: 8, title: "Rebuilds the phrases (each phrase's own edits are replaced)" })),
+        field("Style", h("select", { onchange: (ev) => ev.target.value && op("captions_style", { group: gid, style: ev.target.value }) },
+          h("option", { value: "" }, "Apply a caption style…"), ...CAPTION_STYLES.map((n) => h("option", { value: n }, n)))),
+      ] : [],
       [h("label", { class: "full" }, "Parts (click one to edit it)"), h("div", { class: "chips full" }, ls.map((l) => h("button", { class: "ghost", style: { fontSize: "12px" },
         onclick: async () => { if (g.collapsed) await op("group_set", { group: gid, collapsed: false }); select({ kind: "layer", id: l.id }); } },
         `${l.id} · ${(layerLabel(l) || l.type).slice(0, 20)}`)))]),
@@ -4965,7 +4963,7 @@ function renderTimeline() {
   // tracks, CapCut-style: the top row is drawn on top. Equal tracks: the video track (the clips) sits among them at
   // height main_z (tracks under it show through its gaps, bars and keyed backgrounds). Layers share a track when their
   // times don't overlap; drag a block up / down to put it above or below others, or onto "New track"
-  const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"], captions: ["captions", "Captions", "var(--cap-b)"],
+  const TYPE_META = { text: ["type", "Text", "var(--text-b)"], image: ["image", "Image", "var(--img-b)"],
     video: ["film", "Video", "var(--vid-b)"], shape: ["shape", "Shape", "var(--shp-b)"], adjust: ["sliders", "Adjust", "var(--adj-b)"],
     chart: ["chart", "Chart", "var(--shp-b)"], glass: ["panels", "Glass", "var(--adj-b)"], iso: ["shape", "Iso world", "var(--shp-b)"], obj3d: ["shape", "3D", "var(--shp-b)"] };
   const rowLayers = p.layers.filter((l) => !l.on_video); // the video track's own elements are drawn in its lane
@@ -5022,17 +5020,19 @@ function renderTimeline() {
   const groupRow = (gid, tracks) => {
     const g = GROUPS.get(gid), ls = rowLayers.filter((l) => l.group === gid && tracks.includes(l.track ?? 0));
     const s = Math.min(...ls.map((l) => l.start)), e = Math.max(...ls.map((l) => layerEnd(l)));
-    const el = lane("track grp" + sq(false), LANES.layer + 6, "layers", g.name, `${ls.length}`, "var(--ai)");
+    const cap = g.kind === "captions";
+    const el = lane("track grp" + sq(false), LANES.layer + 6, cap ? "captions" : "layers", g.name, `${ls.length}`, cap ? "var(--cap-b)" : "var(--ai)");
     const head = heads.lastElementChild;
     head.title = `${g.name}: ${ls.length} layers on ${tracks.length} track${tracks.length > 1 ? "s" : ""}, kept together. Click the block to edit it; the arrow shows its tracks.`;
     head.classList.add("grp-h");
     headBtn(head, "chevron-down", "Show this group's tracks (edit its parts one by one)", () => op("group_set", { group: gid, collapsed: false }));
     const selIn = (SEL?.kind === "group" && SEL.id === gid) || (SEL?.kind === "layer" && ls.some((l) => l.id === SEL.id));
-    const b = h("div", { class: "blk group" + (selIn ? " sel" : ""), "data-id": gid,
+    const b = h("div", { class: "blk group" + (cap ? " captions" : "") + (selIn ? " sel" : ""), "data-id": gid,
       title: `${g.name} · ${fmt(s)}–${fmt(e)} · ${ls.length} layers\nDrag to move the whole effect · click for its settings`,
       style: { left: `${s * PPS}px`, width: `${Math.max(6, (e - s) * PPS - 1)}px` } },
       ...ls.map((l) => h("span", { class: "gtick", style: { left: `${(l.start - s) * PPS}px` } })),
-      h("div", { class: "bl" }, icon("layers"), h("span", { class: "nm" }, g.name), h("span", { class: "badge" }, `${ls.length} parts`)));
+      h("div", { class: "bl" }, icon(cap ? "captions" : "layers"), h("span", { class: "nm" }, cap ? ls.map((l) => l.text).join(" · ") : g.name),
+        h("span", { class: "badge" }, cap ? `${ls.length} phrases` : `${ls.length} parts`)));
     b.addEventListener("pointerdown", (ev) => dragSpan(ev, b, { s0: s, e0: e, id: gid, lanes: false,
       onClick: () => select({ kind: "group", id: gid }),
       commit: (ns) => op("group_move", { group: gid, delta: +(ns - s).toFixed(3) }) }));
@@ -5049,7 +5049,8 @@ function renderTimeline() {
   const trackRow = (t) => {
     const ls = rowLayers.filter((l) => (l.track ?? 0) === t);
     const types = [...new Set(ls.map((l) => l.type))];
-    const meta = types.length === 1 ? TYPE_META[types[0]] : ["layers", "Overlay", "var(--muted)"];
+    const capG = trackGroup(t) && GROUPS.get(trackGroup(t))?.kind === "captions"; // a captions group's phrases
+    const meta = capG ? ["captions", "Captions", "var(--cap-b)"] : types.length === 1 ? TYPE_META[types[0]] : ["layers", "Overlay", "var(--muted)"];
     const el = lane("track" + sq(ls.some((l) => FX_OPEN.has(l.id))), ls.some((l) => l.type === "video") ? LANES.vlayer : LANES.layer, meta[0], meta[1], "", meta[2]);
     heads.lastElementChild.title = `Track ${t + 1} of ${nTracks}` + (t === nTracks - 1 && MZ < nTracks ? " (top: drawn over everything)" : "") +
       (t < MZ ? " (under the video: shows where the video is transparent)" : "") + "\nHigher tracks are drawn on top of lower ones. Drag a block up or down to change that.";

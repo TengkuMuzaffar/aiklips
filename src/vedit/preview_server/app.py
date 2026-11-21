@@ -1298,11 +1298,11 @@ def create_app(pdir: Path | None = None, watch: bool = True, chat: bool = True, 
 
         d = host.need()
         opt = lambda k: None if body.get(k) is None else int(body[k])  # noqa: E731
-        # `_`-fields are the page's own caches on a layer (e.g. a captions layer's word groups), never layer data
+        # `_`-fields are the page's own caches on a layer, never layer data
         layer = {k: v for k, v in (body.get("layer") or {}).items() if not str(k).startswith("_")}
         try:
             png = await asyncio.to_thread(sprite_png, d, layer, float(body.get("scale", 0.5)),
-                                          opt("reveal"), opt("group"), opt("hi"), body.get("motion"))
+                                          opt("reveal"), opt("hi"), body.get("motion"))
         except VeditError as e:
             raise bad(e)
         except (ValueError, TypeError) as e:

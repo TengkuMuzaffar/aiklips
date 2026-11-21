@@ -1,4 +1,4 @@
-"""Render overlay layers (text / image / captions / video / shape) to transparent video files.
+"""Render overlay layers (text, including caption phrases / image / video / shape) to transparent video files.
 
 Each layer becomes a full-canvas RGBA video (PNG-in-MOV) for its own duration,
 cached by a hash of everything that affects its pixels.
@@ -15,12 +15,12 @@ from PIL import Image
 
 from .. import media
 from ..ops.animate import props_at
-from ..ops.animate import ease
 from ..ops.overlay_style import render_shape, style_frame, video_width
+from ..ops.captions import word_at
 from ..ops.text import find_font, render_image, render_text
 from ..project import Layer, Project, VeditError, resolve_media, state_dir
 
-RENDER_VERSION = "7"
+RENDER_VERSION = "8"
 FRAME_BUDGET = 256 * 1024 * 1024  # bytes of distinct layer frames kept between the measuring and the encoding pass
 
 
@@ -34,7 +34,7 @@ def layer_span(layer: Layer, total: float) -> tuple[float, float]:
 
 
 def _cache_key(project: Project, pdir: Path, layer: Layer, scale: float) -> str:
-    extra = {"font": find_font(layer.style.font) if layer.type in ("text", "captions") else None, "v": RENDER_VERSION,
+    extra = {"font": find_font(layer.style.font) if layer.type == "text" else None, "v": RENDER_VERSION,
              "scale": scale, "fps": project.canvas.fps}
     media_path = None
     if layer.type == "image" and layer.image:
@@ -55,21 +55,6 @@ def _cache_key(project: Project, pdir: Path, layer: Layer, scale: float) -> str:
         sort_keys=True,
     )
     return hashlib.sha1(blob.encode()).hexdigest()[:16]
-
-
-def _caption_groups(layer: Layer) -> list[list[int]]:
-    groups: list[list[int]] = []
-    cur: list[int] = []
-    for i, w in enumerate(layer.words):
-        if cur:
-            prev = layer.words[cur[-1]]
-            if len(cur) >= layer.words_per_group or w.start - prev.end > 0.5 or prev.text.rstrip()[-1:] in ".?!":
-                groups.append(cur)
-                cur = []
-        cur.append(i)
-    if cur:
-        groups.append(cur)
-    return groups
 
 
 def video_size(project: Project, layer: Layer, scale: float) -> tuple[int, int]:
@@ -166,8 +151,6 @@ class _SpriteSource:
             self.image = render_shape(layer, scale)
         if layer.type == "video":
             self.video = _VideoFrames(project, pdir, layer, scale, dur)
-        if layer.type == "captions":
-            self.groups = _caption_groups(layer)
         self.kinetic = None
         if layer.type == "text" and layer.split != "none" and not layer.counter:
             from ..ops.motion import Kinetic
@@ -240,27 +223,14 @@ class _SpriteSource:
 
             text = shown_text(L, (pr or {}).get("count", 1.0))
             total = sum(len(w) for w in text.split())
-            key = (text, round(total * reveal))
+            # a caption phrase: the word being spoken in the highlight colour (ops/captions.py)
+            hi = word_at(L, t_abs - L.start) if L.highlight_words and L.words else None
+            key = (text, round(total * reveal), hi)
             if key not in self.cache:
                 if len(self.cache) > 512:
                     self.cache.clear()
-                self.cache[key] = render_text(text, L.style, self.scale, reveal=key[1] / total if total else 1.0)
+                self.cache[key] = render_text(text, L.style, self.scale, highlight=hi, reveal=key[1] / total if total else 1.0)
             return self.cache[key], 1.0
-        # captions
-        words = L.words
-        for gi, g in enumerate(self.groups):
-            g_start = words[g[0]].start
-            g_end = words[self.groups[gi + 1][0]].start if gi + 1 < len(self.groups) else words[g[-1]].end + 0.3
-            if g_start <= t_abs < g_end:
-                hi = 0
-                for j, wi in enumerate(g):
-                    if words[wi].start <= t_abs:
-                        hi = j
-                key = (gi, hi)
-                if key not in self.cache:
-                    self.cache[key] = render_text(" ".join(words[wi].text for wi in g), L.style, self.scale, highlight=hi)
-                pop = 0.86 + 0.14 * ease("back_out", (t_abs - g_start) / 0.15)
-                return self.cache[key], pop
         return None, 1.0
 
 

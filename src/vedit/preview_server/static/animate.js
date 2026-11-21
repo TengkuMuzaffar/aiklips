@@ -85,7 +85,9 @@
 
   // fn(props, p, t, params)
   const fade = (pr, p) => { pr.opacity *= ease("ease_out", p); };
-  const pop = (pr, p) => { pr.scale *= Math.max(0, ease("back_out", p)); pr.opacity *= Math.min(1, p * 3); };
+  const pop = (pr, p, t, k) => { // from: start scale (0 = from nothing, fading in; captions pop from 0.86, fully visible)
+    const f = num(k.from, 0); pr.scale *= f + (1 - f) * Math.max(0, ease("back_out", p)); if (f <= 0) pr.opacity *= Math.min(1, p * 3);
+  };
   const slide = (pr, p, t, k) => {
     const d = num(k.distance, 220), dir = k.direction || "up", off = (1 - ease("ease_out", p)) * d;
     if (dir === "up") pr.y += off; else if (dir === "down") pr.y -= off;
@@ -273,20 +275,11 @@
     return pr;
   }
 
-  // same word grouping as render/layers.py _caption_groups
-  function captionGroups(layer) {
-    const groups = [], words = layer.words || [];
-    let cur = [];
-    words.forEach((w, i) => {
-      if (cur.length) {
-        const prev = words[cur[cur.length - 1]];
-        const last = prev.text.trimEnd().slice(-1);
-        if (cur.length >= layer.words_per_group || w.start - prev.end > 0.5 || ".?!".includes(last)) { groups.push(cur); cur = []; }
-      }
-      cur.push(i);
-    });
-    if (cur.length) groups.push(cur);
-    return groups;
+  // a caption phrase: the word being spoken t seconds into the layer (same as ops/captions.py word_at)
+  function wordAt(layer, t) {
+    let hi = 0;
+    (layer.words || []).forEach((w, j) => { if (w.start <= t + 1e-9) hi = j; });
+    return hi;
   }
 
   // Python's round(): halves go to the even neighbour
@@ -308,7 +301,7 @@
     return `${c.prefix ?? ""}${v < 0 && n > 0 ? "-" : ""}${ip}${frac}${c.suffix ?? ""}`;
   }
 
-  const api = { counterText, ease, parsePos, propsAt, travelAt, captionGroups, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
+  const api = { counterText, ease, parsePos, propsAt, travelAt, wordAt, presetDuration, pyRound, mixHex, PRESETS, EASINGS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.VAnim = api;
 })(typeof window !== "undefined" ? window : globalThis);

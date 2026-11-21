@@ -134,7 +134,8 @@ def test_caption_zone_is_lower_than_titles(make_project):
     from vedit.project import Word
 
     p = make_project(1)
-    p.layers.append(Layer(id="cap1", type="captions", y="74%", words=[Word(text="hello", start=0, end=0.5), Word(text="there", start=0.5, end=1)]))
+    p.layers.append(Layer(id="cap1", type="text", text="hello there", y="74%", start=0, end=1.2,
+                          words=[Word(text="hello", start=0, end=0.5), Word(text="there", start=0.5, end=1)]))
     assert not _f(audit_mod.check_layout(p, None), "safe-zone")
 
 

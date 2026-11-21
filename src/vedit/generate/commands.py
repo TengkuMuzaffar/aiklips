@@ -46,7 +46,7 @@ DENIED = {
                     "app-wide settings or another tool, not part of one edit"),
     **dict.fromkeys(["bg", "face", "mask", "focus"], "slow AI tracking / segmentation: too slow for a batch, use it in the editor"),
 }
-SUB_ALLOWED = {"captions": {"style"}}  # captions themselves come from the plan's captions op (auto-transcribed)
+SUB_ALLOWED = {"captions": {"style", "words"}}  # captions themselves come from the plan's captions op (auto-transcribed)
 SUB_DENIED = {"text": {"look save", "look delete"}, "iso": {"scene"}, "color": {"lut"}, "overlay": {"library"}}
 FILE_CMDS = {("overlay", "add"), ("image", "add"), ("music", "add")}  # first argument is a file
 TIMEOUT_S = 180
@@ -76,7 +76,7 @@ def parse(command: str, files: dict[str, dict]) -> list[str]:
         raise ValueError(f"unknown command `{cmd}`")
     sub = " ".join(a for a in args[1:3] if not a.startswith("-"))
     if cmd in SUB_ALLOWED and not any(sub == s or sub.startswith(s + " ") for s in SUB_ALLOWED[cmd]):
-        raise ValueError(f"only `{cmd} {'|'.join(SUB_ALLOWED[cmd])}` is available here")
+        raise ValueError(f"only `{cmd} {'|'.join(sorted(SUB_ALLOWED[cmd]))}` is available here")
     for s in SUB_DENIED.get(cmd, ()):
         if sub == s or sub.startswith(s + " "):
             raise ValueError(f"`{cmd} {s}` is not available here")

@@ -149,15 +149,17 @@ def style_for(name: str, base: TextStyle | None = None, **overrides) -> TextStyl
 
 
 def apply(layer: Layer, name: str, animation: bool = True) -> None:
-    """Restyle a layer with a look. Captions keep their own size and word timing."""
+    """Restyle a layer with a look. Caption phrases (text with word times) keep their size, width and highlight, and
+    get no look animation (their pop stays)."""
     from . import animate as anim
 
     look = get(name)
-    keep = {"size": layer.style.size, "max_width": layer.style.max_width} if layer.type == "captions" else {}
-    if layer.type == "captions":
+    cap = bool(layer.words)
+    keep = {"size": layer.style.size, "max_width": layer.style.max_width} if cap else {}
+    if cap:
         keep["highlight_color"] = look.get("style", {}).get("highlight_color") or layer.style.highlight_color
     layer.style = style_for(name, **keep)
-    if layer.type == "captions":
+    if cap:
         return
     for k, v in (look.get("layer") or {}).items():
         setattr(layer, k, v)
@@ -174,7 +176,7 @@ def save(name: str, layer: Layer, about: str = "") -> dict:
         raise VeditError("Look names are lowercase letters, digits and dashes, e.g. 'my-brand'")
     if key in BUILTIN:
         raise VeditError(f"'{key}' is a built-in look; pick another name")
-    if layer.type not in ("text", "captions"):
+    if layer.type != "text":
         raise VeditError(f"Layer {layer.id} is not text")
     style = {k: v for k, v in layer.style.model_dump().items() if k != "look"}
     look = {"about": about or f"Saved from layer {layer.id}", "style": style,

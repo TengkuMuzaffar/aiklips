@@ -20,28 +20,27 @@ from pathlib import Path
 
 from ..ops.text import render_image, render_text
 from ..project import Layer, VeditError, resolve_media
-from ..render.layers import _caption_groups
 
 _CACHE: OrderedDict[str, bytes] = OrderedDict()
 _CACHE_MAX = 600
 _LOCK = threading.Lock()
 
 
-def _key(pdir: Path, layer: dict, scale: float, reveal: int | None, group: int | None, hi: int | None, motion=None) -> str:
+def _key(pdir: Path, layer: dict, scale: float, reveal: int | None, hi: int | None, motion=None) -> str:
     extra = None
     if layer.get("type") == "image" and layer.get("image"):
         p = resolve_media(pdir, layer["image"])
         extra = p.stat().st_mtime if p.exists() else 0
-    blob = json.dumps([str(pdir), layer, round(scale, 3), reveal, group, hi, extra, motion], sort_keys=True, default=str)
+    blob = json.dumps([str(pdir), layer, round(scale, 3), reveal, hi, extra, motion], sort_keys=True, default=str)
     return hashlib.sha1(blob.encode()).hexdigest()
 
 
 def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | None = None,
-               group: int | None = None, hi: int | None = None, motion: dict | None = None) -> bytes:
+               hi: int | None = None, motion: dict | None = None) -> bytes:
     """PNG of one layer's sprite (tight box, drawn centred on the layer's x/y).
 
     text:     `reveal` = number of characters shown (typewriter); None = all
-    captions: `group` = word group index (same grouping as the export), `hi` = highlighted word in it
+    text:     `hi` = the caption phrase's word being spoken (drawn in the highlight colour); None = none
     image:    the image at its layer width
     motion:   {draw, morph, count: 0..1, kt: seconds since the layer start (kinetic text, 3D legs / wheels),
               yaw / pitch / roll: a 3D object's turn in degrees}, the moment's values
@@ -51,7 +50,7 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
     mo = {k: round(max(0.0, min(1.0 if k != "kt" else 600.0, float(v))), 4) for k, v in (motion or {}).items()
           if k in ("draw", "morph", "count", "kt") and v is not None}
     mo.update({k: round(float(v), 2) for k, v in (motion or {}).items() if k in ("yaw", "pitch", "roll") and v is not None})
-    k = _key(pdir, layer_data, scale, reveal, group, hi, mo)
+    k = _key(pdir, layer_data, scale, reveal, hi, mo)
     with _LOCK:
         if k in _CACHE:
             _CACHE.move_to_end(k)
@@ -92,13 +91,8 @@ def sprite_png(pdir: Path, layer_data: dict, scale: float = 0.5, reveal: int | N
         text = shown_text(layer, mo.get("count", 1.0))
         total = sum(len(w) for w in text.split())
         frac = 1.0 if reveal is None or not total else max(0, min(reveal, total)) / total
-        img = render_text(text, layer.style, scale, reveal=frac)
-    else:  # captions
-        groups = _caption_groups(layer)
-        if group is not None and 0 <= group < len(groups):
-            g = groups[group]
-            img = render_text(" ".join(layer.words[i].text for i in g), layer.style, scale,
-                              highlight=max(0, min(hi or 0, len(g) - 1)))
+        hl = None if hi is None or not layer.highlight_words else max(0, min(int(hi), len(text.split()) - 1))
+        img = render_text(text, layer.style, scale, highlight=hl, reveal=frac)
     buf = io.BytesIO()
     if img is None:
         from PIL import Image

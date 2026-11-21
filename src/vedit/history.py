@@ -7,13 +7,14 @@ A new edit after an undo discards the redo branch (like most editors).
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .project import PROJECT_FILE, Project, VeditError, dump_json, load, save, state_dir
+from .project import PROJECT_FILE, Project, VeditError, dump_json, load, migrate, save, state_dir
 
 MAX_SNAPSHOTS = 500
 COALESCE_SECONDS = 1.5
@@ -105,7 +106,7 @@ def _normal(data: dict) -> dict | None:
     """A snapshot as the CURRENT project format sees it: fields added since it was taken get their defaults,
     so a new setting (e.g. canvas.loudness) never looks like a hand edit."""
     try:
-        return Project.model_validate(data).to_dict()
+        return Project.model_validate(migrate(copy.deepcopy(data))).to_dict()
     except Exception:
         return None
 
@@ -122,7 +123,7 @@ def same_as(pdir: Path, n: int, current: Project | None = None) -> bool:
 
 def _restore(pdir: Path, n: int) -> dict:
     snap = _read(pdir, n)
-    project = Project.model_validate(snap["project"])
+    project = Project.model_validate(migrate(copy.deepcopy(snap["project"])))  # an older format's step (e.g. captions)
     (pdir / PROJECT_FILE).write_text(dump_json(project))
     _set_head(pdir, n)
     return snap

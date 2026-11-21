@@ -150,7 +150,7 @@ def clip_to_overlay(p: Project, clip_id: str, start: float = 0.0, track: int = 0
     fx = [e for e in c.effects if e.type == "fx"]
     s0 = p.clip_starts()[[x.id for x in p.clips].index(c.id)]
     d0 = c.duration
-    riders = [l.model_copy(deep=True) for l in p.layers if l.type != "captions" and l.start >= s0 - 1e-3
+    riders = [l.model_copy(deep=True) for l in p.layers if not l.words and l.start >= s0 - 1e-3
               and l.end is not None and l.end <= s0 + d0 + 1e-3]
     if pdir is not None:
         i = p.clips.index(c)

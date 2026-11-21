@@ -74,7 +74,7 @@ uv run vedit --json animate keyframes t1 '[
   cinematic, marker-note, neon, retro-sunset, comic-pop, playful, tech, minimal-caption, plus the user's saved ones).
   Any explicit option (`--size 90`, `--preset ...`) overrides the look.
 - **Keep it consistent.** One look for every title in an edit: `text look apply <name>` restyles every text layer
-  (`--layer t2` for one, `--captions` to include captions). At most two fonts per video: the title font plus one
+  (`--layer t2` for one, `--group g1` for the captions' phrases). At most two fonts per video: the title font plus one
   accent (e.g. `dm-serif-italic` for a single emphasis word).
 - **Reuse.** `text look save my-brand --from t1 --about "..."` saves a layer's style + animation for every future
   project. Offer this when the user likes a style.

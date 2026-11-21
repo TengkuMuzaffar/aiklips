@@ -106,7 +106,7 @@ def layer_box(p: Project, pdir: Path | None, l: Layer) -> tuple[float, float, fl
     W, H = p.canvas.width, p.canvas.height
     cx, cy = parse_pos(l.x, W), parse_pos(l.y, H)
     k = l.scale
-    if l.type in ("text", "captions"):
+    if l.type == "text":
         from ..audit import text_box
 
         b = text_box(p, l)
@@ -167,7 +167,7 @@ def layer_box(p: Project, pdir: Path | None, l: Layer) -> tuple[float, float, fl
 # ---- check / fix ----------------------------------------------------------------------------------------------
 
 def _bottom(z: Zone, l: Layer, H: int) -> float:
-    return z.y1 + (CAPTION_SLACK * H if l.type == "captions" else 0)
+    return z.y1 + (CAPTION_SLACK * H if l.type == "text" and l.words else 0)  # a caption phrase
 
 
 def problems(p: Project, pdir: Path | None, l: Layer, z: Zone) -> tuple[list[str], float, tuple | None]:

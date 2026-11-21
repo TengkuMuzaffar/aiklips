@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROJECT_FILE = "project.json"
 STATE_DIR = ".vedit"
 ACTIVE_FILE = ".vedit-active"
-SCHEMA_VERSION = 5  # 4 also has Clip.zoom_ease (additive, default linear); 5: 3D object layers (obj3d, yaw / pitch / roll)
+SCHEMA_VERSION = 6  # 4 also has Clip.zoom_ease (additive, default linear); 5: 3D object layers (obj3d, yaw / pitch / roll)
 
 
 class VeditError(Exception):
@@ -356,12 +356,12 @@ SCENE_TRANSITIONS = ("cut", "fade", "slide", "zoom", "pop", "wipe")
 
 
 class Layer(_Model):
-    """An overlay drawn on top of the timeline: text, image, captions, video (picture-in-picture, b-roll, light leaks)
+    """An overlay drawn on top of the timeline: text (captions are text phrases in a captions group), image, video (picture-in-picture, b-roll, light leaks)
     a shape, or an adjustment layer (filters + colour over a time range). The list order of project.layers is the stacking
     order (later = on top), kept sorted by `track` (see `normalize_tracks`)."""
 
     id: str
-    type: Literal["text", "image", "captions", "video", "shape", "adjust", "chart", "glass", "iso", "obj3d"]
+    type: Literal["text", "image", "video", "shape", "adjust", "chart", "glass", "iso", "obj3d"]
     # timeline row, like CapCut: 0 = the bottom overlay track, higher = drawn on top. Several layers share a track when
     # their times don't overlap. None = not placed yet (new layer): `normalize_tracks` puts it on top.
     track: int | None = None
@@ -384,8 +384,10 @@ class Layer(_Model):
     style: TextStyle = Field(default_factory=TextStyle)
     image: str | None = None
     width: int | None = None  # image width in canvas px
+    # a caption phrase (text layer): each word's time, in seconds from the layer's start (so moving the layer keeps
+    # them in sync); with `highlight_words` the word being spoken is drawn in style.highlight_color (ops/captions.py)
     words: list[Word] = Field(default_factory=list)
-    words_per_group: int = 3
+    highlight_words: bool = False
     # kinetic text (ops/kinetic.py): animate the text by word / letter / line, each piece `split_anim`-ing in
     # `stagger` seconds after the previous one, over `split_dur` seconds with `split_ease`
     split: Literal["none", "word", "letter", "line"] = "none"
@@ -447,6 +449,8 @@ class LayerGroup(_Model):
     id: str
     name: str = "Group"
     collapsed: bool = True
+    kind: Literal["captions"] | None = None  # "captions": the phrases of one set of subtitles (ops/captions.py)
+    per_group: int = 3  # captions: words per phrase
 
 
 class MusicTrack(_Model):
@@ -615,7 +619,14 @@ MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     2: lambda d: d,  # 3: equal tracks: `main_z` (video track position; default 0 = bottom), timeline = longest track
     3: lambda d: d,  # 4: motion: draw-on / morph / counters / kinetic text / charts (`draw`, `morph`, `count` keyframes)
     4: lambda d: d,  # 5: 3D objects (`Layer.obj3d`, type "obj3d") and `yaw` / `pitch` / `roll` keyframes
+    5: lambda d: _captions_to_text(d),  # 6: captions are text phrases in a captions group (no "captions" layer type)
 }
+
+
+def _captions_to_text(d: dict) -> dict:
+    from .ops.captions import migrate_v5
+
+    return migrate_v5(d)
 
 
 def migrate(data: dict) -> dict:

@@ -20,10 +20,11 @@ def members(p: Project, gid: str) -> list[Layer]:
     return [l for l in p.layers if l.group == gid]
 
 
-def make(p: Project, layer_ids: list[str], name: str = "Group", collapsed: bool = True) -> LayerGroup:
-    """Group layers (2+). They move onto tracks of their own, above everything, keeping their order."""
+def make(p: Project, layer_ids: list[str], name: str = "Group", collapsed: bool = True, min_layers: int = 2) -> LayerGroup:
+    """Group layers (2+; captions may be one phrase). They move onto tracks of their own, above everything, keeping
+    their order (layers that don't overlap in time share a track)."""
     ls = [p.layer(i) for i in dict.fromkeys(layer_ids)]
-    if len(ls) < 2:
+    if len(ls) < min_layers:
         raise VeditError("A group needs at least two layers")
     if any(l.on_video for l in ls):
         raise VeditError("Layers on the video track itself can't be grouped")

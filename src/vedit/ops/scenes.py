@@ -336,7 +336,7 @@ def reconcile(p: Project) -> None:
     total = ranges[-1][2] if ranges else 0.0
     bgs = {sc.bg_layer for sc in p.scenes if sc.bg_layer}
     for l in p.layers:
-        if l.id in bgs or l.type == "captions":
+        if l.id in bgs:
             continue
         end = total if l.end is None else l.end
         home = next((sc for sc, a, b in ranges if a - 1e-3 <= l.start and end <= b + 1e-3), None)

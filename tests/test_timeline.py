@@ -48,14 +48,16 @@ def test_speed_range_changes_duration_and_remaps(make_project):
     assert p.layer("t1").start == pytest.approx(6.0)
 
 
-def test_captions_shift_after_delete(make_project):
+def test_caption_phrase_words_follow_a_delete(make_project):
+    """A caption phrase's word times are seconds from its start; a cut keeps each on its spoken moment, drops the
+    words that were cut (and the text with them)."""
     p = make_project()
-    p.layers.append(Layer(id="cap1", type="captions", start=0.5, end=6.0,
-                          words=[Word(text="a", start=0.5, end=1.0), Word(text="b", start=2.1, end=2.5), Word(text="c", start=5.0, end=5.5)]))
+    p.layers.append(Layer(id="cap1", type="text", text="a b c", start=0.5, end=6.0, highlight_words=True,
+                          words=[Word(text="a", start=0.0, end=0.5), Word(text="b", start=1.6, end=2.0), Word(text="c", start=4.5, end=5.0)]))
     cut.delete_range(p, 2.0, 3.0)
-    words = p.layer("cap1").words
-    assert [w.text for w in words] == ["a", "c"]
-    assert words[1].start == pytest.approx(4.0)
+    l = p.layer("cap1")
+    assert [w.text for w in l.words] == ["a", "c"] and l.text == "a c"
+    assert l.start == pytest.approx(0.5) and l.start + l.words[1].start == pytest.approx(4.0)
 
 
 def test_move_and_jumpcut_zoom(make_project):

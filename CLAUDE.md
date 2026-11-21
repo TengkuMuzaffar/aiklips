@@ -50,6 +50,10 @@ Run commands as `uv run vedit --json <command>` (the JSON output is easier to re
 
 - **Times are timeline seconds.** Times are what the viewer sees after earlier cuts. Always re-check `info` after cutting, because times shift.
 - **Captions go last.** Add them after all cuts and speed changes. Layers and captions are remapped by cuts, but auto-captions transcribe the current edit, so do them last.
+- **Captions are text.** `captions auto|srt` makes one text layer per phrase (`cap1`, `cap2`...) in a captions group
+  (`[gN]`, one "Captions" row). Fix a misheard word with `text edit capN --text "..."` (the word times follow), move
+  or animate one phrase like any text, restyle them all with `captions style gN <style>` or
+  `text look apply NAME --group gN`, change words per phrase with `captions words gN 2`.
 - **Ask before slow effects.** Before `bg remove --mode quality`, `face prop`, or effects on long videos (over 60s), give the user a time warning and ask. The `fast` modes are fine to run directly.
 - **Use undo for mistakes.** Don't try to rebuild state by hand. Use `undo`, `redo`, `history` and `checkout <n>`.
 - **Don't touch user media files.** Never delete or overwrite them. Never hand-edit `.vedit/`.
@@ -162,13 +166,13 @@ shape add rect|ellipse|triangle|diamond|polygon|star|ring|heart|bubble|blob|line
 layer order <id> up|down|front|back|N | layer style <id> [--blend --radius --border --border-color --circle/--rect --chroma --volume --loop --fill --fit free|cover|contain --flip-h --flip-v]
 text add "TEXT" [--look NAME --start --end --x --y --size --color --stroke --bg --font --uppercase --letter-spacing --glow --gradient --bold --italic --underline --strike --list bullet|number --align --line-spacing --preset NAME[:dur]]
 text edit <id> [...] | image add <png> [--width --x --y --preset]
-text look list | text look apply NAME [--layer ID --captions] | text look save NAME --from ID | text look delete NAME
+text look list | text look apply NAME [--layer ID | --group gN] | text look save NAME --from ID | text look delete NAME
 fonts [--feel serif --sheet]
 color stats | color match [--to CLIP | --ref ID | --video FILE --strength 0.8] | color look NAME [--intensity 0.8 --clip ID | --layer ID]
 color set [--clip | --layer ID --brightness --contrast --saturation --temperature --tint] | color lut FILE.cube | color looks | color clear [--clip | --layer]
 layer list | layer set <id> [--start --end --x --y --scale --rotation --opacity --width --height --sx --sy (stretch)] | layer dup <id> [--dx --dy] | layer remove <id>
 animate list | animate preset <id> <name> [--duration --params JSON] | animate keyframes <id> 'JSON' | animate clear <id>
-captions srt <file> [--style] | captions auto [--language en|ms|...] | captions style <id> bold|boxed|minimal|neon|karaoke
+captions srt <file> [--style --words 3 --y 72%] | captions auto [--language en|ms|... --style --words] | captions style [gN] bold|boxed|minimal|neon|karaoke | captions words [gN] N
 bg remove [--clip --mode chroma|fast|quality --replace color:#hex|blur|image:path|video:path --key auto|#hex] | bg tune [--similarity --blend --spill --shrink --key] | bg replace <spec> | bg clear
 face mesh [--color --glow --dots] | face sticker <png> --anchor eyes|head|nose|mouth|face | face prop <model.obj> | face blur [--style pixelate] | face clear
 transition fade|fadeblack|slideleft|zoomin|hblur|wipeleft|circleopen|none [--clip ID --duration 0.5] | transition list

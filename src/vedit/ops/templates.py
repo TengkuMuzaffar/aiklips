@@ -37,8 +37,8 @@ def save(p: Project, pdir: Path, name: str, layer_ids: list[str], about: str = "
     t0 = min(l.start for l in layers)
     out = []
     for l in layers:
-        if l.type == "captions":
-            raise VeditError(f"{l.id} is captions: those belong to one video, not a template")
+        if l.words:
+            raise VeditError(f"{l.id} is a caption phrase: captions belong to one video, not a template")
         d = l.model_dump(mode="json", by_alias=True)
         d["start"] = round(l.start - t0, 3)
         d["end"] = None if l.end is None else round(l.end - t0, 3)

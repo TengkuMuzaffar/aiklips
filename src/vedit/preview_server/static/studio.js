@@ -240,7 +240,7 @@ function propsFor(l, t) {
 }
 function visibleAt(l, t) {
   const end = l.end == null ? dur() : Math.min(l.end, dur());
-  return !l.hidden && l.type !== "adjust" && l.type !== "captions" && t >= l.start && t < end && end - l.start > 0.01;
+  return !l.hidden && l.type !== "adjust" && t >= l.start && t < end && end - l.start > 0.01;
 }
 function drawStage() {
   if (!ST) return;
@@ -896,7 +896,7 @@ function drawSceneProps(body, sc, picked) {
       h("button", { disabled: P().scenes.length < 2, onclick: async () => await AK.confirm(`Delete ${sc.name || sc.id} and its elements?`, { ok: "Delete", danger: true }) && op("scene_remove", { scene: sc.id }).then(() => { SCENE_SEL = null; }) }, ic("trash", 14), " Delete"),
       sc.notes ? h("button", { class: "ghost", disabled: AIBUSY.scene, onclick: () => designScene(sc.id) }, "✦ Design from notes") : null)));
 }
-const TYPE_LABEL = { text: "Text", shape: "Shape", image: "Image", video: "Video", adjust: "Adjustment", captions: "Captions", chart: "Chart" };
+const TYPE_LABEL = { text: "Text", shape: "Shape", image: "Image", video: "Video", adjust: "Adjustment", chart: "Chart" };
 function drawLayerProps(body, l) {
   const [s, e] = spanOf(l), b = BOX.get(l.id), pr = b ? b.pr : { x: 0, y: 0 };
   const name = l.type === "shape" ? SHAPE_LABELS[l.shape] : l.type === "text" ? (l.text || "").slice(0, 28) : TYPE_LABEL[l.type];
@@ -1443,7 +1443,7 @@ function renderTimeline() {
   // rows: elements of the current scene, then whole-video elements; top of the stack first
   const rows = $("#rows"); rows.innerHTML = "";
   const bgs = bgIds();
-  const ls = P().layers.filter((l) => !bgs.has(l.id) && l.type !== "captions" && (l.scene == null || l.scene === c?.sc.id)).reverse();
+  const ls = P().layers.filter((l) => !bgs.has(l.id) && (l.scene == null || l.scene === c?.sc.id)).reverse();
   for (const l of ls) {
     const end = l.end ?? dur();
     const bar = h("div", { class: "bar" + (SEL.includes(l.id) ? " on" : ""), style: { left: l.start * PPS + "px", width: Math.max(8, (end - l.start) * PPS) + "px" } },

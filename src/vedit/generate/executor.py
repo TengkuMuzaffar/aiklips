@@ -139,7 +139,7 @@ def execute(plan: EditPlan, pdir: Path, files: dict[str, dict], name: str, fmt: 
                 refs[f"S{i}_text"] = txt
         from ..project import load
 
-        cap = next((l.id for l in load(pdir).layers if l.type == "captions"), None)
+        cap = next((g.id for g in load(pdir).groups if g.kind == "captions"), None)  # @captions = the captions group
         if cap:
             refs["captions"] = cap
         commands.execute(pdir, cmds, files, refs, report)

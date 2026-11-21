@@ -16,7 +16,6 @@ from PIL import Image
 from vedit.ops.animate import PRESETS, props_at
 from vedit.ops.text import render_text
 from vedit.project import Canvas, ClipMeta, Keyframe, Layer, Preset, TextStyle, Word, load
-from vedit.render.layers import _caption_groups
 from vedit.render.runner import base_hash, preview_dir, render_preview
 
 from .conftest import needs_ffmpeg
@@ -102,15 +101,17 @@ def test_js_props_at_matches_python():
 
 
 @needs_node
-def test_js_caption_groups_match_python():
-    words = [Word(text=t, start=s, end=s + 0.3) for t, s in
-             [("one", 0), ("two", 0.4), ("three.", 0.8), ("four", 1.2), ("five", 2.5), ("six", 2.9), ("", 3.2), ("eight", 3.5)]]
-    for wpg in (1, 2, 3, 5):
-        L = Layer(id="c", type="captions", words=words, words_per_group=wpg)
-        script = (f"const A = require({json.dumps(str(ANIMATE_JS))});"
-                  f"process.stdout.write(JSON.stringify(A.captionGroups({json.dumps(L.model_dump(mode='json'))})));")
-        out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
-        assert json.loads(out) == _caption_groups(L)
+def test_js_spoken_word_matches_python():
+    """The live preview highlights the same word of a caption phrase as the export (captions.word_at)."""
+    from vedit.ops.captions import word_at
+
+    L = Layer(id="c", type="text", text="one two three four", highlight_words=True,
+              words=[Word(text=t, start=s, end=s + 0.3) for t, s in [("one", 0), ("two", 0.4), ("three", 0.8), ("four", 1.25)]])
+    ts = [-0.1, 0, 0.2, 0.4, 0.79, 0.8, 1.249, 1.25, 3.0]
+    script = (f"const A = require({json.dumps(str(ANIMATE_JS))}); const L = {json.dumps(L.model_dump(mode='json'))};"
+              f"process.stdout.write(JSON.stringify({json.dumps(ts)}.map((t) => A.wordAt(L, t))));")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == [word_at(L, t) for t in ts]
 
 
 def test_base_hash_ignores_overlays(make_project):
@@ -167,11 +168,14 @@ def test_sprite_and_mode_api(cli, test_clip):
     part = Image.open(io.BytesIO(client.post("/api/sprite", json={"layer": layer, "scale": 0.5, "reveal": 4}).content))
     assert part.size == got.size  # typewriter keeps the box, only reveals part of it
 
-    words = [{"text": w, "start": i * 0.4, "end": i * 0.4 + 0.3} for i, w in enumerate(["a", "b", "c", "d"])]
-    cap = Layer(id="c1", type="captions", words=words, words_per_group=2).model_dump(mode="json", by_alias=True)
-    assert client.post("/api/sprite", json={"layer": cap, "group": 1, "hi": 1}).status_code == 200
-    # the page caches a captions layer's word groups on the layer object (`_groups`): never a reason to refuse it
-    assert client.post("/api/sprite", json={"layer": {**cap, "_groups": [[0, 1]], "_groupsKey": "k"}, "group": 1, "hi": 1}).status_code == 200
+    # a caption phrase: `hi` = the word being spoken, drawn in the highlight colour (same pixels as the export)
+    words = [{"text": w, "start": i * 0.4, "end": i * 0.4 + 0.3} for i, w in enumerate(["a", "b"])]
+    cap = Layer(id="c1", type="text", text="a b", words=words, highlight_words=True, style=style).model_dump(mode="json", by_alias=True)
+    r = client.post("/api/sprite", json={"layer": cap, "scale": 0.5, "hi": 1})
+    assert r.status_code == 200
+    assert Image.open(io.BytesIO(r.content)).convert("RGBA").tobytes() == render_text("a b", style, 0.5, highlight=1).tobytes()
+    # `_`-fields are the page's own caches on a layer: never a reason to refuse it
+    assert client.post("/api/sprite", json={"layer": {**cap, "_cache": [[0, 1]]}, "hi": 0}).status_code == 200
     assert client.post("/api/sprite", json={"layer": {"type": "nope"}}).status_code == 400
 
     assert client.get("/api/state").json()["render"]["final"] is False

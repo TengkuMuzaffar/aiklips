@@ -9,7 +9,7 @@ from vedit.ops import items3d
 from vedit.ops.animate import props_at, travel_at
 from vedit.ops.mesh3d import newell, text_mesh
 from vedit.ops.render3d import render_obj3d
-from vedit.project import Canvas, Layer, Obj3D, Preset, load, migrate
+from vedit.project import SCHEMA_VERSION, Canvas, Layer, Obj3D, Preset, load, migrate
 
 from .conftest import needs_ffmpeg
 
@@ -90,7 +90,7 @@ def test_spin_and_face_change_yaw():
 
 
 def test_old_projects_migrate():
-    assert migrate({"version": 4, "name": "x"})["version"] == 5
+    assert migrate({"version": 4, "name": "x"})["version"] == SCHEMA_VERSION
 
 
 def test_3d_commands(cli):

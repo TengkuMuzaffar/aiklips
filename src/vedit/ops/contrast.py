@@ -1,7 +1,7 @@
 """Can a person read this text against what is really behind it? Measured by code, never judged by the AI.
 
 An AI editor sees colours as hex strings, so it happily puts light grey text on a white card: the words are "there"
-for it, invisible for a viewer. This module finds the colour(s) behind every text / captions layer and measures the
+for it, invisible for a viewer. This module finds the colour(s) behind every text layer (titles and caption phrases) and measures the
 WCAG 2 contrast ratio between the letters and that background.
 
 Two ways to find the background:
@@ -137,7 +137,7 @@ def structural(p: Project, pdir: Path | None, l: Layer, box, t: float) -> Behind
                 break
             return None  # footage: pixels only
         o: Layer = item
-        if not _visible(o, t, total) or o.type in ("text", "captions"):
+        if not _visible(o, t, total) or o.type == "text":
             continue
         b = _box(p, pdir, o)
         if b is None:
@@ -232,7 +232,7 @@ def _times(l: Layer, total: float) -> list[float]:
 
 def _fills(l: Layer) -> list[tuple[str, tuple[float, float, float, float]]]:
     out = [(c, rgba(c)) for c in (l.style.gradient or [l.style.color])]
-    if l.type == "captions" and l.style.highlight_color:
+    if l.highlight_words and l.words and l.style.highlight_color:  # a caption phrase's spoken word
         out.append((l.style.highlight_color, rgba(l.style.highlight_color)))
     return out
 
@@ -287,11 +287,11 @@ def evaluate(p: Project, l: Layer, behind: Behind, t: float) -> Result:
         if behind.pixels:  # busy footage: a box or outline keeps it readable whatever passes behind
             suggest += f"  (or --bg '#000000B0' / --stroke '#000000' --stroke-width 8)"
     return Result(l.id, sev, round(worst, 2), need, worst_fill or st.color, behind.what, hexc(typical),
-                  (l.text or " ".join(w.text for w in l.words[:6]) or "")[:40], t, rescued, suggest)
+                  (l.text or "")[:40], t, rescued, suggest)
 
 
 def _text_layers(p: Project) -> list[Layer]:
-    return [l for l in p.layers if l.type in ("text", "captions") and not l.hidden and (l.text or l.words)]
+    return [l for l in p.layers if l.type == "text" and not l.hidden and l.text]
 
 
 def issues(p: Project, pdir: Path | None) -> list[Result]:
@@ -344,7 +344,7 @@ def check(p: Project, pdir: Path, preview: Path | None = None, scale: float = 0.
     from ..audit import text_box
 
     for l in _text_layers(p):
-        if l.id in results or l.type == "captions" or l.rotation % 360 or l.sx != 1 or l.sy != 1:
+        if l.id in results or l.words or l.rotation % 360 or l.sx != 1 or l.sy != 1:
             continue
         if any(k.x is not None or k.y is not None or k.scale is not None for k in l.keyframes):
             continue  # it moves: the at-rest glyph mask wouldn't line up

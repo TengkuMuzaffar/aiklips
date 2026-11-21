@@ -88,7 +88,9 @@ def test_save_apply_and_delete_a_custom_look():
 
 
 def test_captions_keep_their_size_when_restyled():
-    cap = Layer(id="cap1", type="captions", style=TextStyle(size=70))
+    from vedit.project import Word
+
+    cap = Layer(id="cap1", type="text", text="hi", style=TextStyle(size=70), words=[Word(text="hi", start=0, end=0.4)])
     text_looks.apply(cap, "neon")
     assert cap.style.size == 70 and cap.style.glow_color and not cap.presets
 

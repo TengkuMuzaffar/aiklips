@@ -151,8 +151,10 @@ def _fade(pr, p, t, k, c):
 
 
 def _pop(pr, p, t, k, c):
-    pr["scale"] *= max(0.0, ease("back_out", p))
-    pr["opacity"] *= min(1.0, p * 3)
+    f = float(k.get("from", 0.0))  # start scale: 0 = from nothing (fades in too); captions pop from 0.86, fully visible
+    pr["scale"] *= f + (1 - f) * max(0.0, ease("back_out", p))
+    if f <= 0:
+        pr["opacity"] *= min(1.0, p * 3)
 
 
 def _slide(pr, p, t, k, c):
@@ -426,7 +428,7 @@ def _morph_loop(pr, p, t, k, c):
 PRESETS: dict[str, tuple[str, float, Callable, str]] = {
     "fade_in": ("in", 0.4, _fade, "Fade in"),
     "fade_out": ("out", 0.4, _fade, "Fade out"),
-    "pop_in": ("in", 0.35, _pop, "Scale up from 0 with a little overshoot"),
+    "pop_in": ("in", 0.35, _pop, "Scale up from 0 with a little overshoot. params: from=0 (start scale)"),
     "pop_out": ("out", 0.25, _pop, "Shrink away"),
     "slide_in": ("in", 0.45, _slide, "Slide in. params: direction=up|down|left|right, distance=px"),
     "slide_out": ("out", 0.4, _slide, "Slide out. params: direction, distance"),

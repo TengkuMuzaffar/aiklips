@@ -521,7 +521,7 @@ def _music_make(p: Project, a: dict) -> str:
     return f"make loop '{prm.name}' as {m.id}"
 
 
-_LAYER_FIELDS = ("start", "end", "x", "y", "scale", "rotation", "opacity", "text", "width", "words_per_group")
+_LAYER_FIELDS = ("start", "end", "x", "y", "scale", "rotation", "opacity", "text", "width", "highlight_words")
 
 
 @op("layer_set")
@@ -534,9 +534,16 @@ def _layer_set(p: Project, a: dict) -> str:
         v = a[k]
         if k in ("start", "end", "scale", "rotation", "opacity"):
             v = None if (v is None or v == "") and k == "end" else float(v)
-        elif k in ("width", "words_per_group"):
+        elif k == "width":
             v = None if v in (None, "") else int(float(v))
-        setattr(l, k, v)
+        elif k == "highlight_words":
+            v = bool(v)
+        if k == "text" and l.words:  # a caption phrase: its word times follow the new words (ops/captions.py)
+            from ..ops import captions
+
+            captions.retext(l, str(v or ""))
+        else:
+            setattr(l, k, v)
         changed.append(k)
     if "height" in a:
         l.height = None if a["height"] in (None, "") else max(1, int(float(a["height"])))
@@ -578,10 +585,29 @@ def _text_look(p: Project, a: dict) -> str:
     text_looks.get(name)
     targets = [l for l in p.layers if l.type == "text"] if a.get("all") else [p.layer(a["layer"])]
     for l in targets:
-        if l.type not in ("text", "captions"):
+        if l.type != "text":
             raise VeditError(f"Layer {l.id} is not text")
         text_looks.apply(l, name, animation=a.get("animation", True))
     return f"look {name} on {', '.join(l.id for l in targets)}"
+
+
+@op("captions_words")
+def _captions_words(p: Project, a: dict) -> str:
+    """Rebuild a captions group's phrases with n words each."""
+    from ..ops import captions
+
+    n = max(1, min(8, int(float(a.get("n", 3)))))
+    ls = captions.regroup(p, a.get("group") or captions.captions_group(p).id, n)
+    return f"captions: {len(ls)} phrases of up to {n} words"
+
+
+@op("captions_style")
+def _captions_style(p: Project, a: dict) -> str:
+    """One caption style (bold, boxed, minimal, neon, karaoke) on every phrase of a captions group."""
+    from ..ops import captions
+
+    g = captions.style_group(p, a.get("group"), str(a.get("style", "")))
+    return f"captions {g.id}: style {a.get('style')}"
 
 
 @op("layer_add_text")
